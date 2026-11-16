@@ -24,6 +24,11 @@
 | `trash.svg` | 捨棄 |
 | `float.svg` | 顯示浮條 |
 | `exit.svg` | 結束 |
+| `info.svg` | 關於 |
+| `plus.svg` | 加入 |
+| `export.svg` | 匯出 |
+| `folder.svg` | 開啟資料夾 |
+| `link.svg` | 開啟網頁 |
 
 ## 新增或修改圖示
 

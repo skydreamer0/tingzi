@@ -12,13 +12,29 @@ internal static class VoiceDeliveryTests
         if (args.Length == 2 && args[0] == "--render-settings") { RenderSettings(args[1]); return 0; }
         Check("every icon in the set draws", () => {
             var names = typeof(Icons).Assembly.GetManifestResourceNames().Where(n => n.StartsWith("icons/")).ToArray();
-            if (names.Length < 20) throw new Exception("icon set incomplete: " + names.Length);
+            if (names.Length < 25) throw new Exception("icon set incomplete: " + names.Length);
             foreach (var resource in names) {
                 using var image = Icons.Render(resource[6..^4], 32, Color.Black);
                 bool drawn = false;
                 for (int x = 0; x < 32 && !drawn; x++) for (int y = 0; y < 32 && !drawn; y++) drawn = image.GetPixel(x, y).A > 0;
                 if (!drawn) throw new Exception("blank icon " + resource);
             }
+        });
+        Check("user phrases keep their readings", () => {
+            var folder = Path.Combine(Path.GetTempPath(), "tingzi-test-" + Guid.NewGuid().ToString("N"));
+            Directory.CreateDirectory(folder);
+            try {
+                var data = Path.Combine(folder, "phrases.txt");
+                File.WriteAllLines(data, new[] { "_ctrl_punctuation_, ， 0.0", "ㄔㄨㄥˊ 重 -3.5", "ㄓㄨㄥˋ 重 -3.0", "ㄧㄠˋ 要 -3.1", "ㄓㄨㄥˋ-ㄧㄠˋ 重要 -4.0" });
+                var lexicon = UserPhrases.Lexicon.Read(data);
+                Equal(new[] { "ㄓㄨㄥˋ", "ㄔㄨㄥˊ" }, lexicon.For('重').ToArray());
+                Equal(0, lexicon.For('好').Count);
+                var file = Path.Combine(folder, "user-phrases.txt");
+                UserPhrases.Save(new[] { ("ㄔㄨㄥˊ-ㄧㄠˋ", "重要") }, file);
+                var saved = UserPhrases.Load(file);
+                Equal(1, saved.Count); Equal("ㄔㄨㄥˊ-ㄧㄠˋ", saved[0].Reading); Equal("重要", saved[0].Word);
+                Equal(0, UserPhrases.Load(Path.Combine(folder, "missing.txt")).Count);
+            } finally { Directory.Delete(folder, true); }
         });
         Check("themes keep text readable", () => {
             foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark }) {
@@ -218,7 +234,7 @@ internal static class VoiceDeliveryTests
     {
         Directory.CreateDirectory(folder);
         foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
-            for (int tab = 0; tab < 3; tab++)
+            for (int tab = 0; tab < 4; tab++)
             {
                 using var form = VoiceDialogs.CreateSettings(new VoiceSettings { Appearance = mode }, true, _ => null,
                     new SettingsActions(() => { }, () => { }, () => { }, true, true, "本機 Whisper 與模型已就緒。"));

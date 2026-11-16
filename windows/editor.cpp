@@ -118,6 +118,7 @@ LRESULT CALLBACK frame(HWND w,UINT message,WPARAM key,LPARAM arg) {
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int show){
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     if(!dictionary.load(folder(instance))) {MessageBoxW(nullptr,L"找不到可用的 Tingzi.cin，請從完整資料夾開啟。",L"聽字・注音與語音輸入法",MB_ICONERROR);return 1;}
+    dictionary.loadUser(localLearningDir()+L"\user-phrases.txt");
     WNDCLASSW cls{};cls.hInstance=instance;cls.lpfnWndProc=frame;cls.lpszClassName=L"TingziPad";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
     cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(1));
     RegisterClassW(&cls);

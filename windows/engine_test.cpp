@@ -6,6 +6,7 @@ int wmain(int argc,wchar_t** argv) {
     Dictionary d;
     if(!d.load(Text(argv[1])+L"\\"))return 2;
     Input input(d);
+    input.setSegmenter(Segmenter::Path);input.setLayout(KeyLayout::Standard);
     auto expect=[](bool condition,const char* label){
         if(!condition){std::cerr<<"FAIL "<<label<<"\n";std::exit(1);}
         std::cout<<"PASS "<<label<<"\n";
@@ -79,5 +80,22 @@ int wmain(int argc,wchar_t** argv) {
     input.setSimplifiedOutput(false);
     enter("SU3CL3A87");
     expect(input.press(VK_RETURN)==L"你好嗎","commit stays traditional when off");
+
+    expect(codeKey('N',KeyLayout::ETen)==L's' && codeKey(VK_OEM_7,KeyLayout::ETen)==L'h' && codeKey('5',KeyLayout::ETen)==0,"ETen keys map to the word list");
+    input.setLayout(KeyLayout::ETen);
+    enter("NE3HZ3");
+    expect(input.press(VK_RETURN)==L"你好","ETen layout types the same words");
+    enter("T");expect(input.displayRuns().active==L"ㄊ","ETen key shows its own symbol");
+    input.clear();input.setLayout(KeyLayout::Standard);
+
+    {
+        wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
+        Text file=Text(temp)+L"tingzi-user-phrases-test.txt";
+        {std::ofstream out(file,std::ios::binary);out<<"\xE3\x84\x8B\xE3\x84\xA7\xCB\x87-\xE3\x84\x8F\xE3\x84\xA0\xCB\x87 \xE6\x93\xAC\xE5\xA5\xBD -1.0\nbroken line\n";}
+        Dictionary own;own.load(Text(argv[1])+L"\\");own.loadUser(file);DeleteFileW(file.c_str());
+        Input custom(own);custom.setSegmenter(Segmenter::Path);custom.setLayout(KeyLayout::Standard);custom.setSimplifiedOutput(false);
+        for(const char* k="SU3CL3";*k;++k)custom.press((WPARAM)*k);
+        expect(custom.press(VK_RETURN)==L"擬好","a user phrase outranks the bundled word");
+    }
     return 0;
 }

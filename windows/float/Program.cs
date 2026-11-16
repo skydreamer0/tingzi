@@ -208,7 +208,9 @@ internal static class Program
                     File.Exists(Path.Combine(root,"TingziLearning.exe")) ? async () => {
                         var result=await LearningCommand("status");
                         return result.Success && result.Output.Trim() is "Local learning: on" or "Local learning: off" ? result.Output.Trim().EndsWith(" on",StringComparison.Ordinal) : (bool?)null;
-                    } : null));
+                    } : null,
+                    File.Exists(Path.Combine(root,"TingziLearning.exe")) ? async arguments => (await LearningCommand(arguments)).Success : null,
+                    File.Exists(Path.Combine(root,"phrases.txt")) ? Path.Combine(root,"phrases.txt") : null));
                 form.FormClosed += (_,_) => dialogOpen=false;
                 capsule.ShowSettings(form);
             } catch { dialogOpen=false; throw; }
@@ -246,11 +248,11 @@ internal static class Program
                 MessageBox.Show("無法開啟工具，請確認完整套件已安裝。", "聽字・注音與語音輸入法", MessageBoxButtons.OK, MessageBoxIcon.Information);
             }
         }
-        async Task<(bool Success,string Output)> LearningCommand(string action) {
+        async Task<(bool Success,string Output)> LearningCommand(params string[] arguments) {
             try {
-                using var process=Process.Start(new ProcessStartInfo(Path.Combine(root,"TingziLearning.exe"),action) {
-                    UseShellExecute=false, CreateNoWindow=true, RedirectStandardOutput=true
-                });
+                var start=new ProcessStartInfo(Path.Combine(root,"TingziLearning.exe")) { UseShellExecute=false, CreateNoWindow=true, RedirectStandardOutput=true };
+                foreach (var argument in arguments) start.ArgumentList.Add(argument);
+                using var process=Process.Start(start);
                 if (process == null) return (false,"");
                 var output=await process.StandardOutput.ReadToEndAsync();
                 await process.WaitForExitAsync();

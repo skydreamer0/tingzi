@@ -66,7 +66,7 @@ internal sealed record Theme(bool Dark, Color Back, Color Surface, Color Input, 
 
     void Paint(Control control)
     {
-        if (Dark && control is ScrollableControl or ComboBox or TextBox)
+        if (Dark && control is ScrollableControl or ComboBox or TextBox or ListBox)
         {
             // Scroll bars and drop-down lists take their dark look from the system theme.
             void Darken() => SetWindowTheme(control.Handle, "DarkMode_Explorer", null);
@@ -91,6 +91,9 @@ internal sealed record Theme(bool Dark, Color Back, Color Surface, Color Input, 
                 break;
             case TextBox field:
                 field.BackColor = Input; field.ForeColor = Text; field.BorderStyle = BorderStyle.FixedSingle;
+                break;
+            case ListBox list:
+                list.BackColor = Input; list.ForeColor = Text; list.BorderStyle = BorderStyle.FixedSingle;
                 break;
             case CheckBox check:
                 check.ForeColor = Text;
@@ -191,6 +194,26 @@ internal sealed class PageHost : Panel
             tab.Image = Icons.Render((string)tab.Tag!, tab.LogicalToDeviceUnits(18), tab.ForeColor);
             tab.AccessibleDescription = on ? "已選取" : null;
         }
+    }
+}
+
+/// <summary>A thin bar showing how loud the microphone hears the room.</summary>
+internal sealed class LevelMeter : Control
+{
+    float level;
+    public Color Track = Color.Gainsboro, Bar = Color.SeaGreen;
+    public LevelMeter()
+    {
+        SetStyle(ControlStyles.OptimizedDoubleBuffer | ControlStyles.AllPaintingInWmPaint | ControlStyles.UserPaint | ControlStyles.ResizeRedraw, true);
+        TabStop = false; AccessibleName = "麥克風音量"; AccessibleRole = AccessibleRole.ProgressBar;
+    }
+    public float Level { get => level; set { level = Math.Clamp(value, 0f, 1f); Invalidate(); } }
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        using var track = new SolidBrush(Track); using var bar = new SolidBrush(Bar);
+        e.Graphics.FillRectangle(track, ClientRectangle);
+        // Square root keeps quiet speech visible.
+        e.Graphics.FillRectangle(bar, 0, 0, (int)(Width * Math.Sqrt(level)), Height);
     }
 }
 

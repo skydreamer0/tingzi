@@ -37,6 +37,21 @@ internal static class Microphones
         return inputs;
     }
 
+    /// <summary>Reports the input peak from 0 to 1 until disposed; device -1 is the Windows default.</summary>
+    public static IDisposable Listen(int device, Action<float> level)
+    {
+        var input = new WaveInEvent { DeviceNumber = device, WaveFormat = new WaveFormat(16000, 16, 1), BufferMilliseconds = 60 };
+        input.DataAvailable += (_, e) =>
+        {
+            int peak = 0;
+            for (int i = 0; i + 1 < e.BytesRecorded; i += 2) peak = Math.Max(peak, Math.Abs((int)BitConverter.ToInt16(e.Buffer, i)));
+            level(peak / 32768f);
+        };
+        try { input.StartRecording(); }
+        catch { input.Dispose(); throw; }
+        return input;
+    }
+
     public static Microphone? Resolve(string? preferred)
     {
         try

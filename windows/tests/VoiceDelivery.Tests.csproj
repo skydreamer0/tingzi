@@ -14,6 +14,7 @@
     <Compile Include="../float/VoiceInsertionTarget.cs" Link="Product/VoiceInsertionTarget.cs" />
     <Compile Include="../float/VoiceSettings.cs" Link="Product/VoiceSettings.cs" />
     <Compile Include="../float/Appearance.cs" Link="Product/Appearance.cs" />
+    <Compile Include="../float/ZhuyinOptions.cs" Link="Product/ZhuyinOptions.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../assets/icons/*.svg" LogicalName="icons/%(Filename)%(Extension)" />

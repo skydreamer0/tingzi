@@ -48,6 +48,8 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     Dictionary& dictionary() {
         static Dictionary data;
         static const bool loaded=data.load(folder(module));
+        static const bool extended=(data.loadUser(localLearningDir()+L"\user-phrases.txt"),true);
+        (void)extended;
         (void)loaded;return data;
     }
     std::unique_ptr<Input> input;

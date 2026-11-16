@@ -2,6 +2,7 @@
 #include <windows.h>
 #include <algorithm>
 #include <cmath>
+#include <cwchar>
 #include <fstream>
 #include <map>
 #include <sstream>
@@ -30,6 +31,14 @@ inline Segmenter configuredSegmenter() {
         return Segmenter::Staged;
     return Segmenter::Path;
 }
+// Standard is the Daqian layout the word list is keyed by; ETen keys are translated to it.
+enum class KeyLayout { Standard, ETen };
+inline KeyLayout configuredLayout() {
+    DWORD value=0, bytes=sizeof(value);
+    if(RegGetValueW(HKEY_CURRENT_USER,engineKey,L"KeyboardLayout",RRF_RT_REG_DWORD,nullptr,&value,&bytes)==ERROR_SUCCESS && value==1)
+        return KeyLayout::ETen;
+    return KeyLayout::Standard;
+}
 // Character-level script conversion from Windows; one-to-many characters follow the system table.
 inline Text convertScript(const Text& text,bool simplified) {
     if(text.empty())return text;
@@ -44,6 +53,8 @@ inline bool configuredSimplifiedOutput() {
     DWORD value=0, bytes=sizeof(value);
     return RegGetValueW(HKEY_CURRENT_USER,engineKey,L"SimplifiedOutput",RRF_RT_REG_DWORD,nullptr,&value,&bytes)==ERROR_SUCCESS && value==1;
 }
+// Words the user added rank above the bundled ones with the same reading.
+inline constexpr double userPhraseScore=-2.0;
 struct WordSpan { size_t at, count; int weight; Text text; };
 // A later word must lead by this much before it displaces an earlier one.
 inline constexpr int displaceMargin=3;
@@ -145,20 +156,46 @@ struct Dictionary {
         for (auto& bucket : phrases) std::stable_sort(bucket.second.begin(), bucket.second.end(), [](const Term& a, const Term& b){ return a.score > b.score; });
         return !byCode.empty() && !keys.empty();
     }
+    // Same line format as phrases.txt; only multi-syllable words of one character per syllable.
+    void loadUser(const Text& file) {
+        std::ifstream in(file, std::ios::binary);
+        std::string line, key, value;
+        while (std::getline(in, line)) {
+            std::istringstream row(line);
+            if (!(row >> key >> value) || key.find('-') == std::string::npos) continue;
+            size_t count = 1 + std::count(key.begin(), key.end(), '-');
+            Text reading = wide(key), text = wide(value);
+            if (reading.empty() || text.size() != count) continue;
+            auto& bucket = phrases[reading];
+            bucket.erase(std::remove_if(bucket.begin(), bucket.end(), [&](const Term& term){ return term.text == text; }), bucket.end());
+            bucket.insert(bucket.begin(), {text, userPhraseScore});
+            longestPhrase = (std::max)(longestPhrase, count);
+        }
+    }
     Text reading(const Text& code) const {
         Text result;
         for (auto ch : code) { auto it = keys.find(ch); if (it != keys.end()) result += it->second; }
         return result;
     }
 };
-inline wchar_t codeKey(WPARAM key) {
+inline wchar_t keyChar(WPARAM key) {
     if (key >= 'A' && key <= 'Z') return wchar_t(key + 32);
     if (key >= '0' && key <= '9') return wchar_t(key);
     switch (key) {
     case VK_OEM_COMMA: return L','; case VK_OEM_PERIOD: return L'.';
     case VK_OEM_1: return L';'; case VK_OEM_2: return L'/'; case VK_OEM_MINUS: return L'-';
+    case VK_OEM_7: return L'\''; case VK_OEM_PLUS: return L'=';
     default: return 0;
     }
+}
+// The key as the word list spells it, or 0 when the layout has no symbol on that key.
+inline wchar_t codeKey(WPARAM key,KeyLayout layout=KeyLayout::Standard) {
+    const wchar_t ch=keyChar(key);
+    if(layout==KeyLayout::Standard || !ch)return ch;
+    static constexpr wchar_t eten[]  =L"bpmfdtnlvkhg7c,./j;'sexuaorwiqzy890-=1234";
+    static constexpr wchar_t daqian[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
+    const wchar_t* at=std::wcschr(eten,ch);
+    return at?daqian[at-eten]:0;
 }
 class Input {
     struct Segment { Text text; size_t count; std::optional<Correction> correction; };
@@ -171,6 +208,7 @@ class Input {
     size_t highlighted=0;
     std::shared_ptr<const Preferences> preferences;
     Segmenter segmenter=configuredSegmenter();
+    KeyLayout layout=configuredLayout();
     std::optional<bool> simplifiedOutput;
     Text prefix() const { Text s;for(const auto& seg:locked)s+=seg.text;return s; }
     static Text context(const Text& prefix){
@@ -280,6 +318,7 @@ public:
     explicit Input(const Dictionary& d):dict(d){}
     void setPreferences(std::shared_ptr<const Preferences> p){preferences=std::move(p);}
     void setSegmenter(Segmenter mode){segmenter=mode;}
+    void setLayout(KeyLayout keys){layout=keys;}
     // Unset follows the user setting each time text is committed.
     void setSimplifiedOutput(std::optional<bool> mode){simplifiedOutput=mode;}
     bool learningActive() const {return bool(preferences);}
@@ -338,7 +377,7 @@ public:
     }
     bool wants(WPARAM key) const {
         if(picking) return (key>='1' && key<='9') || key==VK_NEXT || key==VK_PRIOR || key==VK_UP || key==VK_DOWN || key==VK_LEFT || key==VK_RIGHT || key==VK_SPACE || key==VK_ESCAPE || key==VK_RETURN || key==VK_BACK;
-        if(dict.keys.count(codeKey(key))) return true;
+        if(dict.keys.count(codeKey(key,layout))) return true;
         return active() && (key==VK_BACK || key==VK_ESCAPE || key==VK_RETURN || key==VK_SPACE || key==VK_DOWN || key==VK_END);
     }
     // Returns committed text separately from the remaining preedit.
@@ -405,7 +444,7 @@ public:
             Text result=preview(); clear();
             return simplifiedOutput.value_or(configuredSimplifiedOutput())?convertScript(result,true):result;
         }
-        wchar_t ch=codeKey(key);
+        wchar_t ch=codeKey(key,layout);
         if(raw.size()>=5 || syllables.size()>=128) return {};
         raw+=ch;
         if(ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7') finishSyllable();
