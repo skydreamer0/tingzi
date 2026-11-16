@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>聽字</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <main class="capsule" data-state="idle" data-tauri-drag-region>
+    <button id="mic" type="button" aria-label="開始錄音" aria-pressed="false">
+      <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <rect class="glyph-mic" x="9" y="3" width="6" height="11" rx="3"/>
+        <path class="glyph-mic" d="M5 11C5 15 8 18 12 18C16 18 19 15 19 11M12 18V21M9 21H15"/>
+        <rect class="glyph-stop" x="7" y="7" width="10" height="10" rx="2.5"/>
+      </svg>
+    </button>
+    <div class="body" data-tauri-drag-region>
+      <p id="status" role="status" aria-live="polite" data-tauri-drag-region>按麥克風開始</p>
+      <div class="meter" aria-hidden="true"><span id="level"></span></div>
+    </div>
+  </main>
+  <script src="app.js"></script>
+</body>
+</html>
