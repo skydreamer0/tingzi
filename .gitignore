@@ -1,0 +1,30 @@
+# Local-only working data, private dictionaries, fixtures, and installation packages
+/rea-local/
+/.rea-local/
+/.build/
+**/bin/
+**/obj/
+__pycache__/
+*.pyc
+*.obj
+*.pdb
+*.dll
+*.exe
+*.wav
+*.cin
+*.db
+*.db-*
+*.sqlite*
+*.log
+*.zip
+*.gpr
+*.rep/
+phrases.txt
+voice-settings.json
+voice-root.txt
+codex-clipboard-*
+.env
+.env.*
+
+# Private workflow receipts and local task data
+/.dev-data/

@@ -1,0 +1,24 @@
+{
+  "source": "https://github.com/openvanilla/McBopomofo",
+  "commit": "1cb01763f09dd72290021b7d880e668c59d02f82",
+  "license": "MIT data license, full text in McBopomofo-LICENSE.txt",
+  "cin": "Public BPMFBase big5 entries, deduplicated. Product priority 你/妳 and three other priorities. No vendor data.",
+  "phrases": "Byte-identical upstream data.txt rebuilt from pinned source.",
+  "files": [
+    {
+      "path": "Tingzi.cin",
+      "sha256": "9189d526d78ed5a94b6a3ecd3374685d55d2982bf0e5aae853a9d63c75cadcf6",
+      "bytes": 129792
+    },
+    {
+      "path": "phrases.txt",
+      "sha256": "6a8beb29f2c5f156e073c1cfdc26b5abbc2f610f815e187b7ec927656adecbd3",
+      "bytes": 7729734
+    },
+    {
+      "path": "McBopomofo-LICENSE.txt",
+      "sha256": "72ed32193b0c629def66df63791b2fb125946b593a3251380e6b949488f47b72",
+      "bytes": 1083
+    }
+  ]
+}

@@ -1,0 +1,25 @@
+name: 回報輸入問題
+description: 描述在 Windows 遇到的語音、注音或安裝問題
+title: "[問題] "
+body:
+  - type: input
+    id: version
+    attributes:
+      label: 聽字與 Windows 版本
+      placeholder: 例如「0.6.0，Windows 11 24H2」
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 如何重現
+      description: 請寫下使用的程式、輸入方式與操作順序。語音或詞庫內容請使用可分享的範例。
+    validations:
+      required: true
+  - type: textarea
+    id: result
+    attributes:
+      label: 預期結果與實際結果
+      description: 例如「預期插入在記事本游標，實際只出現在浮窗預覽」。
+    validations:
+      required: true

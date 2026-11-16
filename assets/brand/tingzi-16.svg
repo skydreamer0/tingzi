@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16" role="img" aria-labelledby="title">
+  <title id="title">聽字｜完整橫耳鍵帽，16 像素</title>
+  <rect y="1" width="16" height="14" rx="3" fill="#303897"/>
+  <rect x="1" y="2" width="14" height="11" rx="2" fill="#E4E8FF"/>
+  <g fill="#303897">
+    <path d="M12 3h1v9h-1z"/>
+    <path d="M3 5h10v1H3z"/>
+    <path d="M2 9h11v1H2z"/>
+    <path d="M9 5h1v5H9z"/>
+    <path d="M6 5h1v5H6z"/>
+    <path d="M3 4h1v7H3z"/>
+  </g>
+</svg>
