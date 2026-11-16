@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>TingziFloat</AssemblyName>
-    <Version>0.6.1</Version>
+    <Version>0.6.2</Version>
     <Product>聽字・注音與語音輸入法</Product>
     <Title>聽字・注音與語音輸入法</Title>
     <Description>繁體中文注音與語音輸入法</Description>
@@ -16,5 +16,8 @@
   <ItemGroup>
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
     <PackageReference Include="NAudio" Version="2.2.1" />
+  </ItemGroup>
+  <ItemGroup>
+    <EmbeddedResource Include="../../assets/icons/*.svg" LogicalName="icons/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

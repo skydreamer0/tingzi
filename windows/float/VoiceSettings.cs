@@ -9,6 +9,10 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
 {
     public bool AutoInsert { get; init; } = true;
     public bool Simplified { get; init; }
+    public ThemeMode Appearance { get; init; }
+    public bool SystemAccent { get; init; }
+    [System.Text.Json.Serialization.JsonIgnore]
+    public Theme Colors => Theme.Resolve(Appearance, SystemAccent);
     public VoiceDeliveryMode? DeliveryMode { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public VoiceDeliveryMode EffectiveDeliveryMode => DeliveryMode ?? (AutoInsert ? VoiceDeliveryMode.Auto : VoiceDeliveryMode.PreviewOnly);
@@ -16,7 +20,7 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
         "Tingzi", "voice-settings.json");
     public bool Valid => (Modifiers is 3 or 5 or 6) && (RecordKey == Keys.None || (RecordKey >= Keys.A && RecordKey <= Keys.Z))
         && !(Modifiers == 3 && RecordKey == Keys.V) && TextSize is 18 or 20 or 24
-        && (DeliveryMode == null || Enum.IsDefined(DeliveryMode.Value));
+        && (DeliveryMode == null || Enum.IsDefined(DeliveryMode.Value)) && Enum.IsDefined(Appearance);
     public static VoiceSettings Load()
     {
         try { var value = JsonSerializer.Deserialize<VoiceSettings>(File.ReadAllText(FilePath)); if (value?.Valid == true) return value; }
@@ -28,6 +32,9 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
         // The text service reads the same choice when it commits Zhuyin text.
         using (var engine = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Tingzi\Engine"))
             engine.SetValue("SimplifiedOutput", Simplified ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
+        // The candidate window and composition line follow the same colour choice.
+        using (var look = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Tingzi\Appearance"))
+            look.SetValue("Theme", (int)Appearance, Microsoft.Win32.RegistryValueKind.DWord);
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         var tmp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try { File.WriteAllText(tmp, JsonSerializer.Serialize(this)); File.Move(tmp, FilePath, true); }
@@ -84,10 +91,11 @@ internal static class VoiceDialogs
     static Form Dialog(string title, Size size) => new Form { Text = title, ClientSize = size, MinimumSize = size,
         Font = new Font("Microsoft JhengHei UI", 11), AutoScaleMode = AutoScaleMode.Dpi,
         Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath), StartPosition = FormStartPosition.CenterScreen };
-    static Button ActionButton(string label, Action action)
+    static Button ActionButton(string label, Action action, string? icon = null)
     {
         var button = new Button { Text=label, AutoSize=true, AutoSizeMode=AutoSizeMode.GrowAndShrink, MinimumSize=new Size(120,38), Padding=new Padding(12,5,12,5), Margin=new Padding(0,0,8,10), UseVisualStyleBackColor=false, BackColor=Color.White, ForeColor=Color.FromArgb(25,49,78), FlatStyle=FlatStyle.Flat, AccessibleName=label };
         button.FlatAppearance.BorderColor=Color.FromArgb(174,190,208);
+        button.Tag = icon;
         button.Click += (_,_) => action(); return button;
     }
     static ComboBox Choices(string[] options,int index)
@@ -100,10 +108,25 @@ internal static class VoiceDialogs
         var form = Dialog("聽字・注音與語音輸入法 · 設定", new Size(600,620));
         form.MinimumSize = new Size(360, 360);
         form.BackColor = Color.FromArgb(243,246,250);
-        var tabs = new TabControl { Dock = DockStyle.Fill, Padding = new Point(20,10) };
-        var voicePage = new TabPage("語音輸入") { BackColor = Color.White, Padding = new Padding(8) };
-        var zhuyinPage = new TabPage("注音與工具") { BackColor = Color.White, Padding = new Padding(18), AutoScroll = true };
-        tabs.TabPages.Add(voicePage); tabs.TabPages.Add(zhuyinPage);
+        var tabs = new PageHost { Dock = DockStyle.Fill };
+        var voicePage = new Panel { BackColor = Color.White, Padding = new Padding(8) };
+        var zhuyinPage = new Panel { BackColor = Color.White, Padding = new Padding(18), AutoScroll = true };
+        tabs.Add("語音輸入", "mic", voicePage); tabs.Add("注音與工具", "keyboard", zhuyinPage);
+        var lookPage = new Panel { BackColor = Color.White, Padding = new Padding(18), AutoScroll = true };
+        tabs.Add("外觀與啟動", "theme", lookPage);
+        var look = new TableLayoutPanel { Dock = DockStyle.Top, ColumnCount = 1, AutoSize = true };
+        look.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
+        void LookRow(string label, Control control) {
+            look.Controls.Add(new Label { Text=label, AutoSize=true, ForeColor=Color.FromArgb(25,49,78), Font=new Font(form.Font,FontStyle.Bold), Margin=new Padding(2,14,0,6) });
+            control.AccessibleName=label; control.Margin=new Padding(2,0,2,4); look.Controls.Add(control);
+        }
+        var appearance = Choices(new[]{"跟隨 Windows","淺色","深色"}, (int)current.Appearance);
+        var accent = Choices(new[]{"聽字靛色","跟隨 Windows 強調色"}, current.SystemAccent ? 1 : 0);
+        var startup = new CheckBox { Text="登入 Windows 時啟動語音浮窗", AutoSize=true, Checked=LoginStartup.Enabled };
+        LookRow("色系", appearance); LookRow("強調色", accent); LookRow("啟動", startup);
+        look.Controls.Add(new Label { AutoSize=true, MaximumSize=new Size(520,0), ForeColor=Color.FromArgb(66,83,103), Margin=new Padding(2,14,2,0),
+            Text="色系會套用到設定、浮條、系統匣選單，以及注音的候選窗與輸入行。變更在按下「儲存設定」後生效。" });
+        lookPage.Controls.Add(look);
         var header = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, BackColor=Color.White, Padding = new Padding(20,16,20,12), ColumnCount = 2 };
         header.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100));
         header.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
@@ -113,7 +136,7 @@ internal static class VoiceDialogs
         brand.Controls.Add(new Label { Text="聽字・注音與語音輸入法", Font=new Font(form.Font.FontFamily,14,FontStyle.Bold), ForeColor=Color.FromArgb(18,113,112), AutoSize=true, Margin=new Padding(0,0,0,0) });
         form.Disposed += (_,_) => brandImage?.Dispose();
         header.Controls.Add(brand,0,0);
-        var recover = ActionButton("返回浮條", form.Close);
+        var recover = ActionButton("返回浮條", form.Close, "back");
         header.Controls.Add(recover,1,0); recover.Margin=new Padding(8,0,0,0); recover.Anchor=AnchorStyles.Right | AnchorStyles.Top; header.TabIndex=0; recover.TabIndex=0; tabs.TabIndex=1;
         var footer = new FlowLayoutPanel { Dock = DockStyle.Bottom, AutoSize = true, BackColor=Color.White, WrapContents=false, Padding = new Padding(20,12,20,12), FlowDirection = FlowDirection.RightToLeft };
         form.Controls.Add(tabs); form.Controls.Add(footer); form.Controls.Add(header);
@@ -168,7 +191,7 @@ internal static class VoiceDialogs
         var status = new Label { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DarkRed,
             Text=bound?"":"目前錄音快捷鍵被占用，請選其他組合。" };
         panel.Controls.Add(status,0,13);
-        var save = ActionButton("儲存設定", () => { }); save.BackColor=Color.FromArgb(18,113,112); save.ForeColor=Color.White; var cancel=ActionButton("取消", form.Close); cancel.DialogResult=DialogResult.Cancel;
+        var save = ActionButton("儲存設定", () => { }, "check"); save.BackColor=Color.FromArgb(18,113,112); save.ForeColor=Color.White; var cancel=ActionButton("取消", form.Close, "close"); cancel.DialogResult=DialogResult.Cancel;
         save.Margin=new Padding(8,0,0,0); cancel.Margin=Padding.Empty;
         footer.TabIndex=2; save.TabIndex=1; cancel.TabIndex=0; footer.Controls.Add(save); footer.Controls.Add(cancel);
         var tools = new FlowLayoutPanel { Dock = DockStyle.Top, AutoSize = true, FlowDirection = FlowDirection.TopDown, WrapContents = false, Padding = new Padding(0,0,0,12) };
@@ -177,9 +200,9 @@ internal static class VoiceDialogs
             tools.Controls.Add(new Label { Text=explanation, AutoSize=true, MaximumSize=new Size(560,0), ForeColor=Color.FromArgb(66,83,103), Margin=new Padding(0,0,0,8) });
             tools.Controls.Add(button);
         }
-        var switchZhuyin = ActionButton("切換到注音輸入法", commands.SwitchZhuyin); switchZhuyin.Enabled=commands.KeyboardAvailable;
+        var switchZhuyin = ActionButton("切換到注音輸入法", commands.SwitchZhuyin, "keyboard"); switchZhuyin.Enabled=commands.KeyboardAvailable;
         Tool("注音輸入", commands.KeyboardAvailable ? "切換後，在原本的應用程式內打字。" : "找不到注音切換工具。請重新安裝完整套件，再從 Windows 語言設定確認輸入法。", switchZhuyin);
-        var typingPad = ActionButton("開啟本機打字板", commands.OpenTypingPad); typingPad.Enabled=commands.TypingPadAvailable;
+        var typingPad = ActionButton("開啟本機打字板", commands.OpenTypingPad, "pad"); typingPad.Enabled=commands.TypingPadAvailable;
         Tool("本機打字板", commands.TypingPadAvailable ? "開啟獨立欄位練習注音與選字。" : "找不到打字板或注音詞表，請重新安裝完整套件。", typingPad);
         var learning = new FlowLayoutPanel { AutoSize=true, WrapContents=true, Margin=new Padding(0), FlowDirection=FlowDirection.TopDown };
         var learningStatus = new Label { AutoSize=true, ForeColor=Color.FromArgb(66,83,103), Text=commands.GetLearning == null ? "未安裝本機學習工具" : "讀取學習狀態中…" };
@@ -187,7 +210,7 @@ internal static class VoiceDialogs
         var learningButtons = new FlowLayoutPanel { Enabled=commands.GetLearning == null, AutoSize=true, WrapContents=true, Margin=new Padding(0) };
         learning.Controls.Add(learningButtons);
         foreach (bool enabled in new[]{true,false}) {
-            var button=ActionButton(enabled ? "啟用本機學習" : "關閉本機學習", () => { });
+            var button=ActionButton(enabled ? "啟用本機學習" : "關閉本機學習", () => { }, "learn");
             button.Click += async (_,_) => {
                 learningButtons.Enabled=false;
                 try {
@@ -203,7 +226,7 @@ internal static class VoiceDialogs
             if (!form.IsDisposed) { learningStatus.Text=enabled.HasValue ? (enabled.Value ? "目前已啟用本機學習" : "目前已關閉本機學習") : "無法讀取目前的學習狀態"; learningButtons.Enabled=true; }
         };
         Tool("本機學習", commands.SetLearning == null ? "找不到本機學習工具，請安裝完整套件。" : "按下後立即套用；取消不會還原。", learning);
-        Tool("Windows 語言與鍵盤設定", "管理 Windows 的鍵盤清單和輸入語言。", ActionButton("開啟 Windows 輸入法設定", commands.OpenInputSettings));
+        Tool("Windows 語言與鍵盤設定", "管理 Windows 的鍵盤清單和輸入語言。", ActionButton("開啟 Windows 輸入法設定", commands.OpenInputSettings, "language"));
         zhuyinPage.Controls.Add(tools);
         zhuyinPage.ClientSizeChanged += (_,_) => {
             foreach (var label in tools.Controls.OfType<Label>()) label.MaximumSize=new Size(Math.Max(200,zhuyinPage.ClientSize.Width-52),0);
@@ -213,11 +236,17 @@ internal static class VoiceDialogs
             var index = microphone.SelectedIndex;
             var input = index > 0 && index <= inputs.Count ? inputs[index-1] : null;
             var candidate=new VoiceSettings(engine.SelectedIndex==1,mods[mod.SelectedIndex],key.SelectedIndex==0?Keys.None:(Keys)((int)Keys.A+key.SelectedIndex-1),sizes[size.SelectedIndex],
-                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex, Simplified = script.SelectedIndex == 1 };
+                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex, Simplified = script.SelectedIndex == 1,
+                Appearance = (ThemeMode)appearance.SelectedIndex, SystemAccent = accent.SelectedIndex == 1 };
             var error=apply(candidate);
-            if(error==null) form.Close(); else { status.Text=error; tabs.SelectedTab=voicePage; voicePage.ScrollControlIntoView(status); }
+            if(error==null) {
+                try { LoginStartup.Set(startup.Checked); }
+                catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { }
+                form.Close();
+            } else { status.Text=error; tabs.Open(voicePage); voicePage.ScrollControlIntoView(status); }
         };
         form.AcceptButton=save;form.CancelButton=cancel;voicePage.Controls.Add(panel);
+        current.Colors.Apply(form);
         return form;
     }
     public static string? Edit(string text,int pixels)
@@ -229,6 +258,7 @@ internal static class VoiceDialogs
         actions.Controls.Add(new Button{Text="套用",AutoSize=true,DialogResult=DialogResult.OK});
         var cancel=new Button{Text="取消",AutoSize=true,DialogResult=DialogResult.Cancel};actions.Controls.Add(cancel);
         form.CancelButton=cancel;form.Controls.Add(field);form.Controls.Add(actions);
+        VoiceSettings.Load().Colors.Apply(form);
         return form.ShowDialog()==DialogResult.OK?field.Text:null;
     }
 }

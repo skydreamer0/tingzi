@@ -188,7 +188,7 @@ internal static class Program
                     catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) {
                         bound=shortcut.Apply(prefs); return "無法儲存設定。";
                     }
-                    prefs=next; bound=true; capsule.SetTextSize(prefs.TextSize);
+                    prefs=next; bound=true; capsule.SetTextSize(prefs.TextSize); ApplyTheme();
                     if (state == CapsuleState.Idle) {
                         capsule.SetRecognizer(prefs.Online ? "Codex 線上" : "本機 Whisper");
                         RefreshMicrophone();
@@ -239,7 +239,7 @@ internal static class Program
         using var trayIcon = Icon.ExtractAssociatedIcon(Application.ExecutablePath);
         using var tray = new NotifyIcon { Icon = trayIcon, Text="聽字・注音與語音輸入法", ContextMenuStrip=menu, Visible=true };
         tray.MouseClick+=(_,e)=>{ if(e.Button==MouseButtons.Left) Settings(); };
-        void Item(string label, Action action) => menu.Items.Add(label, null, (_, _) => action());
+        void Item(string label, Action action, string? icon = null) => menu.Items.Add(label, null, (_, _) => action()).Tag = icon;
         void Run(string name, string arg) {
             try { Process.Start(new ProcessStartInfo(Path.Combine(root,name), arg) { UseShellExecute = false, CreateNoWindow = true }); }
             catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException or IOException) {
@@ -266,9 +266,9 @@ internal static class Program
                     : "本機 Whisper 或模型尚未就緒。請先完成本機語音模型安裝。";
             } catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return "無法讀取本機語音模型設定。請確認安裝位置與權限。"; }
         }
-        Item("開啟設定…", Settings);
-        Item("顯示／找回浮窗", capsule.Recover);
-        Item("開始／停止錄音", ToggleRecording);
+        Item("開啟設定…", Settings, "settings");
+        Item("顯示／找回浮窗", capsule.Recover, "float");
+        Item("開始／停止錄音", ToggleRecording, "mic");
         async void Import(string path) {
             if (dialogOpen || importing || state is CapsuleState.Recording or CapsuleState.RetryLocal || pending != null || stopping) return;
             importing = true;
@@ -296,29 +296,38 @@ internal static class Program
                 ReleaseAudio(); Update(CapsuleState.Error, "無法讀取或暫存這個音檔");
             } finally { importing = false; }
         }
-        Item("辨識本機音檔…", () => Import(""));
+        Item("辨識本機音檔…", () => Import(""), "audio-file");
         var retryItem = menu.Items.Add("用同一段錄音改跑本機", null, (_, _) => ToggleRecording());
         var discardItem = menu.Items.Add("捨棄這段錄音", null, (_, _) => Discard());
+        retryItem.Tag = "retry"; discardItem.Tag = "trash";
 
-        Item("編輯辨識文字…", Edit);
-        Item("複製辨識文字", () => { if (preview != null) Copy(preview); });
+        Item("編輯辨識文字…", Edit, "edit");
+        Item("複製辨識文字", () => { if (preview != null) Copy(preview); }, "copy");
         void ConvertClipboard(bool simplified) {
             try { if (Clipboard.ContainsText()) Copy(ChineseScript.Convert(Clipboard.GetText(), simplified)); }
             catch (System.Runtime.InteropServices.ExternalException) { }
         }
-        Item("剪貼簿文字轉成繁體", () => ConvertClipboard(false));
-        Item("剪貼簿文字轉成簡體", () => ConvertClipboard(true));
+        Item("剪貼簿文字轉成繁體", () => ConvertClipboard(false), "convert");
+        Item("剪貼簿文字轉成簡體", () => ConvertClipboard(true), "convert");
         var hint = menu.Items.Add("在 Codex 草稿按 Ctrl+Alt+V 貼入"); hint.Enabled = false;
         menu.Opening += (_, _) => {
             retryItem.Visible = discardItem.Visible = state == CapsuleState.RetryLocal;
             if (preview != null) hint.Text = draft.Enable(true) ? "在 Codex 草稿按 Ctrl+Alt+V 貼入" : "請複製後在草稿按 Ctrl+V";
         };
         menu.Items.Add(new ToolStripSeparator());
-        Item("切換到注音輸入法", () => Run("TingziKeyboard.exe","switch"));
-        Item("啟用本機學習", () => Run("TingziLearning.exe","on"));
-        Item("關閉本機學習", () => Run("TingziLearning.exe","off"));
+        Item("切換到注音輸入法", () => Run("TingziKeyboard.exe","switch"), "keyboard");
+        Item("啟用本機學習", () => Run("TingziLearning.exe","on"), "learn");
+        Item("關閉本機學習", () => Run("TingziLearning.exe","off"), "learn");
         Item("收合為右側麥克風", Hide);
-        Item("結束程式", Application.Exit);
+        Item("結束程式", Application.Exit, "exit");
+        void ApplyTheme() { var colors = prefs.Colors; colors.Apply(menu); capsule.SetDarkMode(colors.Dark); }
+        ApplyTheme();
+        Microsoft.Win32.UserPreferenceChangedEventHandler themeChanged = (_, e) => {
+            if (e.Category == Microsoft.Win32.UserPreferenceCategory.General) ApplyTheme();
+        };
+        Microsoft.Win32.SystemEvents.UserPreferenceChanged += themeChanged;
+        try { LoginStartup.Refresh(); }
+        catch (Exception ex) when (ex is UnauthorizedAccessException or System.Security.SecurityException or IOException) { }
         RefreshMicrophone();
         Idle();
         if (showRequested) capsule.Recover(); else capsule.DockRight(true);

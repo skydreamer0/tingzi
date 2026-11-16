@@ -20,6 +20,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 - **換欄也不會貼錯**：錄音途中換了欄位，文字會留在浮窗預覽，讓你自己決定貼到哪裡。
 - **注音修字**：用 Win＋空白鍵切到「聽字・注音與語音輸入法」，在要改的位置打注音選字。
 - **簡體／繁體輸出**：在設定選「輸出文字」，語音結果和注音送出的字都會照選擇轉換；系統匣選單也能把剪貼簿的文字轉成繁體或簡體。
+- **跟著系統的外觀**：設定、浮條、系統匣選單、注音候選窗和輸入行會跟隨 Windows 的深色或淺色模式，也可以固定其中一種；強調色可用聽字靛色或 Windows 的強調色。
 - **內建注音引擎**：使用自己的注音引擎與公開授權詞庫，不需要另外安裝其他輸入法。
 - **本機或線上辨識**：可選本機 Whisper，或透過第三方 `codex-asr` 使用線上辨識。浮條會標示每一句實際用了哪個引擎。
 
@@ -46,7 +47,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-主分支為 **0.6.1 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+主分支為 **0.6.2 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
 ## 安裝（自行建置的套件）
 

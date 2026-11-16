@@ -7,6 +7,21 @@ inline constexpr wchar_t appearanceKey[]=L"Software\\TingziStandaloneRC\\Appeara
 #else
 inline constexpr wchar_t appearanceKey[]=L"Software\\Tingzi\\Appearance";
 #endif
+struct Palette { COLORREF back, text, frame, active, activeText; };
+// Follows the choice saved by the settings window, then Windows; high contrast always wins.
+inline Palette palette() {
+    HIGHCONTRASTW hc{sizeof(hc)};
+    if(SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(hc),&hc,0) && (hc.dwFlags&HCF_HIGHCONTRASTON))
+        return {GetSysColor(COLOR_WINDOW),GetSysColor(COLOR_WINDOWTEXT),GetSysColor(COLOR_WINDOWFRAME),GetSysColor(COLOR_HIGHLIGHT),GetSysColor(COLOR_HIGHLIGHTTEXT)};
+    DWORD choice=0, light=1, bytes=sizeof(DWORD);
+    RegGetValueW(HKEY_CURRENT_USER,appearanceKey,L"Theme",RRF_RT_REG_DWORD,nullptr,&choice,&bytes);
+    bytes=sizeof(DWORD);
+    RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&bytes);
+    const bool dark=choice==2 || (choice!=1 && light==0);
+    return dark ? Palette{RGB(32,35,50),RGB(232,235,255),RGB(74,79,112),RGB(174,182,255),RGB(24,27,60)}
+                : Palette{RGB(255,255,255),RGB(31,36,85),RGB(190,196,228),RGB(48,56,151),RGB(255,255,255)};
+}
+inline void fill(HDC dc,const RECT& r,COLORREF color){SetDCBrushColor(dc,color);FillRect(dc,&r,(HBRUSH)GetStockObject(DC_BRUSH));}
 inline int displaySize(const wchar_t* name, int fallback, std::initializer_list<DWORD> allowed) {
     DWORD size=0, bytes=sizeof(size);
     if(RegGetValueW(HKEY_CURRENT_USER,appearanceKey,name,RRF_RT_REG_DWORD,nullptr,&size,&bytes)==ERROR_SUCCESS &&
@@ -46,10 +61,9 @@ class CompositionLine {
     void paint(HWND hwnd){
         PAINTSTRUCT ps{}; HDC dc=BeginPaint(hwnd,&ps);
         RECT r{};GetClientRect(hwnd,&r);
-        FillRect(dc,&r,GetSysColorBrush(COLOR_WINDOW));
-        FrameRect(dc,&r,GetSysColorBrush(COLOR_WINDOWFRAME));
-        HIGHCONTRASTW hc{sizeof(hc)};
-        bool contrast=SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(hc),&hc,0) && (hc.dwFlags&HCF_HIGHCONTRASTON);
+        const Palette colors=palette();
+        fill(dc,r,colors.back);
+        SetDCBrushColor(dc,colors.frame);FrameRect(dc,&r,(HBRUSH)GetStockObject(DC_BRUSH));
         auto old=SelectObject(dc,font);
         int before=width(dc,runs.before), active=width(dc,runs.active);
         RECT clip{padding,2,(std::max)(LONG(padding),r.right-padding),r.bottom-2};
@@ -57,16 +71,16 @@ class CompositionLine {
         int x=padding-(std::max)(0,before+active-int(clip.right-clip.left));
         TEXTMETRICW tm{}; GetTextMetricsW(dc,&tm);
         int y=(r.bottom-tm.tmHeight)/2;
-        SetBkMode(dc,TRANSPARENT);SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));
+        SetBkMode(dc,TRANSPARENT);SetTextColor(dc,colors.text);
         TextOutW(dc,x,y,runs.before.data(),int(runs.before.size()));
         x+=before;
         if(active){
             RECT highlight{x,2,x+active,r.bottom-2};
-            SetBkColor(dc,contrast?GetSysColor(COLOR_HIGHLIGHT):RGB(0,117,136));
-            SetTextColor(dc,contrast?GetSysColor(COLOR_HIGHLIGHTTEXT):RGB(255,255,255));
+            SetBkColor(dc,colors.active);
+            SetTextColor(dc,colors.activeText);
             ExtTextOutW(dc,x,y,ETO_OPAQUE,&highlight,runs.active.data(),UINT(runs.active.size()),nullptr);
         }
-        SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));
+        SetTextColor(dc,colors.text);
         TextOutW(dc,x+active,y,runs.after.data(),int(runs.after.size()));
         SelectObject(dc,old);EndPaint(hwnd,&ps);
     }

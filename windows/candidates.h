@@ -38,15 +38,15 @@ class CandidateWindow {
     void paint(){
         PAINTSTRUCT ps;HDC dc=BeginPaint(window,&ps);
         RECT bounds;GetClientRect(window,&bounds);
-        FillRect(dc,&bounds,GetSysColorBrush(COLOR_WINDOW)); SetBkMode(dc,TRANSPARENT);
+        const Palette colors=palette(); fill(dc,bounds,colors.back); SetBkMode(dc,TRANSPARENT);
         auto previous=SelectObject(dc,font);
-        RECT top={8,0,bounds.right-6,header};SetTextColor(dc,GetSysColor(COLOR_WINDOWTEXT));
+        RECT top={8,0,bounds.right-6,header};SetTextColor(dc,colors.text);
         DrawTextW(dc,title().c_str(),-1,&top,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|DT_END_ELLIPSIS);
         for(int i=0;i<int(labels.size());++i){
             bool active=page*9+i==selected;
             RECT r={i%columns*cellW,header+i/columns*cellH,(i%columns+1)*cellW,header+(i/columns+1)*cellH};
-            if(active)FillRect(dc,&r,GetSysColorBrush(COLOR_HIGHLIGHT));
-            SetTextColor(dc,GetSysColor(active?COLOR_HIGHLIGHTTEXT:COLOR_WINDOWTEXT));r.left+=7;
+            if(active)fill(dc,r,colors.active);
+            SetTextColor(dc,active?colors.activeText:colors.text);r.left+=7;
             Text text=std::to_wstring(i+1)+L"  "+labels[i];
             DrawTextW(dc,text.c_str(),-1,&r,DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         }

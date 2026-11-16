@@ -9,6 +9,25 @@ internal static class VoiceDeliveryTests
     static async Task<int> Main(string[] args)
     {
         if (CodexFocusProbe.IsProbe(args)) return CodexFocusProbe.Run(args);
+        if (args.Length == 2 && args[0] == "--render-settings") { RenderSettings(args[1]); return 0; }
+        Check("every icon in the set draws", () => {
+            var names = typeof(Icons).Assembly.GetManifestResourceNames().Where(n => n.StartsWith("icons/")).ToArray();
+            if (names.Length < 20) throw new Exception("icon set incomplete: " + names.Length);
+            foreach (var resource in names) {
+                using var image = Icons.Render(resource[6..^4], 32, Color.Black);
+                bool drawn = false;
+                for (int x = 0; x < 32 && !drawn; x++) for (int y = 0; y < 32 && !drawn; y++) drawn = image.GetPixel(x, y).A > 0;
+                if (!drawn) throw new Exception("blank icon " + resource);
+            }
+        });
+        Check("themes keep text readable", () => {
+            foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark }) {
+                var theme = Theme.Resolve(mode, false);
+                if (theme.Dark != (mode == ThemeMode.Dark)) throw new Exception("mode");
+                if (Contrast(theme.Text, theme.Surface) < 7 || Contrast(theme.Muted, theme.Surface) < 4.5 || Contrast(theme.OnAccent, theme.Accent) < 4.5)
+                    throw new Exception("contrast " + mode);
+            }
+        });
         await Check("bounded focus probes reject hangs and recover", BoundedProbe);
         Check("script conversion maps characters both ways", () => {
             if (ChineseScript.Convert("語音輸入與體驗", true) != "语音输入与体验") throw new Exception("to simplified");
@@ -185,6 +204,33 @@ internal static class VoiceDeliveryTests
         Func<string, bool>? clipboardMatches = null) =>
         VoiceTextDelivery.DeliverAsync(text, mode, target, token, isCurrent,
             value => { copy(value); return true; }, clipboardMatches);
+
+    static double Contrast(Color a, Color b)
+    {
+        static double Channel(int v) { double s = v / 255.0; return s <= 0.03928 ? s / 12.92 : Math.Pow((s + 0.055) / 1.055, 2.4); }
+        static double Lum(Color c) => 0.2126 * Channel(c.R) + 0.7152 * Channel(c.G) + 0.0722 * Channel(c.B);
+        double hi = Math.Max(Lum(a), Lum(b)), lo = Math.Min(Lum(a), Lum(b));
+        return (hi + 0.05) / (lo + 0.05);
+    }
+
+    // Development aid: writes the settings window in both themes so the layout can be reviewed.
+    static void RenderSettings(string folder)
+    {
+        Directory.CreateDirectory(folder);
+        foreach (var mode in new[] { ThemeMode.Light, ThemeMode.Dark })
+            for (int tab = 0; tab < 3; tab++)
+            {
+                using var form = VoiceDialogs.CreateSettings(new VoiceSettings { Appearance = mode }, true, _ => null,
+                    new SettingsActions(() => { }, () => { }, () => { }, true, true, "本機 Whisper 與模型已就緒。"));
+                form.StartPosition = FormStartPosition.Manual; form.Location = new Point(-4000, -4000); form.Show();
+                form.Controls.OfType<PageHost>().First().SelectedIndex = tab;
+                Application.DoEvents();
+                using var image = new Bitmap(form.Width, form.Height);
+                form.DrawToBitmap(image, new Rectangle(Point.Empty, form.Size));
+                image.Save(Path.Combine(folder, $"settings-{mode}-{tab}.png"));
+                form.Close();
+            }
+    }
 
     static async Task Check(string name, Func<Task> body)
     {
