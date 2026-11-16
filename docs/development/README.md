@@ -17,6 +17,7 @@
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
 | `windows/float/ZhuyinOptions.cs` | 設定頁寫給注音服務的選項（鍵盤配置、選字方式、字級）與自訂詞的讀寫。 |
+| `windows/float/Controls.cs` | 設定視窗自繪的元件：卡片、圓角按鈕、開關與產品標誌。 |
 | `windows/float/Appearance.cs` | 色系（跟隨 Windows 或固定深淺色）、圖示繪製與登入啟動。 |
 | `assets/icons/` | 介面圖示集的 SVG 原稿，建置時嵌入浮窗程式；規範見[圖示集說明](../../assets/icons/README.md)。 |
 | `assets/brand/` | 橫耳鍵品牌素材。Windows 建置使用 `windows/tingzi.svg` 與 `windows/tingzi.ico`。 |
@@ -63,7 +64,7 @@ python windows/package_release.py <package-directory> <new-output.zip> --cargo-m
 
 ## 版本與授權界線
 
-主分支的浮窗專案、升級目錄與打包器均標記程式版本 `0.6.3`，這是開發版資訊，不代表已發行。
+主分支的浮窗專案、升級目錄與打包器均標記程式版本 `0.6.4`，這是開發版資訊，不代表已發行。
 
 AudioNotes 元件的授權見[MIT 原文](../../windows/float/AudioNotes/LICENSE)。NAudio 版本為 2.2.1。打包器記錄第三方 codex-asr 0.1.2 及其依賴，但預建執行檔來源仍須發版時核驗。專案整體授權、公開時間、可重現建置、簽章和試行驗收仍待確認。
 
