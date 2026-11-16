@@ -6,6 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>VoiceDelivery.Tests</AssemblyName>
+    <ApplicationIcon>../tingzi.ico</ApplicationIcon>
   </PropertyGroup>
   <ItemGroup>
     <FrameworkReference Include="Microsoft.WindowsDesktop.App.WPF" />
@@ -15,6 +16,7 @@
     <Compile Include="../float/VoiceSettings.cs" Link="Product/VoiceSettings.cs" />
     <Compile Include="../float/Appearance.cs" Link="Product/Appearance.cs" />
     <Compile Include="../float/ZhuyinOptions.cs" Link="Product/ZhuyinOptions.cs" />
+    <Compile Include="../float/Controls.cs" Link="Product/Controls.cs" />
   </ItemGroup>
   <ItemGroup>
     <EmbeddedResource Include="../../assets/icons/*.svg" LogicalName="icons/%(Filename)%(Extension)" />

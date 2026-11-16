@@ -121,7 +121,7 @@ public sealed class LayeredCapsuleWindow : IDisposable, IMessageFilter
     {
         if (settings == null) return;
         var work = GetMonitorWorkArea();
-        var width = Math.Min(Scale(560), work.Right - work.Left);
+        var width = Math.Min(Scale(780), work.Right - work.Left);
         var height = Math.Min(Scale(640), work.Bottom - work.Top);
         var bounds = settings.Bounds;
         SetWindowPos(hwnd, new nint(-1), Math.Clamp(bounds.Left, work.Left, work.Right - width),

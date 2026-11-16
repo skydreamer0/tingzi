@@ -24,7 +24,7 @@ internal sealed record Theme(bool Dark, Color Back, Color Surface, Color Input, 
         return dark
             ? new Theme(true, Color.FromArgb(24, 26, 38), Color.FromArgb(32, 35, 50), Color.FromArgb(44, 48, 68),
                 Color.FromArgb(232, 235, 255), Color.FromArgb(166, 172, 205), Color.FromArgb(74, 79, 112), accent, onAccent, Color.FromArgb(255, 140, 130))
-            : new Theme(false, Color.FromArgb(243, 245, 252), Color.White, Color.White,
+            : new Theme(false, Color.FromArgb(243, 245, 252), Color.White, Color.FromArgb(245, 246, 253),
                 Color.FromArgb(31, 36, 85), Color.FromArgb(84, 90, 128), Color.FromArgb(190, 196, 228), accent, onAccent, Color.FromArgb(176, 40, 30));
     }
 
@@ -92,6 +92,15 @@ internal sealed record Theme(bool Dark, Color Back, Color Surface, Color Input, 
             case TextBox field:
                 field.BackColor = Input; field.ForeColor = Text; field.BorderStyle = BorderStyle.FixedSingle;
                 break;
+            case Card card:
+                card.Fill = Surface; card.Edge = Border; card.BackColor = Back;
+                break;
+            case Toggle toggle:
+                toggle.Colors = this; toggle.Invalidate();
+                break;
+            case PictureBox picture when picture.Tag is string glyph:
+                picture.Image = Icons.Render(glyph, picture.LogicalToDeviceUnits(20), Accent);
+                break;
             case ListBox list:
                 list.BackColor = Input; list.ForeColor = Text; list.BorderStyle = BorderStyle.FixedSingle;
                 break;
@@ -142,27 +151,38 @@ internal sealed record Theme(bool Dark, Color Back, Color Surface, Color Input, 
     [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(nint window, string? app, string? ids);
 }
 
-/// <summary>Pages with a tab strip the theme can colour, which the system tab control cannot.</summary>
+/// <summary>Pages with a navigation column beside them, the way Windows Settings lays itself out.</summary>
 internal sealed class PageHost : Panel
 {
-    readonly FlowLayoutPanel strip = new() { Dock = DockStyle.Top, AutoSize = true, WrapContents = false, Padding = new Padding(14, 8, 14, 0), BackColor = Theme.MarkBack };
-    readonly Panel body = new() { Dock = DockStyle.Fill };
-    readonly List<(Button Tab, Panel Page)> pages = new();
+    readonly Panel side = new() { Dock = DockStyle.Left, Width = 184, Padding = new Padding(10, 16, 6, 10), BackColor = Theme.MarkBack };
+    readonly FlowLayoutPanel nav = new() { Dock = DockStyle.Fill, FlowDirection = FlowDirection.TopDown, WrapContents = false, BackColor = Color.Transparent };
+    readonly Panel body = new() { Dock = DockStyle.Fill, BackColor = Theme.MarkBack };
+    readonly List<(RoundButton Tab, Panel Page)> pages = new();
+    readonly Bitmap mark = Brand.Render(64);
     Theme? theme;
     int selected;
 
-    public PageHost() { Controls.Add(body); Controls.Add(strip); }
+    public PageHost()
+    {
+        var brand = new TableLayoutPanel { Dock = DockStyle.Top, AutoSize = true, ColumnCount = 2, RowCount = 2, BackColor = Color.Transparent, Padding = new Padding(4, 0, 0, 14) };
+        brand.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize)); brand.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        var picture = new PictureBox { Image = mark, SizeMode = PictureBoxSizeMode.Zoom, Size = new Size(36, 36), Margin = new Padding(0, 2, 10, 0), TabStop = false, BackColor = Color.Transparent };
+        brand.Controls.Add(picture, 0, 0); brand.SetRowSpan(picture, 2);
+        brand.Controls.Add(new Label { Text = "聽字", AutoSize = true, Font = new Font("Microsoft JhengHei UI", 14, FontStyle.Bold), ForeColor = Theme.MarkText, BackColor = Color.Transparent, Margin = new Padding(0, 0, 0, 0) }, 1, 0);
+        brand.Controls.Add(new Label { Text = "注音與語音輸入法", AutoSize = true, Font = new Font("Microsoft JhengHei UI", 8.5f), ForeColor = Theme.MarkMuted, BackColor = Color.Transparent, Margin = new Padding(1, 0, 0, 0) }, 1, 1);
+        side.Controls.Add(nav); side.Controls.Add(brand);
+        Controls.Add(body); Controls.Add(side);
+        Disposed += (_, _) => mark.Dispose();
+    }
 
     public void Add(string title, string icon, Panel page)
     {
-        var tab = new Button { Text = title, Tag = icon, AutoSize = true, AutoSizeMode = AutoSizeMode.GrowAndShrink, FlatStyle = FlatStyle.Flat,
-            Padding = new Padding(10, 6, 12, 6), Margin = new Padding(0, 0, 6, 0), AccessibleName = title, AccessibleRole = AccessibleRole.PageTab,
-            UseVisualStyleBackColor = false, BackColor = Color.White, ForeColor = Theme.MarkText };
-        tab.FlatAppearance.BorderSize = 0;
+        var tab = new RoundButton { Text = title, Tag = icon, Flat = true, AlignLeft = true, Size = new Size(166, 40), Margin = new Padding(0, 0, 0, 4),
+            AccessibleName = title, AccessibleRole = AccessibleRole.PageTab, BackColor = Color.White, ForeColor = Theme.MarkText };
         int index = pages.Count;
         tab.Click += (_, _) => SelectedIndex = index;
         page.Dock = DockStyle.Fill; page.Visible = index == 0;
-        strip.Controls.Add(tab); body.Controls.Add(page); pages.Add((tab, page));
+        nav.Controls.Add(tab); body.Controls.Add(page); pages.Add((tab, page));
     }
 
     public int SelectedIndex
@@ -179,7 +199,7 @@ internal sealed class PageHost : Panel
 
     public void Open(Panel page) => SelectedIndex = pages.FindIndex(entry => entry.Page == page);
 
-    public void Use(Theme colors) { theme = colors; strip.BackColor = colors.Back; Restyle(); }
+    public void Use(Theme colors) { theme = colors; side.BackColor = body.BackColor = colors.Back; Restyle(); }
 
     void Restyle()
     {
@@ -188,11 +208,12 @@ internal sealed class PageHost : Panel
         {
             var tab = pages[i].Tab;
             bool on = i == selected;
-            tab.BackColor = on ? theme.Surface : theme.Back;
-            tab.ForeColor = on ? theme.Accent : theme.Muted;
-            tab.FlatAppearance.MouseOverBackColor = theme.Surface;
-            tab.Image = Icons.Render((string)tab.Tag!, tab.LogicalToDeviceUnits(18), tab.ForeColor);
+            tab.BackColor = theme.Surface;
+            tab.Indicator = on ? theme.Accent : null;
+            tab.ForeColor = theme.Text;
+            tab.Image = Icons.Render((string)tab.Tag!, tab.LogicalToDeviceUnits(18), on ? theme.Accent : theme.Muted);
             tab.AccessibleDescription = on ? "已選取" : null;
+            tab.Invalidate();
         }
     }
 }
