@@ -48,12 +48,15 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     Dictionary& dictionary() {
         static Dictionary data;
         static const bool loaded=data.load(folder(module));
-        static const bool extended=(data.loadUser(localLearningDir()+L"\user-phrases.txt"),true);
+        static const bool extended=(data.loadUser(userPhraseFile()),data.loadTemplates(userTemplateFile()),true);
+        static const bool learned=([]{for(const auto& word:Learning().learnedWords())data.addUser(word.reading,word.text);}(),true);
+        (void)learned;
         (void)extended;
         (void)loaded;return data;
     }
     std::unique_ptr<Input> input;
     bool chinese=true, shiftPending=false;
+    static WPARAM withShift(WPARAM k){return (GetKeyState(VK_SHIFT)&0x8000)?(k|shiftKey):k;}
     static bool shift(WPARAM k){return k==VK_SHIFT || k==VK_LSHIFT || k==VK_RSHIFT;}
     static bool shortcut(){
         return ((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN))&0x8000)!=0;
@@ -191,8 +194,8 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     }
     bool wants(ITfContext* c,WPARAM key) const {
         if(losingFocus || !chinese || !input || !c || (composingIn && c!=composingIn.Get()))return false;
-        if((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_SHIFT)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN)) & 0x8000)return false;
-        return input->wants(key);
+        if((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN)) & 0x8000)return false;
+        return input->wants(withShift(key));
     }
     void endLater(){
         hideCompositionUI();
@@ -273,7 +276,7 @@ public:
         }
         shiftPending=false;
         *eat=FALSE;if(!wants(c,k))return S_OK;
-        auto session=new KeyEdit(this,c,k);HRESULT result=E_FAIL;
+        auto session=new KeyEdit(this,c,withShift(k));HRESULT result=E_FAIL;
         HRESULT hr=c->RequestEditSession(client,session,TF_ES_SYNC|TF_ES_READWRITE,&result);
         session->Release();*eat=SUCCEEDED(hr)&&result==S_OK;return S_OK;
     }
@@ -339,8 +342,10 @@ public:
             next.setPreferences(enabled?std::make_shared<const Preferences>(store.ranks()):nullptr);
         }
         auto edits=next.corrections();
+        auto fresh=next.newWords();
         Text commit;
         if(key)commit=next.press(key);else next.clear();
+        auto added=next.addedWord();
         Text text=next.active()?next.preview():commit;
         hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr))return hr;
         ComPtr<ITfRange> caret;
@@ -350,7 +355,10 @@ public:
         input=std::make_unique<Input>(std::move(next));
         if(input->active()){present(ec,c,range.Get(),true);return S_OK;}
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
-        if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty() && !edits.empty())Learning().save(edits);}
+        if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
+                if(!edits.empty() || !fresh.empty()){Learning store;store.save(edits);store.saveWords(fresh);}
+                if(added)appendUserPhrase(added->reading,added->text);
+            }}
         return hr;
     }
 };

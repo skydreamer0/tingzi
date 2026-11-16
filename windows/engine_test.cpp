@@ -88,6 +88,64 @@ int wmain(int argc,wchar_t** argv) {
     enter("T");expect(input.displayRuns().active==L"ㄊ","ETen key shows its own symbol");
     input.clear();input.setLayout(KeyLayout::Standard);
 
+    expect(input.press(shiftKey|VK_OEM_COMMA)==L"，" && !input.active(),"punctuation commits at once when idle");
+    enter("SU3CL3");input.press(shiftKey|VK_OEM_COMMA);enter("SU3CL3");input.press(shiftKey|'1');
+    expect(input.preview()==L"你好，你好！","punctuation stays inside the sentence");
+    expect(input.press(VK_RETURN)==L"你好，你好！","sentence with punctuation commits whole");
+    expect(input.press(VK_OEM_4)==L"「" && input.press(shiftKey|'6')==L"……","brackets and ellipsis");
+    input.press(VK_OEM_3);
+    expect(input.selecting() && input.listTitle()==L"符號" && input.choices().size()>20,"backtick opens the symbol list");
+    expect(input.press('2')==L"。" && !input.active(),"symbol from the list commits when idle");
+    enter("SU3");input.press(VK_OEM_3);input.press('1');
+    expect(input.press(VK_RETURN)==L"你，","symbol from the list joins the sentence");
+
+    enter("G4RU");input.press(VK_OEM_COMMA);enter("4");
+    Text whole=input.preview();
+    input.press(VK_TAB);
+    Text broken=input.preview();
+    input.press(VK_TAB);
+    expect(whole==L"世界" && broken.size()==2 && broken!=whole && input.preview()==whole,"Tab forces a break and a second Tab lifts it");
+    input.clear();
+
+    enter("SU3");input.press(VK_DOWN);input.press(VK_TAB);
+    options=input.choices();
+    expect(input.listTitle()==L"近音字" && std::any_of(options.begin(),options.end(),[](const Choice& c){return c.text==L"李";})
+        && std::none_of(options.begin(),options.end(),[](const Choice& c){return c.text==L"你";}),"Tab in the list shows near-sounding characters");
+    input.press(VK_TAB);
+    expect(input.listTitle()==L"注音選字" && input.choices().front().text==L"你","Tab again returns to the same sound");
+    input.clear();
+
+    enter("SU3CL3");input.press(VK_DOWN);
+    options=input.choices();
+    size_t single=0;while(single<options.size() && !(options[single].count==1 && options[single].text==L"妳"))++single;
+    for(size_t p=0;p<single/9;++p)input.press(VK_NEXT);
+    input.press('1'+single%9);
+    input.press(VK_DOWN);input.press('2');
+    auto fresh=input.newWords();
+    expect(fresh.size()==1 && fresh[0].reading==L"ㄋㄧˇ-ㄏㄠˇ" && fresh[0].text.size()==2 && fresh[0].text[0]==L'妳',"picked characters are offered as a new word");
+    input.clear();
+    enter("SU3CL3");
+    expect(input.newWords().empty(),"an untouched sentence teaches no word");
+    expect(input.press(shiftKey|VK_RETURN)==L"你好" && input.addedWord() && input.addedWord()->reading==L"ㄋㄧˇ-ㄏㄠˇ" && input.addedWord()->text==L"你好","Shift+Enter commits and remembers the word");
+    enter("SU3");
+    expect(input.press(VK_RETURN)==L"你" && !input.addedWord(),"plain Enter remembers nothing");
+
+    {
+        wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
+        Text file=Text(temp)+L"tingzi-templates-test.txt";
+        {std::ofstream out(file,std::ios::binary);out<<narrow(L"ㄋㄧˇ-ㄏㄠˇ\t您好，這是範本\nno tab here\n");}
+        Dictionary own;own.load(Text(argv[1])+L"\\");own.loadTemplates(file);DeleteFileW(file.c_str());
+        Input custom(own);custom.setSegmenter(Segmenter::Path);custom.setLayout(KeyLayout::Standard);custom.setSimplifiedOutput(false);
+        for(const char* k="SU3CL3";*k;++k)custom.press((WPARAM)*k);
+        auto offered=custom.preview();custom.press(VK_DOWN);
+        auto list=custom.choices();
+        auto entry=std::find_if(list.begin(),list.end(),[](const Choice& c){return c.text==L"您好，這是範本";});
+        expect(offered==L"你好" && entry!=list.end(),"a template is offered in the list but not chosen by itself");
+        size_t at=size_t(entry-list.begin());
+        for(size_t p=0;p<at/9;++p)custom.press(VK_NEXT);
+        custom.press('1'+at%9);
+        expect(custom.press(VK_RETURN)==L"您好，這是範本","choosing the template commits its text");
+    }
     {
         wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
         Text file=Text(temp)+L"tingzi-user-phrases-test.txt";

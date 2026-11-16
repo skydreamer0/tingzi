@@ -30,6 +30,15 @@ int wmain(int argc,wchar_t** argv){
     Input other(dict);other.setPreferences(std::make_shared<const Preferences>(reopened.ranks()));
     type(other,"CL3SU3");other.press(VK_END);
     check(other.choices().front().text==L"你","different context unchanged");
+    {
+        std::vector<NewWord> word{{L"ㄒㄧㄠˇ-ㄇㄧㄥˊ",L"曉明"}};
+        check(reopened.saveWords(word) && reopened.learnedWords().empty(),"a new word waits for a second use");
+        check(reopened.saveWords(word) && reopened.learnedWords().size()==1 && reopened.learnedWords()[0].text==L"曉明","a second use keeps the word");
+        auto file=std::filesystem::path(argv[2])/L"export.tsv";
+        size_t before=reopened.ranks().size();
+        check(before>0 && reopened.exportTo(file) && reopened.clear() && reopened.ranks().empty() && reopened.learnedWords().empty(),"clear removes choices and words");
+        check(reopened.importFrom(file) && reopened.ranks().size()==before,"import restores exported choices");
+    }
     check(reopened.forget(L"我愛",L"ㄋㄧˇ"),"forget one reading and context");
     Input phrase(dict);phrase.setPreferences(std::make_shared<const Preferences>(reopened.ranks()));
     type(phrase,"JI394SU3");phrase.press(VK_DOWN);

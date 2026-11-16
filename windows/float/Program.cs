@@ -107,7 +107,15 @@ internal static class Program
             try {
                 var result = await Recognize(path,online,cancel.Token);
                 cancel.Token.ThrowIfCancellationRequested();
-                var spoken = ChineseScript.Convert(result.Text, prefs.Simplified);
+                var heard = result.Text;
+                var wordList = Path.Combine(root, "phrases.txt");
+                if (prefs.UsePhrases && !string.IsNullOrWhiteSpace(heard) && File.Exists(wordList)) {
+                    // Whisper may answer in Simplified characters; the word list and the user's words are Traditional.
+                    var own = UserPhrases.Load();
+                    if (own.Count > 0 && await UserPhrases.SharedLexicon(wordList) is { } lexicon)
+                        heard = UserPhrases.Correct(ChineseScript.Convert(heard, false), own, lexicon);
+                }
+                var spoken = ChineseScript.Convert(heard, prefs.Simplified);
                 if (online && string.IsNullOrWhiteSpace(spoken)) {
                     OfferLocal("線上未回傳文字");
                 }

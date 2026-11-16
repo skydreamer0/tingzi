@@ -39,6 +39,70 @@ internal static class UserPhrases
     public const int Longest = 8;
     public static string FilePath => Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "Tingzi", "user-phrases.txt");
 
+    public static string TemplatePath => Path.Combine(Path.GetDirectoryName(FilePath)!, "user-templates.txt");
+
+    /// <summary>Templates are "reading TAB text"; the text may contain spaces.</summary>
+    public static List<(string Reading, string Word)> LoadTemplates(string? path = null)
+    {
+        var entries = new List<(string, string)>();
+        try
+        {
+            foreach (var line in File.ReadLines(path ?? TemplatePath))
+            {
+                int tab = line.IndexOf('\t');
+                if (tab > 0 && tab < line.Length - 1 && line[..tab].Contains('-')) entries.Add((line[..tab], line[(tab + 1)..]));
+            }
+        }
+        catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+        return entries;
+    }
+
+    public static void SaveTemplates(IEnumerable<(string Reading, string Word)> entries, string? path = null) =>
+        Write(path ?? TemplatePath, entries.Select(entry => entry.Reading + "\t" + entry.Word.Replace('\t', ' ').Replace('\r', ' ').Replace('\n', ' ')));
+
+    /// <summary>Replaces same-sounding characters in recognised speech with the user's own words.</summary>
+    public static string Correct(string text, IEnumerable<(string Reading, string Word)> words, Lexicon lexicon)
+    {
+        var characters = text.ToCharArray();
+        foreach (var (reading, word) in words.OrderByDescending(entry => entry.Word.Length))
+        {
+            var sounds = reading.Split('-');
+            if (word.Length < 2 || sounds.Length != word.Length) continue;
+            for (int at = 0; at + word.Length <= characters.Length; at++)
+            {
+                bool differs = false, matches = true;
+                for (int i = 0; i < word.Length && matches; i++)
+                {
+                    if (characters[at + i] == word[i]) continue;
+                    differs = true;
+                    matches = lexicon.For(characters[at + i]).Contains(sounds[i]);
+                }
+                if (!matches || !differs) continue;
+                word.CopyTo(0, characters, at, word.Length);
+                at += word.Length - 1;
+            }
+        }
+        return new string(characters);
+    }
+
+    static readonly object gate = new();
+    static (string Path, Task<Lexicon?> Loaded)? shared;
+    /// <summary>The word list's readings, read once in the background and kept.</summary>
+    public static Task<Lexicon?> SharedLexicon(string phraseFile)
+    {
+        lock (gate)
+        {
+            if (shared?.Path == phraseFile) return shared.Value.Loaded;
+            var loading = Task.Run(() =>
+            {
+                try { return (Lexicon?)Lexicon.Read(phraseFile); }
+                catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { return null; }
+            });
+            shared = (phraseFile, loading);
+            return loading;
+        }
+    }
+
     public static List<(string Reading, string Word)> Load(string? path = null)
     {
         var words = new List<(string, string)>();
@@ -54,12 +118,14 @@ internal static class UserPhrases
         return words;
     }
 
-    public static void Save(IEnumerable<(string Reading, string Word)> words, string? path = null)
+    public static void Save(IEnumerable<(string Reading, string Word)> words, string? path = null) =>
+        Write(path ?? FilePath, words.Select(word => $"{word.Reading} {word.Word} 0"));
+
+    static void Write(string path, IEnumerable<string> lines)
     {
-        path ??= FilePath;
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         var tmp = path + "." + Guid.NewGuid().ToString("N") + ".tmp";
-        try { File.WriteAllLines(tmp, words.Select(word => $"{word.Reading} {word.Word} 0"), new System.Text.UTF8Encoding(false)); File.Move(tmp, path, true); }
+        try { File.WriteAllLines(tmp, lines, new System.Text.UTF8Encoding(false)); File.Move(tmp, path, true); }
         finally { File.Delete(tmp); }
     }
 

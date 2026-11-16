@@ -2,6 +2,8 @@
 #include <windows.h>
 #include <shlobj.h>
 #include <winsqlite/winsqlite3.h>
+#include <algorithm>
+#include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
@@ -13,6 +15,7 @@ using Text=std::wstring;
 using LearnKey=std::pair<Text,Text>;
 using Preferences=std::map<LearnKey,Text>;
 struct Correction { LearnKey key; Text choice; };
+struct NewWord { Text reading, text; };
 inline Text localLearningDir(){
     PWSTR path=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,KF_FLAG_NO_PACKAGE_REDIRECTION,nullptr,&path)))return {};
@@ -82,7 +85,58 @@ public:
         if(ok && exec("COMMIT"))return true;
         exec("ROLLBACK");return false;
     }
-    bool clear(){return exec("DELETE FROM choices");}
+    // Characters the user picked one after another become a word once the same run is committed twice.
+    bool saveWords(const std::vector<NewWord>& words){
+        if(words.empty())return true;
+        if(!enabled())return false;
+        exec("CREATE TABLE IF NOT EXISTS words(reading TEXT NOT NULL,text TEXT NOT NULL,hits INTEGER NOT NULL,PRIMARY KEY(reading,text)) WITHOUT ROWID");
+        sqlite3_stmt* s=nullptr;
+        bool ok=sqlite3_prepare_v2(db,"INSERT INTO words VALUES(?,?,1) ON CONFLICT(reading,text) DO UPDATE SET hits=MIN(hits+1,9)",-1,&s,nullptr)==SQLITE_OK;
+        for(const auto& word:words){
+            if(!ok)break;
+            bind(s,1,word.reading);bind(s,2,word.text);
+            ok=sqlite3_step(s)==SQLITE_DONE;sqlite3_reset(s);
+        }
+        sqlite3_finalize(s);return ok;
+    }
+    std::vector<NewWord> learnedWords() const {
+        std::vector<NewWord> words;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,text FROM words WHERE hits>=2 AND (SELECT enabled FROM settings)=1",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW){
+                auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
+                words.push_back({col(0),col(1)});
+            }
+        }
+        sqlite3_finalize(s);return words;
+    }
+    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM words");return ok;}
+    // Reads the file exportTo writes; rows already present are replaced.
+    bool importFrom(const std::filesystem::path& path){
+        std::ifstream in(path,std::ios::binary);
+        if(!db || !in || !exec("BEGIN IMMEDIATE"))return false;
+        sqlite3_stmt* s=nullptr;
+        bool ok=sqlite3_prepare_v2(db,"INSERT INTO choices VALUES(?,?,?,?) ON CONFLICT(context,reading) DO UPDATE SET choice=excluded.choice,hits=excluded.hits",-1,&s,nullptr)==SQLITE_OK;
+        std::string line;bool first=true;
+        while(ok && std::getline(in,line)){
+            if(!line.empty() && line.back()=='\r')line.pop_back();
+            if(first){first=false;if(line.rfind("context\t",0)==0)continue;}
+            std::vector<std::string> fields;
+            for(size_t at=0;;){
+                auto tab=line.find('\t',at);
+                fields.push_back(line.substr(at,tab==std::string::npos?tab:tab-at));
+                if(tab==std::string::npos)break;
+                at=tab+1;
+            }
+            if(fields.size()!=4 || fields[0].empty() || fields[1].empty() || fields[2].empty())continue;
+            for(int i=0;i<3;++i)sqlite3_bind_text(s,i+1,fields[i].data(),(int)fields[i].size(),SQLITE_TRANSIENT);
+            sqlite3_bind_int(s,4,std::clamp(std::atoi(fields[3].c_str()),1,2));
+            ok=sqlite3_step(s)==SQLITE_DONE;sqlite3_reset(s);
+        }
+        sqlite3_finalize(s);
+        if(ok && exec("COMMIT"))return true;
+        exec("ROLLBACK");return false;
+    }
     bool forget(const Text& context,const Text& reading){
         sqlite3_stmt* s=nullptr;
         bool ok=db && sqlite3_prepare_v2(db,"DELETE FROM choices WHERE context=? AND reading=?",-1,&s,nullptr)==SQLITE_OK;

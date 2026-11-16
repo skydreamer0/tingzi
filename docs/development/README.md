@@ -64,7 +64,7 @@ python windows/package_release.py <package-directory> <new-output.zip> --cargo-m
 
 ## 版本與授權界線
 
-主分支的浮窗專案、升級目錄與打包器均標記程式版本 `0.6.4`，這是開發版資訊，不代表已發行。
+主分支的浮窗專案、升級目錄與打包器均標記程式版本 `0.6.5`，這是開發版資訊，不代表已發行。
 
 AudioNotes 元件的授權見[MIT 原文](../../windows/float/AudioNotes/LICENSE)。NAudio 版本為 2.2.1。打包器記錄第三方 codex-asr 0.1.2 及其依賴，但預建執行檔來源仍須發版時核驗。專案整體授權、公開時間、可重現建置、簽章和試行驗收仍待確認。
 

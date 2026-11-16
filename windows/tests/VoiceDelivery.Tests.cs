@@ -34,6 +34,16 @@ internal static class VoiceDeliveryTests
                 var saved = UserPhrases.Load(file);
                 Equal(1, saved.Count); Equal("ㄔㄨㄥˊ-ㄧㄠˋ", saved[0].Reading); Equal("重要", saved[0].Word);
                 Equal(0, UserPhrases.Load(Path.Combine(folder, "missing.txt")).Count);
+                File.WriteAllLines(data, new[] { "ㄒㄧㄠˇ 小 -3.0", "ㄒㄧㄠˇ 曉 -4.0", "ㄇㄧㄥˊ 明 -3.0", "ㄇㄧㄥˊ 名 -3.2", "ㄇㄧㄥˋ 命 -3.2", "ㄌㄧˇ 李 -3.0", "ㄌㄧˇ 理 -3.1" });
+                var sounds = UserPhrases.Lexicon.Read(data);
+                var own = new[] { ("ㄌㄧˇ-ㄒㄧㄠˇ-ㄇㄧㄥˊ", "李曉明") };
+                Equal("請李曉明回電", UserPhrases.Correct("請理小名回電", own, sounds));
+                Equal("請李曉明回電", UserPhrases.Correct("請李曉明回電", own, sounds));
+                Equal("理小命", UserPhrases.Correct("理小命", own, sounds));
+                var templateFile = Path.Combine(folder, "user-templates.txt");
+                UserPhrases.SaveTemplates(new[] { ("ㄉㄧˋ-ㄓˇ", "台北市 信義區 1 號") }, templateFile);
+                var templates = UserPhrases.LoadTemplates(templateFile);
+                Equal(1, templates.Count); Equal("ㄉㄧˋ-ㄓˇ", templates[0].Reading); Equal("台北市 信義區 1 號", templates[0].Word);
             } finally { Directory.Delete(folder, true); }
         });
         Check("themes keep text readable", () => {

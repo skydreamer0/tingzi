@@ -9,6 +9,7 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
 {
     public bool AutoInsert { get; init; } = true;
     public bool Simplified { get; init; }
+    public bool UsePhrases { get; init; } = true;
     public ThemeMode Appearance { get; init; }
     public bool SystemAccent { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
@@ -191,6 +192,8 @@ internal static class VoiceDialogs
         Setting(voice, "settings", "辨識方式", commands.RecognitionStatus + " 選用線上辨識時，音檔會經第三方 codex-asr 傳到 ChatGPT。", engine);
         var script = Wide(Choices(new[]{"繁體中文","簡體中文"}, current.Simplified ? 1 : 0), 250);
         Setting(voice, "convert", "輸出文字", "同時套用到語音結果與注音送出的字，逐字轉換。", script);
+        var usePhrases = new Toggle { Checked = current.UsePhrases, Enabled = commands.WordData != null };
+        Setting(voice, "plus", "套用自訂詞", "把辨識結果裡同音的字換成你加入的自訂詞，例如人名和專有名詞。", usePhrases);
         var delivery = Wide(Choices(new[]{"自動插入並複製文字","只複製到剪貼簿","只顯示預覽"}, (int)current.EffectiveDeliveryMode), 250);
         Setting(voice, "copy", "辨識完成後", "錄音途中若切換欄位，辨識文字會留在浮窗預覽。", delivery);
         Section(voice, "操作");
@@ -238,12 +241,15 @@ internal static class VoiceDialogs
         var lineSize = Wide(Choices(ZhuyinOptions.LineSizes.Select(s => s == 0 ? "關閉" : s + " px").ToArray(), Math.Max(0,Array.IndexOf(ZhuyinOptions.LineSizes, zhuyin.LineSize))), 250);
         Setting(typing, "float", "大字輸入行", "打字時在游標旁放大顯示正在組的字。", lineSize);
         Note(typing, "以上四項在按下「儲存設定」後，於重新開啟的應用程式生效。");
+        Setting(typing, "info", "打字時的按鍵", "Shift 加 ， 。 ？ ！ 等鍵輸入全形標點，[ ] 輸入「」，` 開啟符號表。組字時按 Tab 把第一個詞切短，選字時按 Tab 切換近音字。Shift＋Enter 送出並把這段字存成自訂詞。", null);
         Section(typing, "詞語與學習");
-        var phrases = ActionButton("管理", () => EditPhrases(commands.WordData!, current.Colors), "plus"); phrases.Enabled = commands.WordData != null; phrases.AccessibleName = "管理自訂詞";
+        var phrases = ActionButton("管理", () => EditPhrases(commands.WordData!, current.Colors, false), "plus"); phrases.Enabled = commands.WordData != null; phrases.AccessibleName = "管理自訂詞";
         Setting(typing, "plus", "自訂詞", commands.WordData != null ? "加入姓名、專有名詞等詞語，打注音時優先出現。" : "找不到注音詞庫，請重新安裝完整套件。", phrases);
+        var templates = ActionButton("管理", () => EditPhrases(commands.WordData!, current.Colors, true), "copy"); templates.Enabled = commands.WordData != null; templates.AccessibleName = "管理文字範本";
+        Setting(typing, "copy", "文字範本", "打出觸發詞的注音後按 ↓，從候選清單選出整段文字，例如地址或常用回覆。", templates);
         var learn = new Toggle { Enabled = false, AccessibleName = "本機學習" };
         var learning = Setting(typing, "learn", "本機學習", commands.GetLearning == null ? "找不到本機學習工具，請安裝完整套件。" : "讀取學習狀態中…", learn);
-        const string learnOn = "已啟用：記住你改選過的字，下次優先。切換後立即套用。", learnOff = "已關閉：不記錄改字習慣。切換後立即套用。";
+        const string learnOn = "已啟用：記住你改選過的字；連續選出的字出現兩次就記成新詞。切換後立即套用。", learnOff = "已關閉：不記錄改字習慣。切換後立即套用。";
         bool settingLearning = false;
         learn.CheckedChanged += async (_,_) => {
             if (settingLearning || commands.SetLearning == null) return;
@@ -264,9 +270,16 @@ internal static class VoiceDialogs
             learn.Enabled = commands.SetLearning != null;
         };
         if (commands.LearningTool != null) {
-            var export = ActionButton("匯出", () => { }, "export"); export.MinimumSize = new Size(96,34); export.AccessibleName = "匯出學習資料";
-            var clear = ActionButton("清除", () => { }, "trash"); clear.MinimumSize = new Size(96,34); clear.AccessibleName = "清除學習資料";
-            var data = Setting(typing, "export", "學習資料", "匯出成 Tab 分隔的文字檔，或全部清除。", Group(export, clear));
+            var import = ActionButton("匯入", () => { }, "folder"); import.MinimumSize = new Size(84,34); import.AccessibleName = "匯入學習資料";
+            var export = ActionButton("匯出", () => { }, "export"); export.MinimumSize = new Size(84,34); export.AccessibleName = "匯出學習資料";
+            var clear = ActionButton("清除", () => { }, "trash"); clear.MinimumSize = new Size(84,34); clear.AccessibleName = "清除學習資料";
+            var data = Setting(typing, "export", "學習資料", "匯出成文字檔帶到另一台電腦再匯入，或全部清除。", Group(import, export, clear));
+            import.Click += async (_,_) => {
+                using var pick = new OpenFileDialog { Filter="Tab 分隔文字 (*.tsv)|*.tsv|所有檔案 (*.*)|*.*" };
+                if (pick.ShowDialog(form) != DialogResult.OK) return;
+                bool done = await commands.LearningTool(new[]{"import", pick.FileName});
+                if (!form.IsDisposed) data.Description!.Text = done ? "學習資料已匯入。" : "無法匯入這個檔案。";
+            };
             export.Click += async (_,_) => {
                 using var pick = new SaveFileDialog { Filter="Tab 分隔文字 (*.tsv)|*.tsv", FileName="tingzi-learning.tsv", OverwritePrompt=true };
                 if (pick.ShowDialog(form) != DialogResult.OK) return;
@@ -322,7 +335,7 @@ internal static class VoiceDialogs
             var index = microphone.SelectedIndex;
             var input = index > 0 && index <= inputs.Count ? inputs[index-1] : null;
             var candidate=new VoiceSettings(engine.SelectedIndex==1,mods[mod.SelectedIndex],key.SelectedIndex==0?Keys.None:(Keys)((int)Keys.A+key.SelectedIndex-1),sizes[size.SelectedIndex],
-                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex, Simplified = script.SelectedIndex == 1,
+                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex, Simplified = script.SelectedIndex == 1, UsePhrases = usePhrases.Checked,
                 Appearance = (ThemeMode)appearance.SelectedIndex, SystemAccent = accent.SelectedIndex == 1 };
             var error=apply(candidate);
             if(error==null) {
@@ -345,42 +358,52 @@ internal static class VoiceDialogs
             MessageBox.Show("無法開啟：" + target, "聽字・注音與語音輸入法");
         }
     }
-    static void EditPhrases(string wordData, Theme colors)
+    // Custom words and text templates share one editor; a template adds the text its trigger expands to.
+    static void EditPhrases(string wordData, Theme colors, bool templates)
     {
-        using var form = Dialog("聽字 · 自訂詞", new Size(540,540));
-        form.StartPosition = FormStartPosition.CenterParent; form.BackColor = Color.White; form.Padding = new Padding(16); form.MinimumSize = new Size(380,420);
-        var words = UserPhrases.Load();
-        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 6 };
+        string kind = templates ? "範本" : "詞";
+        using var form = Dialog(templates ? "聽字 · 文字範本" : "聽字 · 自訂詞", new Size(560,560));
+        form.BackColor = Color.White; form.Padding = new Padding(16); form.MinimumSize = new Size(420,440);
+        var words = templates ? UserPhrases.LoadTemplates() : UserPhrases.Load();
+        var grid = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 7 };
         grid.ColumnStyles.Add(new ColumnStyle(SizeType.Percent,100)); grid.ColumnStyles.Add(new ColumnStyle(SizeType.AutoSize));
-        foreach (var style in new[]{ SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize })
+        foreach (var style in new[]{ SizeType.AutoSize, SizeType.Percent, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize, SizeType.AutoSize })
             grid.RowStyles.Add(new RowStyle(style,100));
-        var intro = new Label { AutoSize=true, MaximumSize=new Size(500,0), ForeColor=Color.FromArgb(66,83,103), Margin=new Padding(0,0,0,10),
-            Text="加入的詞在打注音時優先出現。輸入詞語後，每個字會帶出讀音；破音字請從下拉選單選對的讀音。新詞在重新開啟的應用程式生效。" };
-        var list = new ListBox { Dock=DockStyle.Fill, IntegralHeight=false, AccessibleName="已加入的詞", Margin=new Padding(0,0,0,10) };
-        void Refill() { list.Items.Clear(); foreach (var entry in words) list.Items.Add(entry.Word + "　" + entry.Reading.Replace("-"," ")); }
-        var word = new TextBox { Dock=DockStyle.Fill, MaxLength=UserPhrases.Longest, AccessibleName="新詞", PlaceholderText="輸入 2 到 8 個字的詞", Enabled=false, Margin=new Padding(0,4,0,6) };
+        var intro = new Label { AutoSize=true, Anchor=AnchorStyles.Left | AnchorStyles.Right, ForeColor=Color.FromArgb(66,83,103), Margin=new Padding(0,0,0,10),
+            Text = templates
+                ? "輸入一個觸發詞（例如「地址」）和要展開的文字。打出觸發詞的注音後按 ↓，就能在候選清單選到這段文字。破音字請選對讀音。新範本在重新開啟的應用程式生效。"
+                : "加入的詞在打注音時優先出現，語音辨識的同音字也會換成這些詞。輸入詞語後，每個字會帶出讀音；破音字請從下拉選單選對的讀音。新詞在重新開啟的應用程式生效。" };
+        var list = new ListBox { Dock=DockStyle.Fill, IntegralHeight=false, AccessibleName=templates ? "已加入的範本" : "已加入的詞", Margin=new Padding(0,0,0,10) };
+        void Refill() {
+            list.Items.Clear();
+            foreach (var entry in words) list.Items.Add(templates ? entry.Reading.Replace("-"," ") + "　→　" + entry.Word : entry.Word + "　" + entry.Reading.Replace("-"," "));
+        }
+        var word = new TextBox { Dock=DockStyle.Fill, MaxLength=UserPhrases.Longest, AccessibleName=templates ? "觸發詞" : "新詞", PlaceholderText=templates ? "觸發詞，2 到 8 個字" : "輸入 2 到 8 個字的詞", Enabled=false, Margin=new Padding(0,4,0,6) };
         var add = ActionButton("加入", () => { }, "plus"); add.BackColor=Color.FromArgb(18,113,112); add.ForeColor=Color.White; add.Margin=new Padding(8,0,0,6); add.MinimumSize=new Size(96,34);
         var readings = new FlowLayoutPanel { Dock=DockStyle.Fill, AutoSize=true, WrapContents=true, Margin=Padding.Empty };
-        var status = new Label { AutoSize=true, MaximumSize=new Size(500,0), ForeColor=Color.FromArgb(66,83,103), Text="讀取詞庫中…", Margin=new Padding(0,6,0,10) };
+        var expansion = new TextBox { Dock=DockStyle.Fill, MaxLength=400, AccessibleName="展開後的文字", PlaceholderText="展開後的文字", Visible=templates, Margin=new Padding(0,2,0,6) };
+        var status = new Label { AutoSize=true, Anchor=AnchorStyles.Left | AnchorStyles.Right, ForeColor=Color.FromArgb(66,83,103), Text="讀取詞庫中…", Margin=new Padding(0,6,0,10) };
         var buttons = new FlowLayoutPanel { Dock=DockStyle.Fill, AutoSize=true, FlowDirection=FlowDirection.RightToLeft, Margin=Padding.Empty };
         var close = ActionButton("關閉", form.Close, "close"); close.Margin=new Padding(8,0,0,0);
-        var remove = ActionButton("刪除選取的詞", () => { }, "trash"); remove.Margin=Padding.Empty;
-        buttons.Controls.Add(close); buttons.Controls.Add(remove);
+        var remove = ActionButton("刪除選取", () => { }, "trash"); remove.Margin=new Padding(8,0,0,0);
+        var exportList = ActionButton("匯出", () => { }, "export"); exportList.Margin=new Padding(8,0,0,0); exportList.MinimumSize=new Size(84,36);
+        var importList = ActionButton("匯入", () => { }, "folder"); importList.Margin=Padding.Empty; importList.MinimumSize=new Size(84,36);
+        buttons.Controls.Add(close); buttons.Controls.Add(remove); buttons.Controls.Add(exportList); buttons.Controls.Add(importList);
         grid.Controls.Add(intro,0,0); grid.SetColumnSpan(intro,2);
         grid.Controls.Add(list,0,1); grid.SetColumnSpan(list,2);
         grid.Controls.Add(word,0,2); grid.Controls.Add(add,1,2);
         grid.Controls.Add(readings,0,3); grid.SetColumnSpan(readings,2);
-        grid.Controls.Add(status,0,4); grid.SetColumnSpan(status,2);
-        grid.Controls.Add(buttons,0,5); grid.SetColumnSpan(buttons,2);
+        grid.Controls.Add(expansion,0,4); grid.SetColumnSpan(expansion,2);
+        grid.Controls.Add(status,0,5); grid.SetColumnSpan(status,2);
+        grid.Controls.Add(buttons,0,6); grid.SetColumnSpan(buttons,2);
         form.Controls.Add(grid);
         UserPhrases.Lexicon? lexicon = null;
         bool Persist() {
-            try { UserPhrases.Save(words); return true; }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { status.Text="無法儲存自訂詞。"; return false; }
+            try { if (templates) UserPhrases.SaveTemplates(words); else UserPhrases.Save(words); return true; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { status.Text="無法儲存。"; return false; }
         }
         form.Shown += async (_,_) => {
-            try { lexicon = await Task.Run(() => UserPhrases.Lexicon.Read(wordData)); }
-            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { }
+            lexicon = await UserPhrases.SharedLexicon(wordData);
             if (form.IsDisposed) return;
             if (lexicon == null) { status.Text="無法讀取注音詞庫，請重新安裝完整套件。"; return; }
             status.Text=""; word.Enabled=true; word.Focus();
@@ -392,7 +415,7 @@ internal static class VoiceDialogs
             var boxes = new List<Control>();
             foreach (char character in word.Text.Trim()) {
                 var options = lexicon.For(character);
-                if (options.Count == 0) { status.Text=$"詞庫裡沒有「{character}」的讀音，無法加入這個詞。"; foreach (var box in boxes) box.Dispose(); return; }
+                if (options.Count == 0) { status.Text=$"詞庫裡沒有「{character}」的讀音，無法使用這個詞。"; foreach (var box in boxes) box.Dispose(); return; }
                 var choice = Choices(options.ToArray(),0); choice.Dock=DockStyle.None; choice.Width=form.LogicalToDeviceUnits(118);
                 choice.AccessibleName=$"「{character}」的讀音"; choice.Margin=new Padding(0,0,6,6); boxes.Add(choice);
             }
@@ -401,20 +424,38 @@ internal static class VoiceDialogs
         };
         add.Click += (_,_) => {
             var text = word.Text.Trim();
-            if (text.Length < 2) { status.Text="請輸入至少兩個字的詞。"; return; }
+            if (text.Length < 2) { status.Text="請輸入至少兩個字。"; return; }
             if (readings.Controls.Count != text.Length) return;
+            var output = templates ? expansion.Text.Trim() : text;
+            if (output.Length == 0) { status.Text="請輸入展開後的文字。"; return; }
             var reading = string.Join("-", readings.Controls.OfType<ComboBox>().Select(box => (string)box.SelectedItem!));
-            words.RemoveAll(entry => entry.Word == text && entry.Reading == reading);
-            words.Add((reading,text));
+            words.RemoveAll(entry => entry.Word == output && entry.Reading == reading);
+            words.Add((reading,output));
             if (!Persist()) return;
-            Refill(); word.Clear(); status.Text=$"已加入「{text}」。"; word.Focus();
+            Refill(); word.Clear(); expansion.Clear(); status.Text=$"已加入「{(templates ? text : output)}」。"; word.Focus();
         };
         remove.Click += (_,_) => {
             int index = list.SelectedIndex;
-            if (index < 0) { status.Text="請先在清單選一個詞。"; return; }
+            if (index < 0) { status.Text="請先在清單選一項。"; return; }
             var gone = words[index]; words.RemoveAt(index);
             if (!Persist()) { words.Insert(index,gone); return; }
-            Refill(); status.Text=$"已刪除「{gone.Word}」。";
+            Refill(); status.Text="已刪除。";
+        };
+        exportList.Click += (_,_) => {
+            using var pick = new SaveFileDialog { Filter="文字檔 (*.txt)|*.txt", FileName=templates ? "tingzi-templates.txt" : "tingzi-words.txt", OverwritePrompt=true };
+            if (pick.ShowDialog(form) != DialogResult.OK) return;
+            try { if (templates) UserPhrases.SaveTemplates(words, pick.FileName); else UserPhrases.Save(words, pick.FileName); status.Text=$"已匯出 {words.Count} 筆。"; }
+            catch (Exception ex) when (ex is IOException or UnauthorizedAccessException) { status.Text="無法寫入該位置。"; }
+        };
+        importList.Click += (_,_) => {
+            using var pick = new OpenFileDialog { Filter="文字檔 (*.txt)|*.txt|所有檔案 (*.*)|*.*" };
+            if (pick.ShowDialog(form) != DialogResult.OK) return;
+            var incoming = templates ? UserPhrases.LoadTemplates(pick.FileName) : UserPhrases.Load(pick.FileName);
+            var before = words.ToList();
+            int added = 0;
+            foreach (var entry in incoming) if (!words.Contains(entry)) { words.Add(entry); added++; }
+            if (added > 0 && !Persist()) { words.Clear(); words.AddRange(before); return; }
+            Refill(); status.Text = incoming.Count == 0 ? $"檔案裡沒有可用的{kind}。" : $"已匯入 {added} 筆，略過 {incoming.Count - added} 筆重複。";
         };
         Refill(); form.AcceptButton=add; form.CancelButton=close;
         colors.Apply(form);

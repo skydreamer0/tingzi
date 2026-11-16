@@ -53,7 +53,7 @@ def package(source, destination, metadata_path):
             entries[name] = path.read_bytes()
             included.append(name)
         dependencies.append(dict(name=item['name'], version=item['version'], license=expression, notices=included))
-    combined = ['Third-party notices for Tingzi 0.6.4\n']
+    combined = ['Third-party notices for Tingzi 0.6.5\n']
     for name in ['TingziFloat/LICENSE', 'TingziFloat/NAudio-LICENSE.txt', 'TingziFloat/codex-asr-LICENSE.txt']:
         combined.extend(['\n===== ' + name + ' =====\n', entries[name].decode('utf-8-sig')])
     for item in dependencies:
@@ -62,7 +62,7 @@ def package(source, destination, metadata_path):
             combined.extend(['\n--- ' + name + ' ---\n', entries[name].decode('utf-8-sig')])
     entries['THIRD-PARTY-NOTICES.txt'] = ''.join(combined).encode('utf-8')
     entries['notices/codex-asr-dependencies.json'] = json.dumps(dependencies, ensure_ascii=False, indent=2).encode()
-    entries['RELEASE.txt'] = ('聽字・注音與語音輸入法 0.6.4\nWindows x64. Requires Microsoft .NET 8 Desktop Runtime x64.\nInstallTingzi.cmd installs or upgrades the application.\nIncludes public Zhuyin word data from McBopomofo (MIT, see McBopomofo-LICENSE.txt). No voice recordings, local models, accounts or credentials are included.\nThird-party codex-asr 0.1.2: https://github.com/wangnov/codex-asr\nNAudio 2.2.1: https://github.com/naudio/NAudio\n').encode('utf-8')
+    entries['RELEASE.txt'] = ('聽字・注音與語音輸入法 0.6.5\nWindows x64. Requires Microsoft .NET 8 Desktop Runtime x64.\nInstallTingzi.cmd installs or upgrades the application.\nIncludes public Zhuyin word data from McBopomofo (MIT, see McBopomofo-LICENSE.txt). No voice recordings, local models, accounts or credentials are included.\nThird-party codex-asr 0.1.2: https://github.com/wangnov/codex-asr\nNAudio 2.2.1: https://github.com/naudio/NAudio\n').encode('utf-8')
     for name, data in entries.items():
         if name in NAUDIO_221:
             if digest(data) != NAUDIO_221[name]:
@@ -73,7 +73,7 @@ def package(source, destination, metadata_path):
             if re.search(r'[A-Za-z]:[\\/](?:Users|Documents)[\\/]', text, re.I):
                 raise ValueError('Machine-local data detected: ' + name)
     (source / 'THIRD-PARTY-NOTICES.txt').write_bytes(entries['THIRD-PARTY-NOTICES.txt'])
-    manifest = dict(product='聽字・注音與語音輸入法', version='0.6.4', runtime='Microsoft.NETCore.App + Microsoft.WindowsDesktop.App 8.x x64', files=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(entries.items())])
+    manifest = dict(product='聽字・注音與語音輸入法', version='0.6.5', runtime='Microsoft.NETCore.App + Microsoft.WindowsDesktop.App 8.x x64', files=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(entries.items())])
     entries['release-manifest.json'] = json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8')
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:

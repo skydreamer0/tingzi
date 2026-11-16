@@ -9,12 +9,13 @@ class CandidateWindow {
     int cellW=100,cellH=34,columns=3,rows=1,header=26;
     size_t page=0, selected=0,total=0;
     bool learning=false;
+    Text caption;
     std::vector<Text> labels;
     void* owner=nullptr;
     using Choose=void (*)(void*,WPARAM);
     Choose choose=nullptr;
     Text title() const {
-        return L"注音選字   "+std::to_wstring(page+1)+L"/"+std::to_wstring((total+8)/9)
+        return caption+L"   "+std::to_wstring(page+1)+L"/"+std::to_wstring((total+8)/9)
             +(learning?L"   學習中":L"   學習關");
     }
     int cellAt(int x,int y) const {
@@ -57,7 +58,7 @@ public:
     void hide(){if(window){DestroyWindow(window);window=nullptr;}if(font){DeleteObject(font);font=nullptr;}}
     void show(HMODULE module,HWND parent,RECT caret,const Input& input,DWORD learningStatus,void* target,Choose callback){
         auto list=input.choices();if(list.empty()){hide();return;}
-        owner=target;choose=callback;page=input.currentPage();selected=input.currentIndex();total=list.size();learning=input.learningActive();
+        owner=target;choose=callback;page=input.currentPage();selected=input.currentIndex();total=list.size();learning=input.learningActive();caption=input.listTitle();
         labels.clear();
         for(size_t i=page*9;i<list.size() && i<page*9+9;++i)labels.push_back(list[i].text);
         if(!window){

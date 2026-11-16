@@ -47,10 +47,12 @@ void press(WPARAM key){
         input.setPreferences(store.enabled()?std::make_shared<const Preferences>(store.ranks()):nullptr);
     }
     auto edits=input.corrections();
+    auto fresh=input.newWords();
     Text commit=input.press(key);
     if(!commit.empty()){
         SendMessageW(edit,EM_REPLACESEL,TRUE,(LPARAM)commit.c_str());
-        if(!edits.empty())Learning().save(edits);
+        if(!edits.empty() || !fresh.empty()){Learning store;store.save(edits);store.saveWords(fresh);}
+        if(auto added=input.addedWord())appendUserPhrase(added->reading,added->text);
     }
     paintState();
 }
@@ -118,7 +120,8 @@ LRESULT CALLBACK frame(HWND w,UINT message,WPARAM key,LPARAM arg) {
 int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int show){
     SetProcessDpiAwarenessContext(DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2);
     if(!dictionary.load(folder(instance))) {MessageBoxW(nullptr,L"找不到可用的 Tingzi.cin，請從完整資料夾開啟。",L"聽字・注音與語音輸入法",MB_ICONERROR);return 1;}
-    dictionary.loadUser(localLearningDir()+L"\user-phrases.txt");
+    dictionary.loadUser(userPhraseFile());dictionary.loadTemplates(userTemplateFile());
+    for(const auto& word:Learning().learnedWords())dictionary.addUser(word.reading,word.text);
     WNDCLASSW cls{};cls.hInstance=instance;cls.lpfnWndProc=frame;cls.lpszClassName=L"TingziPad";cls.hCursor=LoadCursorW(nullptr,IDC_ARROW);cls.hbrBackground=(HBRUSH)(COLOR_WINDOW+1);
     cls.hIcon=LoadIconW(instance,MAKEINTRESOURCEW(1));
     RegisterClassW(&cls);
@@ -129,8 +132,9 @@ int WINAPI wWinMain(HINSTANCE instance,HINSTANCE,PWSTR arguments,int show){
     while(GetMessageW(&msg,nullptr,0,0)>0){
         if(msg.hwnd==edit && msg.message==WM_KEYDOWN && !(GetKeyState(VK_CONTROL)&0x8000) && !(GetKeyState(VK_MENU)&0x8000)) {
             if(msg.wParam==VK_F6){switchLanguage(); continue;}
-            if(chinese && !(GetKeyState(VK_SHIFT)&0x8000) && input.wants(msg.wParam)){
-                press(msg.wParam);continue;
+            const WPARAM pressed=(GetKeyState(VK_SHIFT)&0x8000)?(msg.wParam|shiftKey):msg.wParam;
+            if(chinese && input.wants(pressed)){
+                press(pressed);continue;
             }
         }
         TranslateMessage(&msg); DispatchMessageW(&msg);
