@@ -30,6 +30,20 @@ inline Segmenter configuredSegmenter() {
         return Segmenter::Staged;
     return Segmenter::Path;
 }
+// Character-level script conversion from Windows; one-to-many characters follow the system table.
+inline Text convertScript(const Text& text,bool simplified) {
+    if(text.empty())return text;
+    const DWORD flag=simplified?LCMAP_SIMPLIFIED_CHINESE:LCMAP_TRADITIONAL_CHINESE;
+    int length=LCMapStringEx(LOCALE_NAME_INVARIANT,flag,text.c_str(),int(text.size()),nullptr,0,nullptr,nullptr,0);
+    if(length<=0)return text;
+    Text result(size_t(length),L'\0');
+    length=LCMapStringEx(LOCALE_NAME_INVARIANT,flag,text.c_str(),int(text.size()),&result[0],length,nullptr,nullptr,0);
+    return length>0?result:text;
+}
+inline bool configuredSimplifiedOutput() {
+    DWORD value=0, bytes=sizeof(value);
+    return RegGetValueW(HKEY_CURRENT_USER,engineKey,L"SimplifiedOutput",RRF_RT_REG_DWORD,nullptr,&value,&bytes)==ERROR_SUCCESS && value==1;
+}
 struct WordSpan { size_t at, count; int weight; Text text; };
 // A later word must lead by this much before it displaces an earlier one.
 inline constexpr int displaceMargin=3;
@@ -157,6 +171,7 @@ class Input {
     size_t highlighted=0;
     std::shared_ptr<const Preferences> preferences;
     Segmenter segmenter=configuredSegmenter();
+    std::optional<bool> simplifiedOutput;
     Text prefix() const { Text s;for(const auto& seg:locked)s+=seg.text;return s; }
     static Text context(const Text& prefix){
         auto i=prefix.size()>2?prefix.size()-2:0;
@@ -265,6 +280,8 @@ public:
     explicit Input(const Dictionary& d):dict(d){}
     void setPreferences(std::shared_ptr<const Preferences> p){preferences=std::move(p);}
     void setSegmenter(Segmenter mode){segmenter=mode;}
+    // Unset follows the user setting each time text is committed.
+    void setSimplifiedOutput(std::optional<bool> mode){simplifiedOutput=mode;}
     bool learningActive() const {return bool(preferences);}
     std::vector<Correction> corrections() const {
         std::vector<Correction> edits;for(const auto& seg:locked)if(seg.correction)edits.push_back(*seg.correction);
@@ -385,7 +402,8 @@ public:
         }
         if(key==VK_RETURN) {
             if(!raw.empty() && !finishSyllable()) return {};
-            Text result=preview(); clear(); return result;
+            Text result=preview(); clear();
+            return simplifiedOutput.value_or(configuredSimplifiedOutput())?convertScript(result,true):result;
         }
         wchar_t ch=codeKey(key);
         if(raw.size()>=5 || syllables.size()>=128) return {};

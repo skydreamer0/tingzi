@@ -6,13 +6,6 @@ using VoiceInput.Protocol;
 
 internal static class Program
 {
-    static string? InstalledV12Folder()
-    {
-        using var key = Microsoft.Win32.Registry.LocalMachine.OpenSubKey(
-            @"SOFTWARE\Classes\CLSID\{6AE9C62B-4354-4C22-B14D-0616E4AFD0BD}\InprocServer32");
-        var dll = (key?.GetValue("") as string)?.Trim('"');
-        return File.Exists(dll) ? Path.GetDirectoryName(dll) : null;
-    }
     static LocalWhisperRecognitionEngine Engine()
     {
         var config = Path.Combine(AppContext.BaseDirectory, "voice-root.txt");
@@ -114,23 +107,24 @@ internal static class Program
             try {
                 var result = await Recognize(path,online,cancel.Token);
                 cancel.Token.ThrowIfCancellationRequested();
-                if (online && string.IsNullOrWhiteSpace(result.Text)) {
+                var spoken = ChineseScript.Convert(result.Text, prefs.Simplified);
+                if (online && string.IsNullOrWhiteSpace(spoken)) {
                     OfferLocal("線上未回傳文字");
                 }
-                else if (string.IsNullOrWhiteSpace(result.Text)) Update(CapsuleState.Error, "本機未辨識到文字，點一下重新錄音");
+                else if (string.IsNullOrWhiteSpace(spoken)) Update(CapsuleState.Error, "本機未辨識到文字，點一下重新錄音");
                 else {
                     if (microphoneResult) {
                         var recordingTarget=target;
                         try {
-                            var delivered=await VoiceTextDelivery.DeliverAsync(result.Text,recordingDelivery,recordingTarget,
+                            var delivered=await VoiceTextDelivery.DeliverAsync(spoken,recordingDelivery,recordingTarget,
                                 cancel.Token,() => ReferenceEquals(target,recordingTarget) && ReferenceEquals(pending,cancel));
                             cancel.Token.ThrowIfCancellationRequested();
-                            Update(CapsuleState.Ready,delivered.Message,result.Text,delivered.AutoExpandPreview);
+                            Update(CapsuleState.Ready,delivered.Message,spoken,delivered.AutoExpandPreview);
                         } catch (Exception ex) when (ex is not OperationCanceledException) {
-                            Update(CapsuleState.Ready,"文字已保留預覽，請手動複製",result.Text,true);
+                            Update(CapsuleState.Ready,"文字已保留預覽，請手動複製",spoken,true);
                         }
                     } else {
-                        Update(CapsuleState.Ready,"辨識完成・點文字編輯",result.Text,true);
+                        Update(CapsuleState.Ready,"辨識完成・點文字編輯",spoken,true);
                     }
                 }
             } catch (OperationCanceledException) { Idle(); }
@@ -186,9 +180,7 @@ internal static class Program
             if (starting || stopping || importing || state is CapsuleState.Recording or CapsuleState.Transcribing) return;
             dialogOpen=true;
             try {
-                string? vendorFolder = InstalledV12Folder();
-                string? preferences = vendorFolder == null ? null : Path.Combine(vendorFolder, "OVPreferences.exe");
-                bool hasKeyboardEngine = vendorFolder != null || File.Exists(Path.Combine(root, "Tingzi.cin"));
+                bool hasKeyboardEngine = File.Exists(Path.Combine(root, "Tingzi.cin"));
                 var form = VoiceDialogs.CreateSettings(prefs,bound,next => {
                     if (!next.Valid) return "Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。";
                     if (!shortcut.Apply(next)) return "此快捷鍵已被占用，請選其他組合。";
@@ -204,7 +196,7 @@ internal static class Program
                     return null;
                 }, new SettingsActions(
                     () => Run("TingziKeyboard.exe","switch"),
-                    () => Run("TingziPad.exe", vendorFolder == null ? "" : "--v12"),
+                    () => Run("TingziPad.exe", ""),
                     () => {
                         try { Process.Start(new ProcessStartInfo("ms-settings:regionlanguage") { UseShellExecute=true }); }
                         catch (Exception ex) when (ex is System.ComponentModel.Win32Exception or InvalidOperationException) {
@@ -212,7 +204,6 @@ internal static class Program
                         }
                     }, hasKeyboardEngine && File.Exists(Path.Combine(root,"TingziKeyboard.exe")),
                     hasKeyboardEngine && File.Exists(Path.Combine(root,"TingziPad.exe")), RecognitionStatus(),
-                    File.Exists(preferences) ? () => Run(preferences!, "") : null,
                     File.Exists(Path.Combine(root,"TingziLearning.exe")) ? async enabled => (await LearningCommand(enabled ? "on" : "off")).Success ? null : "無法變更本機學習，請檢查工具與資料權限。" : null,
                     File.Exists(Path.Combine(root,"TingziLearning.exe")) ? async () => {
                         var result=await LearningCommand("status");
@@ -311,6 +302,12 @@ internal static class Program
 
         Item("編輯辨識文字…", Edit);
         Item("複製辨識文字", () => { if (preview != null) Copy(preview); });
+        void ConvertClipboard(bool simplified) {
+            try { if (Clipboard.ContainsText()) Copy(ChineseScript.Convert(Clipboard.GetText(), simplified)); }
+            catch (System.Runtime.InteropServices.ExternalException) { }
+        }
+        Item("剪貼簿文字轉成繁體", () => ConvertClipboard(false));
+        Item("剪貼簿文字轉成簡體", () => ConvertClipboard(true));
         var hint = menu.Items.Add("在 Codex 草稿按 Ctrl+Alt+V 貼入"); hint.Enabled = false;
         menu.Opening += (_, _) => {
             retryItem.Visible = discardItem.Visible = state == CapsuleState.RetryLocal;

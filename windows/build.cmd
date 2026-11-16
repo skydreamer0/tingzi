@@ -13,6 +13,8 @@ if errorlevel 1 exit /b 1
 call :build x86 32
 if errorlevel 1 exit /b 1
 copy /y "windows\README.md" "%OUTPUT%\" >nul || exit /b 1
+rem Public word data, so a new computer can type Zhuyin right after installation.
+"%SystemRoot%\System32\tar.exe" -xf "windows\standalone-data\public-data.zip" -C "%OUTPUT%" || exit /b 1
 copy /y "windows\tingzi.svg" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\InstallTingzi.cmd" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\VoiceShortcuts.ps1" "%OUTPUT%\" >nul || exit /b 1

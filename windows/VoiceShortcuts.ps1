@@ -29,7 +29,7 @@ try {
         try { $link = $shell.CreateShortcut($staged); @($link.TargetPath, $link.Arguments) } finally { Remove-Item -LiteralPath $staged }
     }
     # Each entry: shortcut name, path relative to the installed version, arguments.
-    $items = @(@('聽字・注音與語音輸入法', $float, '--settings'), @('聽字設定', $float, '--settings'), @('語音浮窗', $float, '--show'), @('注音打字板', $pad, '--v12'))
+    $items = @(@('聽字・注音與語音輸入法', $float, '--settings'), @('聽字設定', $float, '--settings'), @('語音浮窗', $float, '--show'), @('注音打字板', $pad, ''))
     if (!$Remove) {
         foreach ($item in $items) {
             $required = Join-Path $directory $item[1]

@@ -21,7 +21,7 @@ struct Binding {
         wchar_t cls[40];StringFromGUID2(serviceId,cls,40);
         auto path=std::wstring(L"SOFTWARE\\Classes\\CLSID\\")+cls+L"\\InprocServer32";
         if(!read(view,path,nullptr))return false;
-        for(auto dir:{L"v0.6.0"})if(!_wcsicmp(old.c_str(),(original.parent_path()/dir/original.filename()).c_str()))return true;
+        for(auto dir:{L"v0.6.0",L"v0.6.1"})if(!_wcsicmp(old.c_str(),(original.parent_path()/dir/original.filename()).c_str()))return true;
         return !_wcsicmp(old.c_str(),original.c_str()) || !_wcsicmp(old.c_str(),next.c_str());
     }
     bool set(const fs::path& value){
@@ -44,7 +44,7 @@ int run(){
     if(RegGetValueW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion",L"ProgramFilesDir",
         RRF_RT_REG_SZ|RRF_SUBKEY_WOW6464KEY,nullptr,pf,&bytes))return 2;
     GetModuleFileNameW(nullptr,self,32768);
-    const fs::path source=fs::path(self).parent_path(),root=fs::path(pf)/L"Tingzi",dest=root/L"v0.6.0";
+    const fs::path source=fs::path(self).parent_path(),root=fs::path(pf)/L"Tingzi",dest=root/L"v0.6.1";
     if(!safeDirectory(root))return 3;
     Binding x64,x86;
     auto a=L"TingziTextService64.dll",b=L"TingziTextService32.dll";
@@ -67,7 +67,8 @@ int run(){
         const wchar_t* local[]={L"Tingzi.cin",L"phrases.txt",L"TingziFloat\\voice-root.txt",L"McBopomofo-LICENSE.txt"};
         for(const auto* name:local){
             if(fs::exists(dest/name))continue;
-            auto from=fs::is_regular_file(source/name)?source/name:previous/name;
+            // An existing word list or voice root wins over the one shipped in the package.
+            auto from=fs::is_regular_file(previous/name)?previous/name:source/name;
             if(fs::is_regular_file(from) && !copyProduct(from,dest/name))return 6;
         }
 

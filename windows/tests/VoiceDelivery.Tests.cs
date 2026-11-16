@@ -10,6 +10,11 @@ internal static class VoiceDeliveryTests
     {
         if (CodexFocusProbe.IsProbe(args)) return CodexFocusProbe.Run(args);
         await Check("bounded focus probes reject hangs and recover", BoundedProbe);
+        Check("script conversion maps characters both ways", () => {
+            if (ChineseScript.Convert("語音輸入與體驗", true) != "语音输入与体验") throw new Exception("to simplified");
+            if (ChineseScript.Convert("语音输入与体验", false) != "語音輸入與體驗") throw new Exception("to traditional");
+            if (ChineseScript.Convert("abc 123", true) != "abc 123") throw new Exception("pass through");
+        });
         await Check("clipboard only copies without insertion", ClipboardOnly);
         await Check("auto copies then attempts one insertion", AutoAttemptsOnce);
         await Check("field change preserves copy and expands preview", MovedField);

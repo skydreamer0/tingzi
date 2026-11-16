@@ -31,9 +31,6 @@ public:
 };
 class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, public ITfCompositionSink, public ITfThreadMgrEventSink, public ITfTextLayoutSink {
     long refs=1;
-#ifndef TINGZI_STANDALONE
-    ComPtr<ITfTextInputProcessorEx> vendor;
-#endif
     ComPtr<ITfThreadMgr> thread;
     TfClientId client=TF_CLIENTID_NULL;
     DWORD focusCookie=TF_INVALID_COOKIE;
@@ -223,20 +220,6 @@ public:
         activationFlags=flags;
         if(!mgr)return E_INVALIDARG;
         if(thread)return E_UNEXPECTED;
-#ifndef TINGZI_STANDALONE
-        if(vendor)return E_UNEXPECTED;
-        ComPtr<ITfTextInputProcessorEx> original;
-        HRESULT created=CoCreateInstance(v12Service,nullptr,CLSCTX_INPROC_SERVER,IID_PPV_ARGS(&original));
-        if(SUCCEEDED(created)){
-            // Preserve the client ID Windows assigned to Tingzi. The vendor owns the key sink.
-            HRESULT activated=original->ActivateEx(mgr,id,flags);
-            if(FAILED(activated))return activated;
-            vendor=std::move(original);
-            startFloat();
-            return activated;
-        }
-        if(created!=REGDB_E_CLASSNOTREG)return created;
-#endif
         auto& data=dictionary();
 #ifdef TINGZI_STANDALONE
         // The standalone keyboard has no voice window to fall back to.
@@ -257,12 +240,6 @@ public:
         return hr;
     }
     STDMETHODIMP Deactivate() override {
-#ifndef TINGZI_STANDALONE
-        if(vendor){
-            auto active=std::move(vendor);
-            return active->Deactivate();
-        }
-#endif
         endLater();detachLayout(); ComPtr<ITfKeystrokeMgr> keys;
         ComPtr<ITfSource> source;
         if(thread && focusCookie!=TF_INVALID_COOKIE && SUCCEEDED(thread.As(&source)))source->UnadviseSink(focusCookie);

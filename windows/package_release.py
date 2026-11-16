@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import zipfile
 
-ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziPad.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg']
+ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziPad.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg', 'Tingzi.cin', 'phrases.txt', 'McBopomofo-LICENSE.txt']
 FLOAT_FILES = ['TingziFloat.exe', 'TingziFloat.dll', 'TingziFloat.deps.json', 'TingziFloat.runtimeconfig.json', 'NAudio.dll', 'NAudio.Asio.dll', 'NAudio.Core.dll', 'NAudio.Midi.dll', 'NAudio.Wasapi.dll', 'NAudio.WinForms.dll', 'NAudio.WinMM.dll', 'LICENSE', 'NAudio-LICENSE.txt', 'codex-asr.exe', 'codex-asr-LICENSE.txt']
 LICENSE_WORDS = {'MIT','Apache-2.0','BSD-3-Clause','BSD-2-Clause','Unicode-3.0','ISC','Zlib','Unlicense','BSL-1.0','CDLA-Permissive-2.0','AND','OR'}
 
@@ -53,7 +53,7 @@ def package(source, destination, metadata_path):
             entries[name] = path.read_bytes()
             included.append(name)
         dependencies.append(dict(name=item['name'], version=item['version'], license=expression, notices=included))
-    combined = ['Third-party notices for Tingzi 0.6.0\n']
+    combined = ['Third-party notices for Tingzi 0.6.1\n']
     for name in ['TingziFloat/LICENSE', 'TingziFloat/NAudio-LICENSE.txt', 'TingziFloat/codex-asr-LICENSE.txt']:
         combined.extend(['\n===== ' + name + ' =====\n', entries[name].decode('utf-8-sig')])
     for item in dependencies:
@@ -62,7 +62,7 @@ def package(source, destination, metadata_path):
             combined.extend(['\n--- ' + name + ' ---\n', entries[name].decode('utf-8-sig')])
     entries['THIRD-PARTY-NOTICES.txt'] = ''.join(combined).encode('utf-8')
     entries['notices/codex-asr-dependencies.json'] = json.dumps(dependencies, ensure_ascii=False, indent=2).encode()
-    entries['RELEASE.txt'] = ('聽字・注音與語音輸入法 0.6.0\nWindows x64. Requires Microsoft .NET 8 Desktop Runtime x64.\nInstallTingzi.cmd installs or upgrades the application.\nNo dictionaries, phrases, voice recordings, local models, accounts or credentials are included.\nThird-party codex-asr 0.1.2: https://github.com/wangnov/codex-asr\nNAudio 2.2.1: https://github.com/naudio/NAudio\n').encode('utf-8')
+    entries['RELEASE.txt'] = ('聽字・注音與語音輸入法 0.6.1\nWindows x64. Requires Microsoft .NET 8 Desktop Runtime x64.\nInstallTingzi.cmd installs or upgrades the application.\nIncludes public Zhuyin word data from McBopomofo (MIT, see McBopomofo-LICENSE.txt). No voice recordings, local models, accounts or credentials are included.\nThird-party codex-asr 0.1.2: https://github.com/wangnov/codex-asr\nNAudio 2.2.1: https://github.com/naudio/NAudio\n').encode('utf-8')
     for name, data in entries.items():
         if name in NAUDIO_221:
             if digest(data) != NAUDIO_221[name]:
@@ -73,7 +73,7 @@ def package(source, destination, metadata_path):
             if re.search(r'[A-Za-z]:[\\/](?:Users|Documents)[\\/]', text, re.I):
                 raise ValueError('Machine-local data detected: ' + name)
     (source / 'THIRD-PARTY-NOTICES.txt').write_bytes(entries['THIRD-PARTY-NOTICES.txt'])
-    manifest = dict(product='聽字・注音與語音輸入法', version='0.6.0', runtime='Microsoft.NETCore.App + Microsoft.WindowsDesktop.App 8.x x64', files=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(entries.items())])
+    manifest = dict(product='聽字・注音與語音輸入法', version='0.6.1', runtime='Microsoft.NETCore.App + Microsoft.WindowsDesktop.App 8.x x64', files=[dict(path=name, size=len(data), sha256=digest(data)) for name, data in sorted(entries.items())])
     entries['release-manifest.json'] = json.dumps(manifest, ensure_ascii=False, indent=2).encode('utf-8')
     destination.parent.mkdir(parents=True, exist_ok=True)
     with zipfile.ZipFile(destination, 'w', zipfile.ZIP_DEFLATED) as archive:

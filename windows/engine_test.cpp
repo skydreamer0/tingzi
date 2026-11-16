@@ -68,5 +68,16 @@ int wmain(int argc,wchar_t** argv) {
     enter("SU3");input.press(VK_DOWN);input.press('2');enter("CL3");
     expect(input.preview().substr(0,1)==L"妳" && input.preview().size()==2,"staged keeps a chosen character");
     input.clear();
+
+    expect(convertScript(L"語音輸入與體驗",true)==L"语音输入与体验","traditional to simplified");
+    expect(convertScript(L"语音输入与体验",false)==L"語音輸入與體驗","simplified to traditional");
+    expect(convertScript(L"abc 123，注音ㄋㄧˇ",true)==L"abc 123，注音ㄋㄧˇ","other characters pass through");
+    input.setSegmenter(Segmenter::Path);input.setSimplifiedOutput(true);
+    enter("SU3CL3A87");
+    expect(input.preview()==L"你好嗎","preview stays traditional while composing");
+    expect(input.press(VK_RETURN)==L"你好吗","commit follows simplified output");
+    input.setSimplifiedOutput(false);
+    enter("SU3CL3A87");
+    expect(input.press(VK_RETURN)==L"你好嗎","commit stays traditional when off");
     return 0;
 }

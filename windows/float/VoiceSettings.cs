@@ -8,6 +8,7 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
     string? MicrophoneId = null, string? MicrophoneName = null)
 {
     public bool AutoInsert { get; init; } = true;
+    public bool Simplified { get; init; }
     public VoiceDeliveryMode? DeliveryMode { get; init; }
     [System.Text.Json.Serialization.JsonIgnore]
     public VoiceDeliveryMode EffectiveDeliveryMode => DeliveryMode ?? (AutoInsert ? VoiceDeliveryMode.Auto : VoiceDeliveryMode.PreviewOnly);
@@ -24,6 +25,9 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
     }
     public void Save()
     {
+        // The text service reads the same choice when it commits Zhuyin text.
+        using (var engine = Microsoft.Win32.Registry.CurrentUser.CreateSubKey(@"Software\Tingzi\Engine"))
+            engine.SetValue("SimplifiedOutput", Simplified ? 1 : 0, Microsoft.Win32.RegistryValueKind.DWord);
         Directory.CreateDirectory(Path.GetDirectoryName(FilePath)!);
         var tmp = FilePath + "." + Guid.NewGuid().ToString("N") + ".tmp";
         try { File.WriteAllText(tmp, JsonSerializer.Serialize(this)); File.Move(tmp, FilePath, true); }
@@ -31,6 +35,21 @@ internal sealed record VoiceSettings(bool Online = false, int Modifiers = 3, Key
     }
     public string Gesture => RecordKey == Keys.None ? "停用" : ModifierText(Modifiers) + "+" + RecordKey;
     public static string ModifierText(int mods) => mods switch { 5 => "Alt+Shift", 6 => "Ctrl+Shift", _ => "Ctrl+Alt" };
+}
+
+internal static class ChineseScript
+{
+    // Character-level conversion from Windows; one-to-many characters follow the system table.
+    public static string Convert(string text, bool simplified)
+    {
+        if (text.Length == 0) return text;
+        var result = new char[text.Length * 2 + 1];
+        var length = LCMapStringEx(null, simplified ? 0x02000000u : 0x04000000u, text, text.Length, result, result.Length, IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+        return length > 0 ? new string(result, 0, length) : text;
+    }
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
+    static extern int LCMapStringEx(string? locale, uint flags, string source, int sourceLength,
+        [Out] char[] destination, int destinationLength, IntPtr version, IntPtr reserved, IntPtr sortHandle);
 }
 
 internal sealed class RecordingShortcut : NativeWindow, IDisposable
@@ -58,7 +77,7 @@ internal sealed class RecordingShortcut : NativeWindow, IDisposable
     [DllImport("user32")] static extern bool UnregisterHotKey(nint window,int id);
 }
 
-internal sealed record SettingsActions(Action SwitchZhuyin, Action OpenTypingPad, Action OpenInputSettings, bool KeyboardAvailable, bool TypingPadAvailable, string RecognitionStatus, Action? OpenVendorPreferences = null, Func<bool, Task<string?>>? SetLearning = null, Func<Task<bool?>>? GetLearning = null);
+internal sealed record SettingsActions(Action SwitchZhuyin, Action OpenTypingPad, Action OpenInputSettings, bool KeyboardAvailable, bool TypingPadAvailable, string RecognitionStatus, Func<bool, Task<string?>>? SetLearning = null, Func<Task<bool?>>? GetLearning = null);
 
 internal static class VoiceDialogs
 {
@@ -140,12 +159,15 @@ internal static class VoiceDialogs
         var delivery = Choices(new[]{"自動插入並複製文字","只複製到剪貼簿","只顯示預覽"}, (int)current.EffectiveDeliveryMode);
         delivery.AccessibleName = "辨識完成後";
         Row(4,"辨識完成後",delivery);
+        var script = Choices(new[]{"繁體中文","簡體中文"}, current.Simplified ? 1 : 0);
+        script.AccessibleName = "輸出文字";
+        Row(5,"輸出文字",script);
         var note = new Label { Dock=DockStyle.Fill, AutoSize=true, MaximumSize=new Size(480,0),
-            Text="選用線上辨識時，音檔會經第三方 codex-asr 傳到 ChatGPT。\n" + commands.RecognitionStatus + "\n錄音途中若切換欄位，辨識文字會留在浮窗預覽。", ForeColor = Color.FromArgb(66,83,103), Padding = new Padding(0,12,0,8) };
-        panel.Controls.Add(note,0,10);
+            Text="選用線上辨識時，音檔會經第三方 codex-asr 傳到 ChatGPT。\n「輸出文字」同時套用到語音結果與注音送出的字，逐字轉換。\n" + commands.RecognitionStatus + "\n錄音途中若切換欄位，辨識文字會留在浮窗預覽。", ForeColor = Color.FromArgb(66,83,103), Padding = new Padding(0,12,0,8) };
+        panel.Controls.Add(note,0,12);
         var status = new Label { AutoSize=true, Dock=DockStyle.Fill, ForeColor=Color.DarkRed,
             Text=bound?"":"目前錄音快捷鍵被占用，請選其他組合。" };
-        panel.Controls.Add(status,0,11);
+        panel.Controls.Add(status,0,13);
         var save = ActionButton("儲存設定", () => { }); save.BackColor=Color.FromArgb(18,113,112); save.ForeColor=Color.White; var cancel=ActionButton("取消", form.Close); cancel.DialogResult=DialogResult.Cancel;
         save.Margin=new Padding(8,0,0,0); cancel.Margin=Padding.Empty;
         footer.TabIndex=2; save.TabIndex=1; cancel.TabIndex=0; footer.Controls.Add(save); footer.Controls.Add(cancel);
@@ -156,12 +178,9 @@ internal static class VoiceDialogs
             tools.Controls.Add(button);
         }
         var switchZhuyin = ActionButton("切換到注音輸入法", commands.SwitchZhuyin); switchZhuyin.Enabled=commands.KeyboardAvailable;
-        Tool("注音輸入", commands.KeyboardAvailable ? "切換後，在原本的應用程式內打字。注音能力以這台電腦已安裝的輸入法為準。" : "找不到注音切換工具。請重新安裝完整套件，再從 Windows 語言設定確認輸入法。", switchZhuyin);
+        Tool("注音輸入", commands.KeyboardAvailable ? "切換後，在原本的應用程式內打字。" : "找不到注音切換工具。請重新安裝完整套件，再從 Windows 語言設定確認輸入法。", switchZhuyin);
         var typingPad = ActionButton("開啟本機打字板", commands.OpenTypingPad); typingPad.Enabled=commands.TypingPadAvailable;
-        var vendor = ActionButton("開啟 V12 偏好設定", () => commands.OpenVendorPreferences?.Invoke());
-        vendor.Enabled = commands.OpenVendorPreferences != null;
-        Tool("自然輸入法 V12", vendor.Enabled ? "使用已安裝的自然輸入法調整注音和選字偏好。" : "安裝自然輸入法 V12 後，可從這裡開啟原廠偏好設定。", vendor);
-        Tool("本機打字板", commands.TypingPadAvailable ? "開啟獨立欄位練習注音與選字。" : "打字板需要已安裝的 V12 或本機自備詞表。", typingPad);
+        Tool("本機打字板", commands.TypingPadAvailable ? "開啟獨立欄位練習注音與選字。" : "找不到打字板或注音詞表，請重新安裝完整套件。", typingPad);
         var learning = new FlowLayoutPanel { AutoSize=true, WrapContents=true, Margin=new Padding(0), FlowDirection=FlowDirection.TopDown };
         var learningStatus = new Label { AutoSize=true, ForeColor=Color.FromArgb(66,83,103), Text=commands.GetLearning == null ? "未安裝本機學習工具" : "讀取學習狀態中…" };
         learning.Controls.Add(learningStatus);
@@ -183,7 +202,7 @@ internal static class VoiceDialogs
             var enabled=await commands.GetLearning();
             if (!form.IsDisposed) { learningStatus.Text=enabled.HasValue ? (enabled.Value ? "目前已啟用本機學習" : "目前已關閉本機學習") : "無法讀取目前的學習狀態"; learningButtons.Enabled=true; }
         };
-        Tool("自有引擎的本機學習", commands.SetLearning == null ? "找不到本機學習工具，請安裝完整套件。" : "只影響自有注音引擎。按下後立即套用；取消不會還原。V12 學習請使用原廠偏好設定。", learning);
+        Tool("本機學習", commands.SetLearning == null ? "找不到本機學習工具，請安裝完整套件。" : "按下後立即套用；取消不會還原。", learning);
         Tool("Windows 語言與鍵盤設定", "管理 Windows 的鍵盤清單和輸入語言。", ActionButton("開啟 Windows 輸入法設定", commands.OpenInputSettings));
         zhuyinPage.Controls.Add(tools);
         zhuyinPage.ClientSizeChanged += (_,_) => {
@@ -194,7 +213,7 @@ internal static class VoiceDialogs
             var index = microphone.SelectedIndex;
             var input = index > 0 && index <= inputs.Count ? inputs[index-1] : null;
             var candidate=new VoiceSettings(engine.SelectedIndex==1,mods[mod.SelectedIndex],key.SelectedIndex==0?Keys.None:(Keys)((int)Keys.A+key.SelectedIndex-1),sizes[size.SelectedIndex],
-                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex };
+                index == 0 ? null : input?.Id ?? current.MicrophoneId, index == 0 ? null : input?.Name ?? current.MicrophoneName) { AutoInsert = delivery.SelectedIndex == 0, DeliveryMode = (VoiceDeliveryMode)delivery.SelectedIndex, Simplified = script.SelectedIndex == 1 };
             var error=apply(candidate);
             if(error==null) form.Close(); else { status.Text=error; tabs.SelectedTab=voicePage; voicePage.ScrollControlIntoView(status); }
         };

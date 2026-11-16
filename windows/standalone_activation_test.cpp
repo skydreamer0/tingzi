@@ -39,8 +39,8 @@ int wmain(int argc,wchar_t** argv){
     service->QueryInterface(IID_PPV_ARGS(&compositionSink));
     HRESULT result=service->ActivateEx(&mgr,42,0);
     bool ok=SUCCEEDED(result)&&vendorAttempts==0&&mgr.advised==1&&mgr.sink;
-    std::cout<<(ok?"PASS ":"FAIL ")<<(tested?"packaged DLL factory/sink activation":"included service activation with V12 interception")<<" own sink="<<mgr.advised<<" hr="<<std::hex<<result<<"\n";
-    if(!tested)std::cout<<"V12 intercepted attempts="<<vendorAttempts<<"\n";
+    std::cout<<(ok?"PASS ":"FAIL ")<<(tested?"packaged DLL factory/sink activation":"included service activation without external services")<<" own sink="<<mgr.advised<<" hr="<<std::hex<<result<<"\n";
+    if(!tested)std::cout<<"External service attempts="<<vendorAttempts<<"\n";
     if(!ok){compositionSink.Reset();service->Release();if(tested)FreeLibrary(tested);return 1;}
     auto check=[&](bool condition,const char* name){std::cout<<(condition?"PASS ":"FAIL ")<<name<<"\n";ok=ok&&condition;};
     TestContext first,second;
