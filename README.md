@@ -50,7 +50,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-主分支為 **0.6.5 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+主分支為 **0.6.6 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
 ## 安裝（自行建置的套件）
 
@@ -74,4 +74,4 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 授權
 
-全庫授權尚待維護者選定。`AudioNotes` 衍生檔案採用 [MIT 授權](windows/float/AudioNotes/LICENSE)；NAudio、codex-asr 等第三方元件依各自條款，套件隨附 `THIRD-PARTY-NOTICES.txt`。內建的注音字詞資料來自 McBopomofo，依其 MIT 授權提供。套件不含任何其他廠商的輸入法程式或詞庫。
+聽字以 [MIT 授權](LICENSE)釋出。`AudioNotes` 衍生檔案另有其 [MIT 授權聲明](windows/float/AudioNotes/LICENSE)；NAudio、codex-asr 等第三方元件依各自條款，套件隨附 `THIRD-PARTY-NOTICES.txt`。內建的注音字詞資料來自 McBopomofo，依其 MIT 授權提供。套件不含任何其他廠商的輸入法程式或詞庫。

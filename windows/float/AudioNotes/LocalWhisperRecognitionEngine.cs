@@ -44,7 +44,9 @@ public sealed class LocalWhisperRecognitionEngine : IRecognitionEngine
                 WorkingDirectory = Path.GetDirectoryName(executable)!,
                 StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
             };
-            foreach (var argument in new[] { "-m", model, "-f", wavPath, "-l", options.Language ?? "zh", "-otxt", "-of", outputBase, "-np", "-nt", "-ng" })
+            foreach (var argument in new[] { "-m", model, "-f", wavPath, "-l", options.Language ?? "zh", "-otxt", "-of", outputBase, "-np", "-nt", "-ng",
+                // Half the logical processors, between four and eight, measured fastest for short clips.
+                "-t", Math.Clamp(Environment.ProcessorCount / 2, 4, 8).ToString(System.Globalization.CultureInfo.InvariantCulture) })
                 start.ArgumentList.Add(argument);
             using var process = Process.Start(start) ?? throw new InvalidOperationException("無法啟動本機語音辨識。");
             var stdout = process.StandardOutput.ReadToEndAsync();

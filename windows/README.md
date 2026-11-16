@@ -1,4 +1,4 @@
-# 聽字・注音與語音輸入法 0.6.5｜Windows
+# 聽字・注音與語音輸入法 0.6.6｜Windows
 
 ## 安裝及第一次使用
 
@@ -80,6 +80,6 @@
 
 ## 回復與移除
 
-程式安裝於 `%ProgramFiles%\Tingzi\v0.6.5`，使用者設定與學習資料在 `%LOCALAPPDATA%\Tingzi`。移除使用 `RemoveTingzi.cmd`；本機詞表、語音模型位置與使用者資料會保留，供日後重新安裝使用。
+程式安裝於 `%ProgramFiles%\Tingzi\v0.6.6`，使用者設定與學習資料在 `%LOCALAPPDATA%\Tingzi`。移除使用 `RemoveTingzi.cmd`；本機詞表、語音模型位置與使用者資料會保留，供日後重新安裝使用。
 
 第三方元件的授權與聲明見 `THIRD-PARTY-NOTICES.txt`。發行包內的 `release-manifest.json` 列出每個發行檔案的雜湊。

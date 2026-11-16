@@ -23,4 +23,4 @@
 
 ## 授權
 
-`windows/float/AudioNotes/LICENSE` 僅涵蓋相應衍生元件。NAudio、codex-asr 及其他依賴各有授權。全庫授權尚待作者選定，不能據第三方 MIT 檔案宣稱全庫為 MIT。公開、發版與授權選定須另行確認。
+聽字以 MIT 授權釋出，全文見根目錄的 `LICENSE`；送出的貢獻視為以相同授權提供。`windows/float/AudioNotes/LICENSE` 涵蓋相應的衍生元件，NAudio、codex-asr 及其他依賴各有授權。請不要加入授權與 MIT 不相容的程式碼或詞庫。

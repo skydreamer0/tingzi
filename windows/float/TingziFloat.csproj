@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>TingziFloat</AssemblyName>
-    <Version>0.6.5</Version>
+    <Version>0.6.6</Version>
     <Product>聽字・注音與語音輸入法</Product>
     <Title>聽字・注音與語音輸入法</Title>
     <Description>繁體中文注音與語音輸入法</Description>
