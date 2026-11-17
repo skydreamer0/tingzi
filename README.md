@@ -1,5 +1,7 @@
 <div align="center">
 
+**繁體中文** · [English](README.en.md)
+
 <img src="assets/brand/tingzi.svg" width="96" height="96" alt="聽字的橫耳鍵圖示">
 
 # 聽字｜Tingzi
