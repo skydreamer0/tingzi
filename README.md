@@ -50,7 +50,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-最新版本是 **0.7.5**，安裝包在 [Releases](https://github.com/skydreamer0/tingzi/releases) 下載。這是預覽版：安裝包沒有數位簽章，Windows 可能會跳出警告。要自己建置請看[開發指南](docs/development/README.md)。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+最新版本是 **0.7.6**，安裝包在 [Releases](https://github.com/skydreamer0/tingzi/releases) 下載。這是預覽版：安裝包沒有數位簽章，Windows 可能會跳出警告。要自己建置請看[開發指南](docs/development/README.md)。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
 ## 安裝
 
