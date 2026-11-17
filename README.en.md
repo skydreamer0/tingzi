@@ -13,6 +13,7 @@ Traditional Chinese voice and Zhuyin (Bopomofo) input for Windows.
 [![Latest release](https://img.shields.io/github/v/release/skydreamer0/tingzi?label=release)](https://github.com/skydreamer0/tingzi/releases/latest)
 [![Platform](https://img.shields.io/badge/platform-Windows%2010%20%2F%2011%20x64-0078D4)](#download-and-install)
 [![License](https://img.shields.io/github/license/skydreamer0/tingzi)](LICENSE)
+[![Windows build](https://github.com/skydreamer0/tingzi/actions/workflows/windows.yml/badge.svg)](https://github.com/skydreamer0/tingzi/actions/workflows/windows.yml)
 [![macOS build](https://github.com/skydreamer0/tingzi/actions/workflows/macos.yml/badge.svg)](https://github.com/skydreamer0/tingzi/actions/workflows/macos.yml)
 
 [Download](https://github.com/skydreamer0/tingzi/releases/latest) ·
@@ -32,15 +33,15 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 ## Why Tingzi
 
 - **Voice and Zhuyin in one tool**: dictate long passages, fix homophones with Zhuyin. Once you correct a word, later dictations spell it the same way.
-- **You choose where your audio goes**: recognize entirely on your own computer (local Whisper, including Breeze ASR 25, which is tuned for Taiwanese Mandarin), or use an online service you pick.
+- **You decide where your audio goes**: recognize entirely on your own computer (local Whisper, including Breeze ASR 25, which is tuned for Taiwanese Mandarin), or use an online service you pick.
 - **Built for Traditional Chinese**: Chinese punctuation is added and fillers such as 嗯 and 呃 are removed automatically. Zhuyin supports the Standard (Dachen) and Eten layouts, and long phrases are converted using context.
-- **Free software**: released under the MIT License. The built-in Zhuyin dictionary comes from McBopomofo's public word list.
+- **Open source**: the code is released under the MIT License. The built-in Zhuyin dictionary comes from McBopomofo's public word list.
 
 ## Download and install
 
 | Platform | Status | How to get it |
 | --- | --- | --- |
-| Windows 10/11 (x64) | Preview, 0.7.7 | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
+| Windows 10/11 (x64) | Preview | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
 | macOS | In progress, not released | Voice input only, no Zhuyin; for now you can only [build it yourself](macos/README.md) |
 
 **Installing on Windows**
@@ -63,11 +64,16 @@ Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) a
 1. Click in the body of a Notepad document so the cursor is where you want the text.
 2. Click the Tingzi icon at the edge of the screen, or press **Ctrl+Alt+R**, and start speaking. Press it again to stop.
 3. The text is inserted at the cursor and also copied to the clipboard.
-4. If a homophone came out wrong, press **Win+Space** and switch to 聽字・注音與語音輸入法 (Tingzi Zhuyin and Voice Input). Delete the wrong character, type its Zhuyin in place, press **↓** to choose a character, then press **Enter**.
+4. If a homophone came out wrong, press **Windows+Space** and switch to 聽字・注音與語音輸入法 (Tingzi Zhuyin and Voice Input). Delete the wrong character, type its Zhuyin in place, press **↓** to choose a character, then press **Enter**.
 
-If you'd rather hold a key while you talk and send on release, choose 按住說話，放開送出 (hold to talk, release to send) on the 一般 (General) settings page.
+If you'd rather hold a key while you talk and send on release, choose 按住說話，放開送出 (hold to talk, release to send) on the 一般 (General) settings page. The recording shortcut can be changed on the same page.
 
 ## Features
+
+### First-run setup and updates
+
+- **First-run setup**: the first time you open Tingzi, the settings window walks you through choosing and testing a microphone, choosing a recognition method, and dictating one sentence in Notepad and fixing one character with Zhuyin. You can skip any step and start again later from the 關於 (About) page.
+- **Automatic updates (Windows)**: Tingzi checks for a new version at most once a day. When it finds one, it downloads and verifies the installer in the background and asks before installing; your settings and data are kept. You can turn this off on the 關於 (About) page and check manually instead.
 
 ### Voice input
 
@@ -79,6 +85,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 - **Custom words and replacement rules**: names and terms you add are spelled correctly first. For words that are always misheard, or English capitalization, add rules of the form "what was heard → what to write".
 - **Learns from your fixes**: correct a dictated word once with Zhuyin, and later dictations with the same sound will use that word.
 - **AI refinement (optional, off by default)**: sends the recognized text to an OpenAI-compatible service you configure, to tidy self-corrections, filler words and punctuation. The bar says whether each dictation was refined, history keeps the text from before refinement, and if the service fails, the original text is inserted.
+- **Recording shortcut**: **Ctrl+Alt+R** by default. Change it on the settings page by pressing the combination you want; F1 to F24 can be used on their own.
 - **History**: the last 50 results are kept only on your computer and can be recovered from the bar. **Alt+Shift+Z** pastes the previous one again.
 - **Per-app settings**: choose Traditional or Simplified output, cleanup, refinement, and what happens after recognition, for each program.
 
@@ -104,11 +111,16 @@ Choose a recognition method on the 語音 (Voice) settings page. Where your audi
 
 | Method | Where the audio goes | What you need |
 | --- | --- | --- |
-| Local Whisper | Stays on your computer | Download a model and whisper.cpp from the settings page with one click; the source, size and license are listed before downloading. With an NVIDIA GPU you can also download an acceleration package |
+| Local Whisper | Stays on your computer | Download a model and whisper.cpp from the settings page with one click; the source, size and license are listed before downloading, and models you no longer need can be deleted. With an NVIDIA GPU you can also download an acceleration package |
 | Your own online service | The OpenAI-compatible transcription service you enter (for example OpenAI or Groq), along with your custom words | Your own API key, billed by that service. If the URL is `localhost`, the audio stays on your computer |
-| Codex online recognition | ChatGPT | A working Codex sign-in on this computer |
+| Codex online recognition (unofficial) | ChatGPT | A working Codex sign-in on this computer |
+
+> [!WARNING]
+> Codex online recognition uses [codex-asr](https://crates.io/crates/codex-asr), an unofficial third-party component that reuses the ChatGPT sign-in of Codex on this computer to transcribe your audio. It is not provided or supported by OpenAI and may stop working at any time if OpenAI changes the service. If you need it to work reliably, use local Whisper or your own online service instead.
 
 With AI refinement on, Tingzi sends the recognized **text** (not the audio), with your custom words and any notes you wrote. With it off, nothing is sent. API keys are stored in Windows Credential Manager, not in the settings file. History, learned words and local learning data stay on your computer and can be cleared on the 隱私 (Privacy) page.
+
+While automatic updates are on (關於 About page), Tingzi asks GitHub at most once a day whether a new version exists, sending only the current version number. With them off, it doesn't connect on its own.
 
 ## Documentation
 
@@ -124,7 +136,7 @@ The documents below are in Traditional Chinese.
 
 ## Contributing
 
-Bug reports and changes are welcome. When reporting a problem, include the Tingzi version, the Windows version, the steps you took, and what you expected and saw. Use made-up examples instead of real recordings or private word lists. See the [contributing guide](CONTRIBUTING.md) for the process.
+Bug reports and changes are welcome. When reporting a problem, include the Tingzi version, the Windows version, the steps you took, and what you expected and saw. Use made-up examples instead of real recordings or private word lists. See the [contributing guide](CONTRIBUTING.md) for the process. Please don't report security issues in public; follow the [security policy](SECURITY.md) instead.
 
 Tingzi has two parts. `windows/` is the Windows text service (the Zhuyin input method), written in C++. `app/` is the voice window and settings, written in Rust with Tauri 2. With Rust and the Visual Studio C++ tools installed on Windows, you can start by running the voice window's tests:
 
@@ -142,7 +154,14 @@ Full build and packaging steps are in the [developer guide](docs/development/REA
 - [Breeze ASR 25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25) by MediaTek Research: a recognition model for Taiwanese Mandarin and mixed Chinese–English speech
 - [codex-asr](https://crates.io/crates/codex-asr): Codex online recognition
 - [Tauri](https://tauri.app/): the voice window and settings
+- [Chinese Wikipedia](https://zh.wikipedia.org/): the word-pair statistics used for whole-phrase conversion (`pairs.txt`) were counted from its articles
 
 ## License
 
-Tingzi is released under the [MIT License](LICENSE). Bundled third-party components follow their own terms, listed in `THIRD-PARTY-NOTICES.txt` in the package. The package contains no other vendor's input method code or dictionaries.
+Tingzi's code is released under the [MIT License](LICENSE). The following are under their own licenses:
+
+- The Zhuyin word data comes from McBopomofo, under the MIT License.
+- The word-pair statistics in `windows/standalone-data/pairs.txt` were counted from Chinese Wikipedia and are licensed under [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/); see `pairs-NOTICE.txt` in the same folder.
+- Other third-party components are listed in `THIRD-PARTY-NOTICES.txt` in the package.
+
+Apart from the McBopomofo word data above, Tingzi contains no other input method's code or dictionaries. Tingzi is an independent project and is not affiliated with OpenAI, Microsoft or Apple.
