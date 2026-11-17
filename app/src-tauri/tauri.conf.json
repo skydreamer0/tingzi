@@ -10,14 +10,16 @@
       {
         "label": "capsule",
         "title": "聽字",
-        "width": 460,
-        "height": 92,
+        "width": 72,
+        "height": 72,
+        "visible": false,
+        "transparent": true,
         "decorations": false,
         "resizable": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "focus": false,
-        "shadow": true
+        "shadow": false
       }
     ],
     "security": { "csp": "default-src 'self'; style-src 'self'; script-src 'self'" }

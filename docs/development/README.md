@@ -16,7 +16,7 @@
 | `windows/engine_test.cpp`、`learning_test.cpp` | 自有引擎與學習測試原始碼。 |
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
-| `app/` | 遷移中的新語音浮窗（Tauri 2、Rust、網頁介面），Codex 辨識內建。尚未加入安裝包，見[遷移規格](../specs/app-migration.md)。 |
+| `app/` | 遷移中的新語音浮窗與設定頁（Tauri 2、Rust、網頁介面），Codex 辨識內建。尚未加入安裝包，見[遷移規格](../specs/app-migration.md)。 |
 | `windows/float/ZhuyinOptions.cs` | 設定頁寫給注音服務的選項（鍵盤配置、選字方式、字級）與自訂詞的讀寫。 |
 | `windows/float/Controls.cs` | 設定視窗自繪的元件：卡片、圓角按鈕、開關與產品標誌。 |
 | `windows/float/Appearance.cs` | 色系（跟隨 Windows 或固定深淺色）、圖示繪製與登入啟動。 |

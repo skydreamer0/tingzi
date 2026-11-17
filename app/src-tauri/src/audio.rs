@@ -1,4 +1,4 @@
-//! Microphone capture: records the default input and hands back 16 kHz mono WAV bytes.
+//! Microphone capture: records the chosen input and hands back 16 kHz mono WAV bytes.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc::{self, Sender};
@@ -6,8 +6,8 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
 const TARGET_RATE: u32 = 16_000;
-/// Five minutes at the device rate is more than one dictation ever needs.
-const LONGEST_SECONDS: usize = 300;
+/// Recording stops by itself after ten minutes.
+pub const LONGEST_SECONDS: usize = 600;
 
 pub struct Recorder {
     stop: Sender<()>,
@@ -15,13 +15,14 @@ pub struct Recorder {
 }
 
 impl Recorder {
-    /// Starts recording. `level` receives the peak of each buffer, from 0 to 1.
-    pub fn start(level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
+    /// Starts recording from the microphone with this name, or the Windows default when None.
+    /// `level` receives the peak of each buffer, from 0 to 1.
+    pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel::<()>();
         let (ready, started) = mpsc::channel::<Result<(), String>>();
         let worker = thread::spawn(move || -> Result<Vec<u8>, String> {
             // The stream is not Send, so the thread that opens it also owns and closes it.
-            let opened = open(level);
+            let opened = open(microphone.as_deref(), level);
             let (stream, samples, rate) = match opened {
                 Ok(parts) => parts,
                 Err(reason) => {
@@ -33,7 +34,7 @@ impl Recorder {
             let _ = stopped.recv();
             drop(stream);
             let captured = samples.lock().map_err(|_| "錄音資料損毀".to_string())?;
-            Ok(wav(&resample(&captured, rate)))
+            Ok(wav(&resample(trim(&captured, rate), rate)))
         });
         match started.recv() {
             Ok(Ok(())) => Ok(Self { stop, worker }),
@@ -51,8 +52,21 @@ impl Recorder {
 
 type Opened = (cpal::Stream, Arc<Mutex<Vec<f32>>>, u32);
 
-fn open(level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
-    let device = cpal::default_host().default_input_device().ok_or("找不到麥克風")?;
+/// The names of the microphones Windows can record from right now.
+pub fn microphones() -> Vec<String> {
+    cpal::default_host().input_devices().map(|devices| devices.filter_map(|device| device.name().ok()).collect()).unwrap_or_default()
+}
+
+fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
+    let host = cpal::default_host();
+    let device = match microphone {
+        Some(name) => host
+            .input_devices()
+            .ok()
+            .and_then(|mut devices| devices.find(|device| device.name().is_ok_and(|found| found == name)))
+            .ok_or_else(|| format!("{name}未連接，請開語音設定"))?,
+        None => host.default_input_device().ok_or("找不到麥克風")?,
+    };
     let config = device.default_input_config().map_err(|_| "無法讀取麥克風格式")?;
     let channels = usize::from(config.channels().max(1));
     let rate = config.sample_rate().0;
@@ -108,6 +122,25 @@ fn open(level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
     Ok((stream, samples, rate))
 }
 
+/// Drops the silence before and after speech, keeping a quarter second on each side.
+/// Less audio means a smaller upload and a faster answer; a recording with no clear speech is left whole.
+fn trim(samples: &[f32], rate: u32) -> &[f32] {
+    let window = (rate as usize / 50).max(1); // 20 ms
+    let loudest = samples.iter().fold(0f32, |peak, sample| peak.max(sample.abs()));
+    // Speech stands well above the room; the floor keeps a silent recording from being cut to nothing.
+    let threshold = (loudest * 0.08).max(0.004);
+    let speaking = |chunk: &[f32]| chunk.iter().any(|sample| sample.abs() > threshold);
+    let chunks = samples.chunks(window);
+    let (Some(first), Some(last)) = (chunks.clone().position(speaking), chunks.clone().rposition(speaking)) else { return samples };
+    let margin = rate as usize / 4;
+    let start = (first * window).saturating_sub(margin);
+    let end = ((last + 1) * window + margin).min(samples.len());
+    if end - start < rate as usize * 3 / 10 {
+        return samples;
+    }
+    &samples[start..end]
+}
+
 /// Linear resampling is enough for speech going to a recogniser.
 fn resample(samples: &[f32], rate: u32) -> Vec<f32> {
     if rate == TARGET_RATE || samples.is_empty() {
@@ -147,9 +180,99 @@ fn wav(samples: &[f32]) -> Vec<u8> {
     out
 }
 
+/// Turns any PCM or float WAV file into the 16 kHz mono form the recognisers expect.
+pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
+    let unreadable = || "無法讀取這個 WAV 音檔".to_string();
+    if file.len() < 12 || &file[0..4] != b"RIFF" || &file[8..12] != b"WAVE" {
+        return Err(unreadable());
+    }
+    let (mut format, mut data) = (None, None);
+    let mut at = 12;
+    while at + 8 <= file.len() {
+        let size = u32::from_le_bytes(file[at + 4..at + 8].try_into().unwrap()) as usize;
+        let body = &file[at + 8..(at + 8 + size).min(file.len())];
+        match &file[at..at + 4] {
+            b"fmt " if body.len() >= 16 => format = Some(body),
+            b"data" => data = Some(body),
+            _ => {}
+        }
+        at += 8 + size + (size & 1);
+    }
+    let (format, data) = (format.ok_or_else(unreadable)?, data.ok_or_else(unreadable)?);
+    let word = |at: usize| u16::from_le_bytes([format[at], format[at + 1]]);
+    let mut kind = word(0);
+    let channels = usize::from(word(2).max(1));
+    let rate = u32::from_le_bytes(format[4..8].try_into().unwrap());
+    let bits = word(14);
+    if kind == 0xFFFE && format.len() >= 26 {
+        kind = word(24); // extensible files name the real format in a sub-type
+    }
+    let width = usize::from(bits / 8);
+    let sample = |bytes: &[u8]| -> Option<f32> {
+        Some(match (kind, bits) {
+            (1, 8) => (f32::from(bytes[0]) - 128.0) / 128.0,
+            (1, 16) => f32::from(i16::from_le_bytes([bytes[0], bytes[1]])) / 32768.0,
+            (1, 24) => (i32::from_le_bytes([0, bytes[0], bytes[1], bytes[2]]) >> 8) as f32 / 8_388_608.0,
+            (1, 32) => i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as f32 / 2_147_483_648.0,
+            (3, 32) => f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]),
+            _ => return None,
+        })
+    };
+    if rate == 0 || width == 0 || sample(&[0; 4]).is_none() {
+        return Err("不支援這個 WAV 的格式，請轉成 PCM".into());
+    }
+    let mono: Vec<f32> = data
+        .chunks_exact(width * channels)
+        .map(|frame| frame.chunks_exact(width).filter_map(&sample).sum::<f32>() / channels as f32)
+        .collect();
+    if mono.is_empty() {
+        return Err("這個音檔沒有聲音".into());
+    }
+    Ok(wav(&resample(&mono, rate)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn silence_around_speech_is_dropped() {
+        let rate = 16_000;
+        let mut recording = vec![0.001f32; rate as usize * 2];
+        recording.extend(std::iter::repeat(0.5).take(rate as usize));
+        recording.extend(std::iter::repeat(0.001).take(rate as usize * 3));
+        // One second of speech keeps a quarter second on each side.
+        assert_eq!(trim(&recording, rate).len(), rate as usize * 3 / 2);
+        let quiet = vec![0.0f32; rate as usize];
+        assert_eq!(trim(&quiet, rate).len(), quiet.len());
+        assert!(trim(&[], rate).is_empty());
+    }
+
+    #[test]
+    fn other_wav_formats_become_16k_mono() {
+        // One second of 8 kHz stereo 16-bit silence.
+        let frames = 8_000u32;
+        let mut file = Vec::new();
+        file.extend_from_slice(b"RIFF");
+        file.extend_from_slice(&(36 + frames * 4).to_le_bytes());
+        file.extend_from_slice(b"WAVEfmt ");
+        file.extend_from_slice(&16u32.to_le_bytes());
+        for value in [1u16, 2] {
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(&8_000u32.to_le_bytes());
+        file.extend_from_slice(&32_000u32.to_le_bytes());
+        for value in [4u16, 16] {
+            file.extend_from_slice(&value.to_le_bytes());
+        }
+        file.extend_from_slice(b"data");
+        file.extend_from_slice(&(frames * 4).to_le_bytes());
+        file.extend(std::iter::repeat(0u8).take(frames as usize * 4));
+        let out = normalise(&file).unwrap();
+        assert_eq!(out.len(), 44 + 16_000 * 2);
+        assert_eq!(u32::from_le_bytes(out[24..28].try_into().unwrap()), 16_000);
+        assert!(normalise(b"not a wave file").is_err());
+    }
 
     #[test]
     fn resampling_keeps_duration() {

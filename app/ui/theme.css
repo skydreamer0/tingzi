@@ -1,0 +1,59 @@
+/* Colours and shared pieces for every window. The app sets data-theme when the user picks light or dark. */
+:root {
+  color-scheme: light;
+  --back: #f3f5fc;
+  --surface: #ffffff;
+  --input: #f5f6fd;
+  --text: #1f2455;
+  --muted: #545a80;
+  --border: #bec4e4;
+  --accent: #303897;
+  --on-accent: #ffffff;
+  --danger: #b0281e;
+  --preview-size: 20px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --back: #181a26;
+    --surface: #202332;
+    --input: #2c3044;
+    --text: #e8ebff;
+    --muted: #a6accd;
+    --border: #4a4f70;
+    --accent: #aeb6ff;
+    --on-accent: #181b3c;
+    --danger: #ff8c82;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --back: #181a26;
+  --surface: #202332;
+  --input: #2c3044;
+  --text: #e8ebff;
+  --muted: #a6accd;
+  --border: #4a4f70;
+  --accent: #aeb6ff;
+  --on-accent: #181b3c;
+  --danger: #ff8c82;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  font: 15px/1.4 "Microsoft JhengHei UI", "Segoe UI", sans-serif;
+  color: var(--text);
+  user-select: none;
+  overflow: hidden;
+}
+button, select, input { font: inherit; color: inherit; }
+.sprite { position: absolute; width: 0; height: 0; }
+.glyph {
+  width: 22px;
+  height: 22px;
+  fill: none;
+  stroke: currentColor;
+  stroke-width: 2;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+}
