@@ -44,6 +44,8 @@ cargo build --release
 
 要手動啟動剛建置的浮窗，執行建置輸出裡的 `Tingzi.exe`。已安裝的浮窗與開發版共用單一執行個體識別；先把環境變數 `TINGZI_RECORD_KEY` 設為一個字母（例如 `T`）再啟動，開發版會改用該字母當錄音鍵並使用另一組執行個體名稱，可以和已安裝的版本同時執行。`--show`、`--settings`、`--edit`、`--open-wav` 與 `--transcribe` 等啟動參數見[遷移規格](../specs/app-migration.md)的「開發與測試」。
 
+AI 潤稿的評測句在 `app/src-tauri/refine-cases/cases.json`。`cargo test` 只確認回應的檢查不會擋掉合格的潤稿；要看真實模型處理口頭禪、改口與數字的表現，在填好潤稿服務的電腦上執行 `python app/src-tauri/refine-cases/try_refine.py <Tingzi.exe 的路徑>`，每一句會用到一次服務的額度。說明見 [AI 潤稿規格](../specs/ai-refine.md)的「評測句」。
+
 開發版浮窗不會替你安裝 TSF。線上辨識已內建，不需要另備 `codex-asr.exe`，但需要這台電腦上可用的 Codex 登入。本機模式需要既有 Whisper 工具與模型。不要為測試提交這些私人檔案。
 
 ## 建置 macOS 版
