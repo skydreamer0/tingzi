@@ -159,17 +159,33 @@ begin
   end;
 end;
 
+// 沒有 WebView2 Runtime 時直接從微軟下載安裝，不另外詢問：語音浮窗和設定視窗少了它開不起來。
+// 有畫面時顯示下載進度；無人值守安裝（/VERYSILENT）在 PrepareToInstall 裡安靜地下載。
+// 下載失敗不擋安裝，注音照常可用。
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = wpReady) and (not WebView2Installed) and (not WizardSilent) then
+  if (CurPageID = wpReady) and (not WizardSilent) and (not WebView2Installed) then
   begin
-    if MsgBox('這台電腦沒有 Microsoft Edge WebView2 Runtime，語音浮窗和設定視窗需要它才能開啟（注音輸入不需要）。' + #13#10#13#10 +
-              '要現在從微軟下載並安裝嗎？大約需要 2 MB 的下載，之後會再自動取得其餘部分。', mbConfirmation, MB_YESNO) = IDYES then
-    begin
-      if not InstallWebView2 then
-        MsgBox('WebView2 Runtime 沒有裝好。聽字會繼續安裝，注音可以照常使用；之後可以到 https://developer.microsoft.com/microsoft-edge/webview2/ 下載「Evergreen Bootstrapper」再裝一次。', mbInformation, MB_OK);
-    end;
+    if not InstallWebView2 then
+      MsgBox('WebView2 Runtime 沒有裝好，可能是網路無法連到微軟。聽字會繼續安裝，注音可以照常使用；語音浮窗需要它，之後可以到 https://developer.microsoft.com/microsoft-edge/webview2/ 下載「Evergreen Bootstrapper」再裝一次。', mbInformation, MB_OK);
+  end;
+end;
+
+procedure InstallWebView2Quietly;
+var
+  Code: Integer;
+begin
+  if WebView2Installed then
+    exit;
+  try
+    DownloadTemporaryFile('https://go.microsoft.com/fwlink/p/?LinkId=2124703', 'MicrosoftEdgeWebview2Setup.exe', '', nil);
+    if Exec(ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Log('WebView2 Runtime setup exit code ' + IntToStr(Code))
+    else
+      Log('WebView2 Runtime setup could not start.');
+  except
+    Log('WebView2 Runtime download failed: ' + GetExceptionMessage);
   end;
 end;
 
@@ -224,6 +240,8 @@ var
   Payload, Archive, Output: String;
 begin
   Result := '';
+  if WizardSilent then
+    InstallWebView2Quietly;
   ExtractTemporaryFile('payload.zip');
   Archive := ExpandConstant('{tmp}\payload.zip');
   Payload := ExpandConstant('{tmp}\payload');

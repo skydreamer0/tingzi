@@ -39,6 +39,31 @@ bool copyProduct(const fs::path& from,const fs::path& to){
     std::ifstream a(from,std::ios::binary),b(to,std::ios::binary);
     return a&&b&&std::equal(std::istreambuf_iterator<char>(a),{},std::istreambuf_iterator<char>(b));
 }
+// Reinstalling the same version over a different build: the file in use is moved aside, which Windows
+// allows even for a running program or a loaded DLL, and the new one takes its name. Programs already
+// running keep the old file; the next start uses the new one. The old file goes when nothing uses it.
+const wchar_t* asideMark=L".replaced-";
+void dropAside(const fs::path& aside){
+    if(!DeleteFileW(aside.c_str()))MoveFileExW(aside.c_str(),nullptr,MOVEFILE_DELAY_UNTIL_REBOOT);
+}
+void dropOldAsides(const fs::path& folder){
+    std::error_code error;
+    for(const auto& entry:fs::directory_iterator(folder,error))
+        if(entry.is_regular_file(error) && entry.path().filename().native().find(asideMark)!=std::wstring::npos)DeleteFileW(entry.path().c_str());
+}
+bool placeProduct(const fs::path& from,const fs::path& to){
+    if(copyProduct(from,to))return true;
+    DWORD attr=GetFileAttributesW(to.c_str());
+    if(attr==INVALID_FILE_ATTRIBUTES || (attr&(FILE_ATTRIBUTE_DIRECTORY|FILE_ATTRIBUTE_REPARSE_POINT)))return false;
+    fs::path aside=to;aside+=asideMark+std::to_wstring(GetTickCount64());
+    if(!MoveFileExW(to.c_str(),aside.c_str(),0))return false;
+    if(!CopyFileW(from.c_str(),to.c_str(),TRUE)){
+        MoveFileExW(aside.c_str(),to.c_str(),0);
+        return false;
+    }
+    dropAside(aside);
+    return true;
+}
 int run(){
     wchar_t pf[MAX_PATH],self[32768];DWORD bytes=sizeof(pf);
     if(RegGetValueW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion",L"ProgramFilesDir",
@@ -58,7 +83,8 @@ int run(){
         fs::create_directory(dest);if(!safeDirectory(dest))return 5;
         fs::create_directory(dest/L"TingziFloat");if(!safeDirectory(dest/L"TingziFloat"))return 5;
         const wchar_t* names[]={L"README.md",L"THIRD-PARTY-NOTICES.txt",L"pairs.txt",L"pairs-NOTICE.txt",L"TingziFloat\\LICENSE",a,b,L"TingziKeyboard.exe",L"TingziLearning.exe",L"TingziSetup64.exe",L"TingziSetup32.exe",L"TingziFloat\\TingziFloat.exe"};
-        for(const auto* name:names)if(!copyProduct(source/name,dest/name))return 6;
+        dropOldAsides(dest);dropOldAsides(dest/L"TingziFloat");
+        for(const auto* name:names)if(!placeProduct(source/name,dest/name))return 6;
         const fs::path active=fs::path(x64.old).parent_path();
         const fs::path previous=active;
         const wchar_t* local[]={L"Tingzi.cin",L"phrases.txt",L"TingziFloat\\voice-root.txt",L"McBopomofo-LICENSE.txt"};

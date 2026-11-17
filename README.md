@@ -51,7 +51,9 @@ Traditional Chinese voice and Zhuyin input for Windows.
 語音浮窗需要 Microsoft Edge WebView2 Runtime，Windows 11 已內建，大多數 Windows 10 也已經有，不必另外安裝 .NET。要移除時，以系統管理員身分執行安裝目錄裡的 `RemoveTingzi.cmd`。升級與更多細節見 [Windows 使用手冊](windows/README.md)。
 
 > [!NOTE]
-> 這是預覽版。安裝包沒有數位簽章，Windows 可能會跳出警告；目前也還沒有單一安裝程式，安裝程式正在 [#7](https://github.com/skydreamer0/tingzi/issues/7) 進行。下載頁附有 `.sha256` 檔，可以核對 ZIP 是否完整。
+> 這是預覽版。安裝包沒有數位簽章，Windows 可能會跳出警告；下載頁附有 `.sha256` 檔，可以核對 ZIP 是否完整。
+>
+> 準備中：下一版起，下載頁只放一個安裝程式 `Tingzi-Setup-<版本>-x64.exe`（與它的 `.sha256`）。雙擊後依畫面安裝即可，不用解壓縮或執行腳本；缺少 WebView2 Runtime 時會自動下載。已安裝的電腦執行它就是升級，移除則到 Windows 的「已安裝的應用程式」。
 >
 > macOS 版自行建置出的 `Tingzi.app` 只有本機簽章，沒有 Developer ID，也沒有經過 Apple 公證，第一次開啟時要在 Finder 按右鍵選「打開」。
 

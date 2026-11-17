@@ -52,7 +52,9 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 The voice window needs the Microsoft Edge WebView2 Runtime. Windows 11 includes it and most Windows 10 PCs already have it. You don't need .NET. To uninstall, run `RemoveTingzi.cmd` from the install folder as administrator. See the [Windows manual](windows/README.md) for upgrades and other details.
 
 > [!NOTE]
-> This is a preview. The package is not code-signed, so Windows may show a warning. There is no single installer yet; one is being built in [#7](https://github.com/skydreamer0/tingzi/issues/7). Each release includes a `.sha256` file you can use to check the ZIP.
+> This is a preview. The package is not code-signed, so Windows may show a warning. Each release includes a `.sha256` file you can use to check the ZIP.
+>
+> Coming next: from the next release on, the download page will have a single installer, `Tingzi-Setup-<version>-x64.exe` (with its `.sha256`). Double-click it and follow the steps; there is nothing to extract and no script to run, and the WebView2 Runtime is downloaded automatically if it is missing. Running it on a computer that already has Tingzi upgrades it, and Tingzi is removed from Windows' Installed apps.
 >
 > A self-built macOS `Tingzi.app` is signed locally only. It has no Developer ID and is not notarized by Apple, so the first time you open it, right-click it in Finder and choose Open.
 
