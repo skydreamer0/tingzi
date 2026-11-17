@@ -1,6 +1,7 @@
 //! The user's preferences, in the same file the earlier voice window used, so an upgrade keeps them.
 
 use crate::deliver::Mode;
+use crate::hotkey::Hotkey;
 use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
 
@@ -40,14 +41,11 @@ fn lenient_note<'de, D: Deserializer<'de>>(source: D) -> Result<String, D::Error
     Ok(value.as_ref().and_then(serde_json::Value::as_str).map(short_note).unwrap_or_default())
 }
 
-#[cfg(not(target_os = "macos"))]
-const DRAFT_CLASH: &str = "Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。";
-#[cfg(target_os = "macos")]
-const DRAFT_CLASH: &str = "Control+Option+V 用於貼入草稿，請選其他錄音鍵。";
-#[cfg(not(target_os = "macos"))]
-const LAST_CLASH: &str = "Alt+Shift+Z 用於貼上上一則，請選其他錄音鍵。";
-#[cfg(target_os = "macos")]
-const LAST_CLASH: &str = "Option+Shift+Z 用於貼上上一則，請選其他錄音鍵。";
+/// Keys that are not a shortcut this version understands are read as unset, so the rest of the user's choices still load.
+fn lenient_hotkey<'de, D: Deserializer<'de>>(source: D) -> Result<Option<Hotkey>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(source)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
@@ -65,10 +63,14 @@ pub struct Settings {
     pub local_model: Option<String>,
     /// Whether local recognition uses the graphics card, when a program that can is in place.
     pub gpu: bool,
-    /// 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift; on macOS, Control and Option take the place of Ctrl and Alt.
+    /// What earlier versions read for the recording shortcut: 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift;
+    /// on macOS, Control and Option take the place of Ctrl and Alt. `hotkey` takes its place when set.
     pub modifiers: u32,
-    /// A Windows virtual key from A to Z, or 0 when the shortcut is off.
+    /// What earlier versions read: a Windows virtual key from A to Z, or 0 when the shortcut is off.
     pub record_key: u32,
+    /// The recording shortcut, which may be any keys `Hotkey` allows; None in files from before it could.
+    #[serde(deserialize_with = "lenient_hotkey")]
+    pub hotkey: Option<Hotkey>,
     /// Preview text size in points: 18, 20 or 24.
     pub text_size: u32,
     pub microphone_id: Option<String>,
@@ -115,6 +117,7 @@ impl Default for Settings {
             gpu: false,
             modifiers: 3,
             record_key: u32::from(b'R'),
+            hotkey: None,
             text_size: 20,
             microphone_id: None,
             microphone_name: None,
@@ -144,9 +147,23 @@ impl Settings {
         self.engine.unwrap_or(if self.online { Engine::Codex } else { Engine::Local })
     }
 
-    /// The choices as written: the engine named, and `Online` only for Codex.
+    /// The recording shortcut, reading files from before any keys could be chosen by their letter and modifier pair.
+    pub fn hotkey(&self) -> Hotkey {
+        self.hotkey.unwrap_or(Hotkey { modifiers: self.modifiers, key: self.record_key })
+    }
+
+    /// The choices as written: the engine named, and `Online` only for Codex. Earlier versions read
+    /// the shortcut from `Modifiers` and `RecordKey`; keys they cannot use are written there as Ctrl+Alt+R.
     fn as_saved(&self) -> Self {
-        Self { online: self.engine() == Engine::Codex, engine: Some(self.engine()), ..self.clone() }
+        let keys = self.hotkey();
+        let (modifiers, record_key) = if keys.fits_earlier_versions() {
+            (keys.modifiers, keys.key)
+        } else if keys.off() {
+            (crate::hotkey::DEFAULT.modifiers, 0)
+        } else {
+            (crate::hotkey::DEFAULT.modifiers, crate::hotkey::DEFAULT.key)
+        };
+        Self { online: self.engine() == Engine::Codex, engine: Some(self.engine()), hotkey: Some(keys), modifiers, record_key, ..self.clone() }
     }
 
     fn file() -> PathBuf {
@@ -167,19 +184,12 @@ impl Settings {
     }
 
     /// Why these choices cannot be used, in words for the settings page; None when they are fine.
-    pub fn problem(&self) -> Option<&'static str> {
-        let key_ok = self.record_key == 0 || (u32::from(b'A')..=u32::from(b'Z')).contains(&self.record_key);
-        if !matches!(self.modifiers, 3 | 5 | 6) || !key_ok {
-            return Some("請選擇 A 到 Z 的錄音鍵。");
-        }
-        if self.modifiers == 3 && self.record_key == u32::from(b'V') {
-            return Some(DRAFT_CLASH);
-        }
-        if self.modifiers == 5 && self.record_key == u32::from(b'Z') {
-            return Some(LAST_CLASH);
+    pub fn problem(&self) -> Option<String> {
+        if let Some(problem) = self.hotkey().problem() {
+            return Some(problem);
         }
         if !matches!(self.text_size, 18 | 20 | 24) || self.appearance > 2 || self.delivery_mode.is_some_and(|mode| mode > 2) {
-            return Some("設定內容不完整，請重新選擇。");
+            return Some("設定內容不完整，請重新選擇。".into());
         }
         None
     }
@@ -210,16 +220,7 @@ impl Settings {
 
     /// The recording shortcut as the user reads it.
     pub fn gesture(&self) -> String {
-        if self.record_key == 0 {
-            return "停用".into();
-        }
-        let [control_alt, alt_shift, control_shift] = crate::sys::MODIFIER_NAMES;
-        let modifiers = match self.modifiers {
-            5 => alt_shift,
-            6 => control_shift,
-            _ => control_alt,
-        };
-        format!("{modifiers}+{}", char::from_u32(self.record_key).unwrap_or('?'))
+        self.hotkey().label()
     }
 }
 
@@ -235,7 +236,8 @@ mod tests {
         .unwrap();
         assert_eq!((saved.modifiers, saved.record_key, saved.simplified, saved.online), (6, 84, true, true));
         assert_eq!(saved.mode(), Mode::Copy);
-        assert_eq!(saved.gesture(), format!("{}+T", crate::sys::MODIFIER_NAMES[2]));
+        let [control, _, shift, _] = crate::sys::MODIFIER_KEYS;
+        assert_eq!(saved.gesture(), format!("{control}+{shift}+T"));
         assert_eq!(saved.problem(), None);
         assert!(saved.use_phrases);
         assert_eq!(saved.engine(), Engine::Codex);
@@ -303,6 +305,28 @@ mod tests {
         assert!(earlier.check_updates);
         let off: Settings = serde_json::from_str(r#"{"CheckUpdates":false}"#).unwrap();
         assert!(!off.check_updates);
+    }
+
+    #[test]
+    fn any_keys_are_kept_and_earlier_versions_still_get_a_shortcut() {
+        use crate::hotkey::{Hotkey, SHIFT};
+        let f9 = Hotkey { modifiers: 0, key: 0x78 };
+        let written = serde_json::to_string(&Settings { hotkey: Some(f9), ..Settings::default() }.as_saved()).unwrap();
+        assert!(written.contains(r#""Hotkey":{"Modifiers":0,"Key":120}"#) && written.contains(r#""Modifiers":3,"RecordKey":82"#));
+        let back: Settings = serde_json::from_str(&written).unwrap();
+        assert_eq!((back.hotkey(), back.problem()), (f9, None));
+        // A shortcut earlier versions can use is written for them as it is.
+        let letter = Hotkey { modifiers: 6, key: u32::from(b'T') };
+        let written = serde_json::to_string(&Settings { hotkey: Some(letter), ..Settings::default() }.as_saved()).unwrap();
+        assert!(written.contains(r#""Modifiers":6,"RecordKey":84"#));
+        // Turned off stays off for them too.
+        let off = Settings { hotkey: Some(Hotkey { modifiers: 0, key: 0 }), ..Settings::default() }.as_saved();
+        assert_eq!((off.modifiers, off.record_key), (3, 0));
+        // Keys this version cannot use are ignored, keeping the earlier choice and everything else.
+        let odd: Settings = serde_json::from_str(r#"{"Hotkey":"F9","Modifiers":5,"RecordKey":81,"Tidy":false}"#).unwrap();
+        assert_eq!((odd.hotkey(), odd.tidy), (Hotkey { modifiers: 5, key: 81 }, false));
+        let letter_alone = Settings { hotkey: Some(Hotkey { modifiers: SHIFT, key: u32::from(b'R') }), ..Settings::default() };
+        assert!(letter_alone.problem().is_some());
     }
 
     #[test]

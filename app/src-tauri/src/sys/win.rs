@@ -47,8 +47,8 @@ pub const PLATFORM: &str = "windows";
 pub const UPDATE_INSTALLER: Option<(&str, &str)> = Some(("Tingzi-Setup-", "-x64.exe"));
 /// Where the service key is kept, as the user knows it.
 pub const KEY_STORE: &str = "Windows 認證管理員";
-/// The modifier pairs a shortcut may use, as the user reads them: Ctrl+Alt, Alt+Shift, Ctrl+Shift.
-pub const MODIFIER_NAMES: [&str; 3] = ["Ctrl+Alt", "Alt+Shift", "Ctrl+Shift"];
+/// The modifier keys as the user reads them, in the order a shortcut is written: Control, Alt, Shift and the Windows key.
+pub const MODIFIER_KEYS: [&str; 4] = ["Ctrl", "Alt", "Shift", "Win"];
 /// The system page that lists keyboards and input languages.
 pub const LANGUAGE_SETTINGS: &str = "ms-settings:regionlanguage";
 

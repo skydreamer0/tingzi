@@ -35,9 +35,10 @@
         <h2>錄音</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><span class="name">錄音快捷鍵</span><p>在任何程式裡按這組鍵開始錄音。</p></div>
-            <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3" data-mac="Control+Option">Ctrl+Alt</option><option value="6" data-mac="Control+Shift">Ctrl+Shift</option><option value="5" data-mac="Option+Shift">Alt+Shift</option></select>
-              <select id="record-key" aria-label="錄音快捷鍵的字母"></select></div></div>
+            <div class="what"><span class="name">錄音快捷鍵</span><p id="hotkey-note">在任何程式裡按這組鍵開始錄音。按「變更」後，直接按下想用的組合。</p></div>
+            <div class="group"><kbd id="hotkey-label" class="hotkey" aria-live="polite"></kbd><input id="hotkey" type="hidden">
+              <button id="hotkey-change" type="button" class="button" aria-label="變更錄音快捷鍵">變更</button>
+              <button id="hotkey-off" type="button" class="button" aria-label="停用錄音快捷鍵">停用</button></div></div>
           <div class="row">
             <div class="what"><label for="hold">錄音方式</label><p>選「按住說話」時，快按一下仍是再按一次才停止。</p></div>
             <select id="hold" class="wide"><option value="0">按一下開始，再按一下停止</option><option value="1">按住說話，放開送出</option></select></div>

@@ -16,6 +16,7 @@
 
 | 位置 | 職責 |
 | --- | --- |
+| `app/src-tauri/src/hotkey.rs` | 錄音快捷鍵的規則：可用的鍵（字母、數字搭配輔助鍵，或 F1 到 F24）、顯示名稱、與草稿貼入和貼上上一則的衝突，以及被占用時建議的替代組合。舊版設定檔的 `Modifiers`、`RecordKey` 照常讀取；新組合存在 `Hotkey`，舊版讀不懂的組合在舊欄位寫成 Ctrl+Alt+R。 |
 | `app/src-tauri/src/main.rs` | 錄音、辨識、取消的流程；全域快捷鍵、系統匣、與介面之間的事件。 |
 | `app/src-tauri/src/audio.rs` | 用選定的麥克風錄音，切掉前後靜音，輸出 16 kHz 單聲道 WAV；把匯入的 WAV 轉成同一格式。 |
 | `app/src-tauri/src/recognise.rs` | 線上辨識（內建 `codex-asr`）與本機辨識（呼叫這台電腦上的 Whisper 程式）。 |

@@ -32,9 +32,8 @@ pub const PLATFORM: &str = "macos";
 pub const UPDATE_INSTALLER: Option<(&str, &str)> = None;
 /// Where the service key is kept, as the user knows it.
 pub const KEY_STORE: &str = "鑰匙圈";
-/// The modifier pairs a shortcut may use, as the user reads them, in the order Windows lists
-/// Ctrl+Alt, Alt+Shift and Ctrl+Shift.
-pub const MODIFIER_NAMES: [&str; 3] = ["Control+Option", "Option+Shift", "Control+Shift"];
+/// The modifier keys as the user reads them, in the order a shortcut is written: Control, Option, Shift and Command.
+pub const MODIFIER_KEYS: [&str; 4] = ["Control", "Option", "Shift", "Command"];
 /// The system page that lists keyboards and input sources.
 pub const LANGUAGE_SETTINGS: &str = "x-apple.systempreferences:com.apple.Keyboard-Settings.extension";
 
