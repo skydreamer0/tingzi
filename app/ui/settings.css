@@ -3,7 +3,7 @@
 
 body { display: flex; background: var(--back); }
 
-/* Left: the four pages. */
+/* Left: the five pages. */
 .side {
   flex: none;
   width: 196px;
@@ -36,19 +36,25 @@ body { display: flex; background: var(--back); }
 h1 { margin: 0 0 6px; font-size: var(--font-xl); }
 h2 { margin: 18px 2px 8px; font-size: var(--font-md); }
 
-/* One setting: icon, name and explanation, then the control. */
-.row {
-  display: flex;
-  align-items: center;
-  gap: 14px;
-  min-height: 60px;
+/* Settings that belong together share one card. */
+.card {
   margin-bottom: 8px;
-  padding: 10px 16px;
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   background: var(--surface);
 }
-.row > .glyph { flex: none; width: 20px; height: 20px; color: var(--muted); }
+/* One setting: name and explanation, then the control. */
+.row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  min-height: 56px;
+  padding: 9px 16px;
+}
+/* A line between rows; a hidden row in between leaves no double line. */
+.card > .row:not([hidden]) ~ .row { border-top: 1px solid var(--border); }
+/* Choices that only matter for the setting above them. */
+.row.sub { padding-left: 36px; }
 .what { flex: 1; min-width: 0; }
 .what label, .what .name { display: block; }
 .what p { margin: 2px 0 0; font-size: var(--font-sm); color: var(--muted); }

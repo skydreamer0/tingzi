@@ -25,6 +25,7 @@
 | `float.svg` | 顯示浮條 |
 | `exit.svg` | 結束 |
 | `info.svg` | 關於 |
+| `privacy.svg` | 隱私 |
 | `plus.svg` | 加入 |
 | `export.svg` | 匯出 |
 | `folder.svg` | 開啟資料夾 |

@@ -12,178 +12,205 @@
   <svg class="sprite" aria-hidden="true">
     <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11C5 15 8 18 12 18C16 18 19 15 19 11M12 18V21M9 21H15"/></symbol>
     <symbol id="i-keyboard" viewBox="0 0 24 24"><rect x="3" y="6" width="18" height="12" rx="2.5"/><path d="M7 10H7.01M11 10H11.01M15 10H15.01M8 14H16"/></symbol>
-    <symbol id="i-theme" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8"/><path d="M12 4V20C7.6 20 4 16.4 4 12C4 7.6 7.6 4 12 4Z" fill="currentColor"/></symbol>
     <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11V16M12 8H12.01"/></symbol>
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7H6M12 7H20M4 12H12M18 12H20M4 17H7M13 17H20"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
-    <symbol id="i-audio" viewBox="0 0 24 24"><path d="M14 3H7C5.9 3 5 3.9 5 5V19C5 20.1 5.9 21 7 21H17C18.1 21 19 20.1 19 19V8ZM14 3V8H19"/><path d="M9 14V16M12 12V18M15 14V16"/></symbol>
-    <symbol id="i-convert" viewBox="0 0 24 24"><path d="M4 8H17M14 5L17 8L14 11M20 16H7M10 13L7 16L10 19"/></symbol>
-    <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5V19M5 12H19"/></symbol>
-    <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6C5 4.9 5.9 4 7 4H15"/></symbol>
-    <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20L8 19L19 8L16 5L5 16Z"/><path d="M14 7L17 10"/></symbol>
-    <symbol id="i-float" viewBox="0 0 24 24"><rect x="3" y="8" width="18" height="8" rx="4"/><circle cx="7.5" cy="12" r="1.2" fill="currentColor"/><path d="M11 12H17"/></symbol>
-    <symbol id="i-learn" viewBox="0 0 24 24"><path d="M5 19V5C5 3.9 5.9 3 7 3H19V17H7C5.9 17 5 17.9 5 19C5 20.1 5.9 21 7 21H19"/><path d="M9 8H15"/></symbol>
-    <symbol id="i-export" viewBox="0 0 24 24"><path d="M12 15V4M8 8L12 4L16 8"/><path d="M5 14V18C5 19.1 5.9 20 7 20H17C18.1 20 19 19.1 19 18V14"/></symbol>
-    <symbol id="i-language" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M3 12H21M12 3C9 6 9 18 12 21M12 3C15 6 15 18 12 21"/></symbol>
-    <symbol id="i-power" viewBox="0 0 24 24"><path d="M12 3V11"/><path d="M7 6C3.5 9 4 15 8 17.5C12 20 18 18 19.5 14C20.5 11 19.5 8 17 6"/></symbol>
-    <symbol id="i-link" viewBox="0 0 24 24"><path d="M14 5H19V10M19 5L11 13"/><path d="M17 14V18C17 19.1 16.1 20 15 20H6C4.9 20 4 19.1 4 18V9C4 7.9 4.9 7 6 7H10"/></symbol>
-    <symbol id="i-folder" viewBox="0 0 24 24"><path d="M4 7C4 5.9 4.9 5 6 5H10L12 7H18C19.1 7 20 7.9 20 9V17C20 18.1 19.1 19 18 19H6C4.9 19 4 18.1 4 17Z"/></symbol>
+    <symbol id="i-privacy" viewBox="0 0 24 24"><path d="M12 3L19 6V11C19 15.5 16 19 12 21C8 19 5 15.5 5 11V6Z"/><path d="M9.5 12L11.5 14L15 10"/></symbol>
   </svg>
 
   <nav class="side" aria-label="設定分類">
     <div class="brand"><img src="mark.svg" alt="" width="32" height="32"><span>聽字</span></div>
     <div role="tablist" aria-orientation="vertical">
-      <button role="tab" id="tab-voice" aria-controls="page-voice" aria-selected="true"><svg class="glyph"><use href="#i-mic"/></svg>語音輸入</button>
-      <button role="tab" id="tab-zhuyin" aria-controls="page-zhuyin" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-keyboard"/></svg>注音與工具</button>
-      <button role="tab" id="tab-look" aria-controls="page-look" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-theme"/></svg>外觀與啟動</button>
+      <button role="tab" id="tab-general" aria-controls="page-general" aria-selected="true"><svg class="glyph"><use href="#i-settings"/></svg>一般</button>
+      <button role="tab" id="tab-voice" aria-controls="page-voice" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-mic"/></svg>語音</button>
+      <button role="tab" id="tab-zhuyin" aria-controls="page-zhuyin" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-keyboard"/></svg>注音</button>
+      <button role="tab" id="tab-privacy" aria-controls="page-privacy" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-privacy"/></svg>隱私</button>
       <button role="tab" id="tab-about" aria-controls="page-about" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-info"/></svg>關於</button>
     </div>
   </nav>
 
   <div class="main">
     <div class="pages">
-      <section id="page-voice" role="tabpanel" aria-labelledby="tab-voice">
-        <h1>語音輸入</h1>
+      <section id="page-general" role="tabpanel" aria-labelledby="tab-general">
+        <h1>一般</h1>
+        <h2>錄音</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">錄音快捷鍵</span><p>在任何程式裡按這組鍵開始錄音。</p></div>
+            <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3">Ctrl+Alt</option><option value="6">Ctrl+Shift</option><option value="5">Alt+Shift</option></select>
+              <select id="record-key" aria-label="錄音快捷鍵的字母"></select></div></div>
+          <div class="row">
+            <div class="what"><label for="hold">錄音方式</label><p>選「按住說話」時，快按一下仍是再按一次才停止。</p></div>
+            <select id="hold" class="wide"><option value="0">按一下開始，再按一下停止</option><option value="1">按住說話，放開送出</option></select></div>
+        </div>
+        <h2>文字</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="script">輸出文字</label><p>語音結果與注音送出的字都照這個選擇，逐字轉換。</p></div>
+            <select id="script" class="wide"><option value="0">繁體中文</option><option value="1">簡體中文</option></select></div>
+        </div>
+        <h2>外觀</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="appearance">色系</label><p>套用到設定、浮窗，以及注音的候選窗與輸入行。</p></div>
+            <select id="appearance" class="wide"><option value="0">跟隨 Windows</option><option value="1">淺色</option><option value="2">深色</option></select></div>
+          <div class="row">
+            <div class="what"><label for="accent">強調色</label><p>按鈕與選取項目使用的顏色。</p></div>
+            <select id="accent" class="wide"><option value="0">聽字靛色</option><option value="1">跟隨 Windows 強調色</option></select></div>
+          <div class="row">
+            <div class="what"><label for="text-size">預覽字級</label><p>浮窗裡辨識文字的大小。</p></div>
+            <select id="text-size" class="wide"><option value="18">18</option><option value="20">20</option><option value="24">24</option></select></div>
+        </div>
+        <h2>啟動</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="startup">登入 Windows 時啟動語音浮窗</label><p>登入後就會在螢幕右側看到聽字圖示。</p></div>
+            <input id="startup" type="checkbox" role="switch" class="switch"></div>
+        </div>
+      </section>
+
+      <section id="page-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
+        <h1>語音</h1>
         <h2>麥克風</h2>
-        <div class="row"><svg class="glyph"><use href="#i-mic"/></svg>
-          <div class="what"><label for="microphone">麥克風</label><p>語音輸入使用的收音裝置。</p></div>
-          <select id="microphone" class="wide"></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-audio"/></svg>
-          <div class="what"><span class="name">測試收音</span><p>按「測試」後對著麥克風說話，音量條會跟著動，十秒後自動停止。</p></div>
-          <div class="group"><div class="meter" aria-hidden="true"><span id="mic-level"></span></div><button id="mic-test" type="button" class="button" aria-label="測試麥克風">測試</button></div></div>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="microphone">麥克風</label><p>語音輸入使用的收音裝置。</p></div>
+            <select id="microphone" class="wide"></select></div>
+          <div class="row">
+            <div class="what"><span class="name">測試收音</span><p>按「測試」後說話，音量條會跟著動，十秒後自動停止。</p></div>
+            <div class="group"><div class="meter" aria-hidden="true"><span id="mic-level"></span></div><button id="mic-test" type="button" class="button" aria-label="測試麥克風">測試</button></div></div>
+        </div>
         <h2>辨識</h2>
-        <div class="row"><svg class="glyph"><use href="#i-settings"/></svg>
-          <div class="what"><label for="engine">辨識方式</label><p id="engine-note"></p></div>
-          <select id="engine" class="wide"><option value="local">本機 Whisper</option><option value="api">自選線上服務（自備金鑰）</option><option value="codex">Codex 線上辨識</option></select></div>
-        <div class="row" id="local-model-row"><svg class="glyph"><use href="#i-audio"/></svg>
-          <div class="what"><label for="local-model">本機模型</label><p>較大的模型比較準，但只用 CPU 時每句要等比較久。</p></div>
-          <select id="local-model" class="wide"></select></div>
-        <div class="row" id="api-url-row"><svg class="glyph"><use href="#i-link"/></svg>
-          <div class="what"><label for="api-url">服務網址</label><p>支援 OpenAI 格式的轉寫服務，例如 OpenAI、Groq，或在自己電腦上跑的 Whisper 服務（http://localhost）。</p></div>
-          <input id="api-url" type="text" class="wide" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></div>
-        <div class="row" id="api-model-row"><svg class="glyph"><use href="#i-settings"/></svg>
-          <div class="what"><label for="api-model">模型名稱</label><p>依服務填寫，例如 OpenAI 的 whisper-1。你的自訂詞會一起送出，幫服務認出人名與專有名詞。</p></div>
-          <input id="api-model" type="text" class="wide" maxlength="120" autocomplete="off" spellcheck="false" placeholder="whisper-1"></div>
-        <div class="row" id="api-key-row"><svg class="glyph"><use href="#i-info"/></svg>
-          <div class="what"><label for="api-key">金鑰</label><p id="api-key-note"></p></div>
-          <div class="group"><input id="api-key" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="貼上新的金鑰"><button id="api-key-clear" type="button" class="button" aria-label="刪除已存的金鑰">刪除</button></div></div>
-        <div class="row"><svg class="glyph"><use href="#i-convert"/></svg>
-          <div class="what"><label for="script">輸出文字</label><p>同時套用到語音結果與注音送出的字，逐字轉換。</p></div>
-          <select id="script" class="wide"><option value="0">繁體中文</option><option value="1">簡體中文</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-plus"/></svg>
-          <div class="what"><label for="use-phrases">套用自訂詞</label><p>把辨識結果裡同音的字換成你加入的自訂詞，例如人名和專有名詞。</p></div>
-          <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
-        <div class="row"><svg class="glyph"><use href="#i-convert"/></svg>
-          <div class="what"><label for="use-replacements">套用取代規則</label><p>把常聽錯的字換成你要的寫法，例如把「github」換成「GitHub」。</p></div>
-          <div class="group"><button id="manage-replacements" type="button" class="button" aria-label="管理取代規則">管理</button><input id="use-replacements" type="checkbox" role="switch" class="switch"></div></div>
-        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
-          <div class="what"><label for="tidy">整理口語</label><p>去掉句首的「嗯、呃、欸」、重複的「我我我」「然後然後」，並把空白與半形標點補成中文標點。不會改寫你的句子。</p></div>
-          <input id="tidy" type="checkbox" role="switch" class="switch"></div>
-        <div class="row"><svg class="glyph"><use href="#i-copy"/></svg>
-          <div class="what"><label for="delivery">辨識完成後</label><p>錄音途中若切換到別的視窗，辨識文字會留在浮窗預覽，不會貼錯地方。</p></div>
-          <select id="delivery" class="wide"><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-settings"/></svg>
-          <div class="what"><span class="name">依程式設定</span><p>對終端機、程式編輯器或聊天軟體另外決定整理口語、輸出文字、送出方式和句尾句號。</p></div>
-          <button id="manage-app-rules" type="button" class="button" aria-label="管理依程式設定">管理</button></div>
-        <h2>操作</h2>
-        <div class="row"><svg class="glyph"><use href="#i-keyboard"/></svg>
-          <div class="what"><span class="name">錄音快捷鍵</span><p>按一次開始錄音，再按一次停止。</p></div>
-          <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3">Ctrl+Alt</option><option value="6">Ctrl+Shift</option><option value="5">Alt+Shift</option></select>
-            <select id="record-key" aria-label="錄音快捷鍵的字母"></select></div></div>
-        <div class="row"><svg class="glyph"><use href="#i-mic"/></svg>
-          <div class="what"><label for="hold">錄音方式</label><p>「按住說話」時按著快捷鍵講，放開就送出；快按一下則和原本一樣，再按一次才停止。</p></div>
-          <select id="hold" class="wide"><option value="0">按一下開始，再按一下停止</option><option value="1">按住說話，放開送出</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-folder"/></svg>
-          <div class="what"><label for="keep-history">保留最近 50 則辨識紀錄</label><p id="history-note">只存在這台電腦。沒貼上的文字可以從浮窗的紀錄取回，或按 Alt+Shift+Z 再貼一次上一則。</p></div>
-          <div class="group"><button id="history-clear" type="button" class="button" aria-label="清除辨識紀錄">清除</button><input id="keep-history" type="checkbox" role="switch" class="switch"></div></div>
-        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
-          <div class="what"><label for="text-size">預覽字級</label><p>浮窗裡辨識文字的大小。</p></div>
-          <select id="text-size" class="wide"><option value="18">18</option><option value="20">20</option><option value="24">24</option></select></div>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="engine">辨識方式</label><p id="engine-note"></p></div>
+            <select id="engine" class="wide"><option value="local">本機 Whisper</option><option value="api">自選線上服務（自備金鑰）</option><option value="codex">Codex 線上辨識</option></select></div>
+          <div class="row sub" id="local-model-row">
+            <div class="what"><label for="local-model">本機模型</label><p>較大的模型比較準，但只用 CPU 時每句要等比較久。</p></div>
+            <select id="local-model" class="wide"></select></div>
+          <div class="row sub" id="api-url-row">
+            <div class="what"><label for="api-url">服務網址</label><p>OpenAI 格式的轉寫服務，例如 OpenAI、Groq，或自己電腦上的 Whisper 服務（http://localhost）。</p></div>
+            <input id="api-url" type="text" class="wide" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></div>
+          <div class="row sub" id="api-model-row">
+            <div class="what"><label for="api-model">模型名稱</label><p>依服務填寫，例如 OpenAI 的 whisper-1。自訂詞會一起送出，幫服務認出專有名詞。</p></div>
+            <input id="api-model" type="text" class="wide" maxlength="120" autocomplete="off" spellcheck="false" placeholder="whisper-1"></div>
+          <div class="row sub" id="api-key-row">
+            <div class="what"><label for="api-key">金鑰</label><p id="api-key-note"></p></div>
+            <div class="group"><input id="api-key" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="貼上新的金鑰"><button id="api-key-clear" type="button" class="button" aria-label="刪除已存的金鑰">刪除</button></div></div>
+        </div>
+        <h2>文字處理</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="use-phrases">套用自訂詞</label><p>把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「注音」頁管理。</p></div>
+            <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
+          <div class="row">
+            <div class="what"><label for="use-replacements">套用取代規則</label><p>把常聽錯的字換成你要的寫法，例如把「github」換成「GitHub」。</p></div>
+            <div class="group"><button id="manage-replacements" type="button" class="button" aria-label="管理取代規則">管理</button><input id="use-replacements" type="checkbox" role="switch" class="switch"></div></div>
+          <div class="row">
+            <div class="what"><label for="tidy">整理口語</label><p>去掉句首的「嗯、呃、欸」和重複的字詞，補上中文標點。不會改寫你的句子。</p></div>
+            <input id="tidy" type="checkbox" role="switch" class="switch"></div>
+        </div>
+        <h2>送出</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="delivery">辨識完成後</label><p>錄音途中切換到別的視窗時，文字會留在浮窗預覽，不會貼錯地方。</p></div>
+            <select id="delivery" class="wide"><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></div>
+          <div class="row">
+            <div class="what"><span class="name">依程式設定</span><p>對終端機、程式編輯器或聊天軟體另外決定整理口語、輸出文字、送出方式和句尾句號。</p></div>
+            <button id="manage-app-rules" type="button" class="button" aria-label="管理依程式設定">管理</button></div>
+        </div>
       </section>
 
       <section id="page-zhuyin" role="tabpanel" aria-labelledby="tab-zhuyin" hidden>
-        <h1>注音與工具</h1>
+        <h1>注音</h1>
         <h2>打字</h2>
-        <div class="row"><svg class="glyph"><use href="#i-keyboard"/></svg>
-          <div class="what"><label for="key-layout">鍵盤配置</label><p>注音符號在鍵盤上的排法。</p></div>
-          <select id="key-layout" class="wide"><option value="0">標準（大千）</option><option value="1">倚天</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-settings"/></svg>
-          <div class="what"><label for="segment">整句選字方式</label><p>「整句最佳」比較整句的詞頻總和；「長詞優先」先定案長詞，再由左到右決定其餘的字。</p></div>
-          <select id="segment" class="wide"><option value="0">整句最佳</option><option value="1">長詞優先</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
-          <div class="what"><label for="candidate-size">候選窗字級</label></div>
-          <select id="candidate-size" class="wide"><option value="20">20 px</option><option value="24">24 px</option><option value="32">32 px</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-float"/></svg>
-          <div class="what"><label for="line-size">大字輸入行</label><p>打字時在游標旁放大顯示正在組的字。</p></div>
-          <select id="line-size" class="wide"><option value="0">關閉</option><option value="36">36 px</option><option value="44">44 px</option><option value="52">52 px</option></select></div>
-        <p class="note">以上四項在按下「儲存設定」後，於重新開啟的應用程式生效。</p>
-        <div class="row"><svg class="glyph"><use href="#i-info"/></svg>
-          <div class="what"><span class="name">打字時的按鍵</span><p>Shift 加 ， 。 ？ ！ 等鍵輸入全形標點，[ ] 輸入「」，` 開啟符號表。組字時按 Tab 把第一個詞切短，選字時按 Tab 切換近音字。Shift＋Enter 送出並把這段字存成自訂詞。</p></div></div>
-        <h2>詞語與學習</h2>
-        <div class="row"><svg class="glyph"><use href="#i-plus"/></svg>
-          <div class="what"><span class="name">自訂詞</span><p id="words-note">加入姓名、專有名詞等詞語，打注音時優先出現。</p></div>
-          <button id="manage-words" type="button" class="button" aria-label="管理自訂詞">管理</button></div>
-        <div class="row"><svg class="glyph"><use href="#i-copy"/></svg>
-          <div class="what"><span class="name">文字範本</span><p>打出觸發詞的注音後按 ↓，從候選清單選出整段文字，例如地址或常用回覆。</p></div>
-          <button id="manage-templates" type="button" class="button" aria-label="管理文字範本">管理</button></div>
-        <div class="row"><svg class="glyph"><use href="#i-learn"/></svg>
-          <div class="what"><label for="learning">本機學習</label><p id="learning-note">讀取學習狀態中…</p></div>
-          <input id="learning" type="checkbox" role="switch" class="switch" disabled></div>
-        <div class="row" id="learned-row"><svg class="glyph"><use href="#i-learn"/></svg>
-          <div class="what"><span class="name">已學會的詞</span><p>打字時連續選出的字會記成新詞。記錯的可以在這裡刪掉。</p></div>
-          <button id="show-learned" type="button" class="button" aria-label="查看已學會的詞">查看</button></div>
-        <div class="row" id="learning-data"><svg class="glyph"><use href="#i-export"/></svg>
-          <div class="what"><span class="name">學習資料</span><p id="learning-data-note">匯出成文字檔帶到另一台電腦再匯入，或全部清除。</p></div>
-          <div class="group"><button id="learning-import" type="button" class="button" aria-label="匯入學習資料">匯入</button><button id="learning-export" type="button" class="button" aria-label="匯出學習資料">匯出</button><button id="learning-clear" type="button" class="button" aria-label="清除學習資料">清除</button></div></div>
-        <h2>工具</h2>
-        <div class="row"><svg class="glyph"><use href="#i-keyboard"/></svg>
-          <div class="what"><span class="name">切換到注音輸入法</span><p id="keyboard-note">切換後，在原本的應用程式內打字。</p></div>
-          <button id="open-keyboard" type="button" class="button" aria-label="切換到注音輸入法">切換</button></div>
-        <div class="row"><svg class="glyph"><use href="#i-language"/></svg>
-          <div class="what"><span class="name">Windows 語言與鍵盤設定</span><p>管理 Windows 的鍵盤清單和輸入語言。</p></div>
-          <button id="open-language" type="button" class="button" aria-label="開啟 Windows 輸入法設定">開啟</button></div>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="key-layout">鍵盤配置</label><p>注音符號在鍵盤上的排法。</p></div>
+            <select id="key-layout" class="wide"><option value="0">標準（大千）</option><option value="1">倚天</option></select></div>
+          <div class="row">
+            <div class="what"><label for="segment">整句選字方式</label><p>「整句最佳」比較整句的詞頻；「長詞優先」先定案長詞，再由左到右決定其餘的字。</p></div>
+            <select id="segment" class="wide"><option value="0">整句最佳</option><option value="1">長詞優先</option></select></div>
+          <div class="row">
+            <div class="what"><label for="candidate-size">候選窗字級</label><p>選字清單的文字大小。</p></div>
+            <select id="candidate-size" class="wide"><option value="20">20 px</option><option value="24">24 px</option><option value="32">32 px</option></select></div>
+          <div class="row">
+            <div class="what"><label for="line-size">大字輸入行</label><p>打字時在游標旁放大顯示正在組的字。</p></div>
+            <select id="line-size" class="wide"><option value="0">關閉</option><option value="36">36 px</option><option value="44">44 px</option><option value="52">52 px</option></select></div>
+        </div>
+        <p class="note">以上四項會立刻存下，在重新開啟的應用程式生效。</p>
+        <h2>詞語</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">自訂詞</span><p id="words-note">加入姓名、專有名詞等詞語，打注音時優先出現。</p></div>
+            <button id="manage-words" type="button" class="button" aria-label="管理自訂詞">管理</button></div>
+          <div class="row">
+            <div class="what"><span class="name">文字範本</span><p>打出觸發詞的注音後按 ↓，從候選清單選出整段文字，例如地址或常用回覆。</p></div>
+            <button id="manage-templates" type="button" class="button" aria-label="管理文字範本">管理</button></div>
+        </div>
+        <h2>學習</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="learning">本機學習</label><p id="learning-note">讀取學習狀態中…</p></div>
+            <input id="learning" type="checkbox" role="switch" class="switch" disabled></div>
+          <div class="row" id="learned-row">
+            <div class="what"><span class="name">已學會的詞</span><p>打字時連續選出的字會記成新詞。記錯的可以在這裡刪掉。</p></div>
+            <button id="show-learned" type="button" class="button" aria-label="查看已學會的詞">查看</button></div>
+        </div>
+        <h2>輸入法</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">切換到注音輸入法</span><p id="keyboard-note">切換後，在原本的應用程式內打字。</p></div>
+            <button id="open-keyboard" type="button" class="button" aria-label="切換到注音輸入法">切換</button></div>
+          <div class="row">
+            <div class="what"><span class="name">Windows 語言與鍵盤設定</span><p>管理 Windows 的鍵盤清單和輸入語言。</p></div>
+            <button id="open-language" type="button" class="button" aria-label="開啟 Windows 輸入法設定">開啟</button></div>
+        </div>
+        <h2>打字時的按鍵</h2>
+        <p class="note">Shift 加 ， 。 ？ ！ 等鍵輸入全形標點，[ ] 輸入「」，` 開啟符號表。組字時按 Tab 把第一個詞切短，選字時按 Tab 切換近音字。Shift＋Enter 送出並把這段字存成自訂詞。</p>
       </section>
 
-      <section id="page-look" role="tabpanel" aria-labelledby="tab-look" hidden>
-        <h1>外觀與啟動</h1>
-        <h2>外觀</h2>
-        <div class="row"><svg class="glyph"><use href="#i-theme"/></svg>
-          <div class="what"><label for="appearance">色系</label><p>套用到設定、浮窗，以及注音的候選窗與輸入行。</p></div>
-          <select id="appearance" class="wide"><option value="0">跟隨 Windows</option><option value="1">淺色</option><option value="2">深色</option></select></div>
-        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
-          <div class="what"><label for="accent">強調色</label><p>按鈕與選取項目使用的顏色。</p></div>
-          <select id="accent" class="wide"><option value="0">聽字靛色</option><option value="1">跟隨 Windows 強調色</option></select></div>
-        <h2>啟動</h2>
-        <div class="row"><svg class="glyph"><use href="#i-power"/></svg>
-          <div class="what"><label for="startup">登入 Windows 時啟動語音浮窗</label><p>登入後就會在螢幕右側看到聽字圖示。</p></div>
-          <input id="startup" type="checkbox" role="switch" class="switch"></div>
-        <p class="note">變更在按下「儲存設定」後生效。</p>
+      <section id="page-privacy" role="tabpanel" aria-labelledby="tab-privacy" hidden>
+        <h1>隱私</h1>
+        <p class="note">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。</p>
+        <h2>這台電腦上的資料</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="keep-history">保留最近 50 則辨識紀錄</label><p id="history-note">沒貼上的文字可以從浮窗的紀錄取回，或按 Alt+Shift+Z 再貼一次上一則。</p></div>
+            <div class="group"><button id="history-clear" type="button" class="button" aria-label="清除辨識紀錄">清除</button><input id="keep-history" type="checkbox" role="switch" class="switch"></div></div>
+          <div class="row" id="learning-data">
+            <div class="what"><span class="name">學習資料</span><p id="learning-data-note">匯出成文字檔帶到另一台電腦再匯入，或全部清除。</p></div>
+            <div class="group"><button id="learning-import" type="button" class="button" aria-label="匯入學習資料">匯入</button><button id="learning-export" type="button" class="button" aria-label="匯出學習資料">匯出</button><button id="learning-clear" type="button" class="button" aria-label="清除學習資料">清除</button></div></div>
+          <div class="row">
+            <div class="what"><span class="name">個人資料夾</span><p>存放設定、學習資料和自訂詞；刪除它就會清除這台電腦上所有的個人資料。</p></div>
+            <button id="open-folder" type="button" class="button" aria-label="開啟個人資料夾">開啟</button></div>
+        </div>
       </section>
 
       <section id="page-about" role="tabpanel" aria-labelledby="tab-about" hidden>
         <h1>關於</h1>
-        <div class="row identity"><img src="mark.svg" alt="" width="48" height="48">
-          <div class="what"><span class="name title">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
-        <p class="note">Windows 的繁體中文注音與語音輸入。注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理；只有選用線上辨識時，音檔才會送到第三方服務。</p>
+        <div class="card">
+          <div class="row identity"><img src="mark.svg" alt="" width="48" height="48">
+            <div class="what"><span class="name title">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
+        </div>
         <h2>連結</h2>
-        <div class="row"><svg class="glyph"><use href="#i-link"/></svg>
-          <div class="what"><span class="name">專案首頁</span><p>原始碼、說明文件與更新紀錄。</p></div>
-          <button id="open-home" type="button" class="button" aria-label="開啟專案首頁">開啟</button></div>
-        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
-          <div class="what"><span class="name">回報問題</span><p>在 GitHub 提出錯誤或建議。</p></div>
-          <button id="open-issues" type="button" class="button" aria-label="開啟問題回報頁">開啟</button></div>
-        <h2>資料與授權</h2>
-        <div class="row"><svg class="glyph"><use href="#i-folder"/></svg>
-          <div class="what"><span class="name">個人資料夾</span><p>存放設定、學習資料和自訂詞；刪除它就會清除這台電腦上所有的個人資料。</p></div>
-          <button id="open-folder" type="button" class="button" aria-label="開啟個人資料夾">開啟</button></div>
-        <div class="row"><svg class="glyph"><use href="#i-info"/></svg>
-          <div class="what"><span class="name">注音詞庫</span><p>安裝包附的詞庫取自 McBopomofo（MIT 授權），授權全文在安裝資料夾的 McBopomofo-LICENSE.txt。</p></div></div>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">專案首頁</span><p>原始碼、說明文件與更新紀錄。</p></div>
+            <button id="open-home" type="button" class="button" aria-label="開啟專案首頁">開啟</button></div>
+          <div class="row">
+            <div class="what"><span class="name">回報問題</span><p>在 GitHub 提出錯誤或建議。</p></div>
+            <button id="open-issues" type="button" class="button" aria-label="開啟問題回報頁">開啟</button></div>
+        </div>
+        <h2>授權</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">注音詞庫</span><p>安裝包附的詞庫取自 McBopomofo（MIT 授權），授權全文在安裝資料夾的 McBopomofo-LICENSE.txt。</p></div></div>
+        </div>
       </section>
     </div>
-
     <footer>
       <p id="status" role="status" aria-live="polite"></p>
-      <button id="cancel" type="button" class="button">取消</button>
-      <button id="save" type="button" class="button primary">儲存設定</button>
+      <button id="close" type="button" class="button">關閉</button>
     </footer>
   </div>
 
@@ -226,7 +253,7 @@
 
   <dialog id="app-rules" aria-labelledby="app-rules-title">
     <h1 id="app-rules-title">依程式設定</h1>
-    <p class="note">在這些程式裡說話時，改用這裡的選擇；選「跟隨主要設定」的項目照語音輸入頁的設定。程式以執行檔名稱比對，例如 Code.exe。</p>
+    <p class="note">在這些程式裡說話時，改用這裡的選擇；選「跟隨主要設定」的項目照設定頁的選擇。程式以執行檔名稱比對，例如 Code.exe。</p>
     <ul id="app-rules-list" class="list" role="listbox" tabindex="0" aria-label="已加入的程式"></ul>
     <input id="rule-program" type="text" maxlength="120" autocomplete="off" list="running-programs" placeholder="程式名稱，例如 Code.exe" aria-label="程式名稱">
     <datalist id="running-programs"></datalist>

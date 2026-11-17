@@ -1,4 +1,4 @@
-// The settings window: shows the saved choices and sends them back when the user saves.
+// The settings window: shows the saved choices and stores each change as it is made.
 const { invoke } = window.__TAURI__.core;
 const { listen } = window.__TAURI__.event;
 const byId = id => document.getElementById(id);
@@ -104,17 +104,22 @@ function fill() {
   if (!panel.shortcut_bound) say('目前錄音快捷鍵被占用，請選其他組合。');
 }
 
-function collect() {
+const savedEngine = () => panel.prefs.Engine || (panel.prefs.Online ? 'codex' : 'local');
+
+// The choices on the page. While the user's own service is still incomplete, `engineFromPage` false
+// keeps the engine the app last accepted so the other choices can still be stored.
+function collect(engineFromPage) {
   const number = id => Number(byId(id).value);
   const name = byId('microphone').value || null;
+  const engine = engineFromPage ? byId('engine').value : savedEngine();
   return {
     prefs: {
       ...panel.prefs,
-      Engine: byId('engine').value,
-      Online: byId('engine').value === 'codex',
+      Engine: engine,
+      Online: engine === 'codex',
       LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
-      ApiUrl: byId('api-url').value.trim(),
-      ApiModel: byId('api-model').value.trim(),
+      ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
+      ApiModel: engineFromPage ? byId('api-model').value.trim() : panel.prefs.ApiModel,
       Modifiers: number('modifiers'),
       RecordKey: number('record-key'),
       TextSize: number('text-size'),
@@ -162,22 +167,59 @@ byId('api-key-clear').addEventListener('click', async () => {
   say('已刪除金鑰。', true);
 });
 
-byId('save').addEventListener('click', async () => {
-  try {
-    const key = byId('api-key').value.trim();
-    if (key) {
+// Every choice is stored as soon as it is made; there is no separate save step.
+const engineIds = ['engine', 'api-url', 'api-model', 'api-key'];
+const engineNames = { local: '本機 Whisper', api: '自選線上服務', codex: 'Codex 線上辨識' };
+const valueOf = control => control.type === 'checkbox' ? control.checked : control.value;
+// What each control showed when the app last accepted it, to go back to when a change is refused.
+const accepted = new Map();
+// Why the engine on the page is not in use yet; empty when the page and the app agree.
+let engineWaiting = '';
+// Changes are stored one after another, in the order they were made.
+let storing = Promise.resolve();
+
+function store(control) {
+  storing = storing.then(async () => {
+    const engineChange = engineIds.includes(control.id);
+    const wanted = collect(engineChange || !engineWaiting);
+    try {
+      await invoke('save_settings', wanted);
+      panel.prefs = wanted.prefs;
+      accepted.set(control.id, valueOf(control));
+      if (engineChange) engineWaiting = '';
+      say(engineWaiting || '已套用。', !engineWaiting);
+    } catch (reason) {
+      if (engineChange) {
+        // The fields to complete only show while this engine is chosen, so the page keeps it.
+        engineWaiting = `${String(reason).replace(/。$/, '')}。補齊之前仍使用「${engineNames[savedEngine()]}」。`;
+        say(engineWaiting);
+      } else {
+        if (control.type === 'checkbox') control.checked = accepted.get(control.id);
+        else control.value = accepted.get(control.id);
+        say(String(reason));
+      }
+    }
+  });
+}
+
+byId('api-key').addEventListener('change', () => {
+  const key = byId('api-key').value.trim();
+  if (!key) return;
+  storing = storing.then(async () => {
+    try {
       await invoke('set_api_key', { key });
       panel.api_key_set = true;
       showKey();
+    } catch (reason) {
+      say(String(reason));
     }
-    await invoke('save_settings', collect());
-    invoke('close_settings');
-  } catch (reason) {
-    say(String(reason));
-    openPage(tabs[0]);
-  }
+  });
 });
-byId('cancel').addEventListener('click', () => invoke('close_settings'));
+document.querySelector('.pages').addEventListener('change', event => {
+  // Local learning is switched by its own tool.
+  if (event.target.id !== 'learning') store(event.target);
+});
+byId('close').addEventListener('click', () => invoke('close_settings'));
 
 // Microphone test
 const micTest = byId('mic-test');
@@ -213,8 +255,8 @@ listen('look', event => applyLook(event.payload));
 // Local learning
 const learning = byId('learning');
 const learningNotes = {
-  true: '已啟用：記住你改選過的字；連續選出的字出現兩次就記成新詞。切換後立即套用。',
-  false: '已關閉：不記錄改字習慣。切換後立即套用。',
+  true: '已啟用：記住你改選過的字；連續選出的字出現兩次就記成新詞。',
+  false: '已關閉：不記錄改字習慣。',
 };
 learning.addEventListener('change', async () => {
   const wanted = learning.checked;
@@ -558,6 +600,7 @@ invoke('load_settings').then(async loaded => {
   panel = loaded;
   applyLook(panel.look);
   fill();
+  for (const control of document.querySelectorAll('.pages select, .pages input')) accepted.set(control.id, valueOf(control));
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');
   const on = await invoke('learning_state');
   learning.checked = on === true;

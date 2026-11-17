@@ -152,7 +152,7 @@ pub fn load_settings(app: AppHandle) -> Panel {
     }
 }
 
-/// Applies and stores the choices. On failure nothing is stored and the reason is returned for the page to show.
+/// Applies and stores the choices; the page calls this after each change. On failure nothing is stored and the reason is returned for the page to show.
 #[tauri::command]
 pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: bool) -> Result<(), String> {
     if let Some(problem) = prefs.problem() {
@@ -171,7 +171,9 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     // The earlier voice window finds a microphone by its device id; keep it only while the name still matches.
     let prefs = Settings { microphone_id: before.microphone_id.clone().filter(|_| before.microphone_name == prefs.microphone_name), ..prefs };
     let keys = app.state::<crate::Keys>();
-    if !keys.rebind(&app, &prefs) {
+    // The page saves after every change; a shortcut another program already held must not block the other choices.
+    let same_keys = (before.modifiers, before.record_key) == (prefs.modifiers, prefs.record_key);
+    if !keys.rebind(&app, &prefs) && !same_keys {
         return Err("此快捷鍵已被占用，請選其他組合。".into());
     }
     if prefs.store().is_err() {
