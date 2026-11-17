@@ -24,7 +24,7 @@
 
 ## 發行說明
 
-發行新版時，把 `CHANGELOG.md` 的「尚未發行」改成版號與日期（例如 `## [0.8.0] - 2026-11-20`），再依 [`.github/release-notes.md`](.github/release-notes.md) 的範本寫 GitHub Release 的說明。範本裡 `{{...}}` 是要代入的內容：`{{CHANGES}}` 換成該版在 `CHANGELOG.md` 的分類段落，沒有內容的段落整段刪除。
+發行新版時，在推送版本標籤之前，把 `CHANGELOG.md` 的「尚未發行」改成版號與日期（例如 `## [0.8.0] - 2026-11-20`），並在上方加回一個空的「尚未發行」。推送標籤後，`.github/workflows/release.yml` 會依 [`.github/release-notes.md`](.github/release-notes.md) 的範本建立草稿：版號、前一版的比較連結、安裝程式的雜湊值與該版在 `CHANGELOG.md` 的段落都會自動填入。發佈前在草稿裡填好 `{{SUMMARY}}`（一兩句本版重點）、`{{UPGRADE_NOTES}}` 與 `{{KNOWN_ISSUES}}`，沒有內容的項目整行刪除，確認沒有留下任何 `{{`。
 
 - 設定頁「關於」會以純文字顯示說明的前 4000 個字，所以重點與升級須知放在最前面，不要用表格或 HTML 註解。
 - 以中性、完整的句子描述使用者看得到的改變，用介面上實際的按鈕與頁面名稱，不用標語式的標題。
