@@ -71,7 +71,7 @@
       <section id="page-voice" role="tabpanel" aria-labelledby="tab-voice" hidden>
         <h1>語音</h1>
         <h2>麥克風</h2>
-        <div class="card">
+        <div class="card" id="mic-card">
           <div class="row">
             <div class="what"><label for="microphone">麥克風</label><p>語音輸入使用的收音裝置。</p></div>
             <select id="microphone" class="wide"></select></div>
@@ -80,7 +80,7 @@
             <div class="group"><div class="meter" aria-hidden="true"><span id="mic-level"></span></div><button id="mic-test" type="button" class="button" aria-label="測試麥克風">測試</button></div></div>
         </div>
         <h2>辨識</h2>
-        <div class="card">
+        <div class="card" id="engine-card">
           <div class="row">
             <div class="what"><label for="engine">辨識方式</label><p id="engine-note"></p></div>
             <select id="engine" class="wide"><option value="local">本機 Whisper</option><option value="api">自選線上服務（自備金鑰）</option><option value="codex">Codex 線上辨識</option></select></div>
@@ -222,6 +222,23 @@
           <div class="row identity"><img src="mark.svg" alt="" width="48" height="48">
             <div class="what"><span class="name title" data-mac="聽字・語音輸入">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
         </div>
+        <h2>更新</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name" id="update-title">目前已是最新版</span><p id="update-note"></p></div>
+            <div class="group"><button id="update-check" type="button" class="button">立即檢查</button><button id="update-install" type="button" class="button primary" hidden>下載並安裝</button></div></div>
+          <div class="row" id="update-notes-row" hidden>
+            <details class="what"><summary>這一版改了什麼</summary><div id="update-notes" class="release-notes"></div></details></div>
+          <div class="row">
+            <div class="what"><label for="check-updates">每天自動檢查新版</label><p>開啟時，聽字每天最多向 GitHub 查詢一次有沒有新版，只會送出目前的版本號。關閉後不會自動連線，要更新時按「立即檢查」。</p></div>
+            <input id="check-updates" type="checkbox" role="switch" class="switch"></div>
+        </div>
+        <h2>開始使用</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name">首次設定</span><p>重新走一次麥克風、辨識方式與練習的步驟。</p></div>
+            <button id="open-welcome" type="button" class="button" aria-label="重新開始首次設定">開始</button></div>
+        </div>
         <h2>連結</h2>
         <div class="card">
           <div class="row">
@@ -299,6 +316,27 @@
       <button id="add-app-rule" type="button" class="button primary">加入或更新</button>
       <button id="app-rules-remove" type="button" class="button">刪除選取</button>
       <button id="app-rules-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="welcome" aria-labelledby="welcome-title">
+    <p id="welcome-step" class="step"></p>
+    <h1 id="welcome-title"></h1>
+    <p id="welcome-intro" class="note"></p>
+    <div id="welcome-body"></div>
+    <div id="welcome-practice" class="practice" hidden>
+      <ol>
+        <li>按「開啟記事本」，點一下記事本的空白處。</li>
+        <li>按 <kbd id="welcome-shortcut"></kbd> 開始說一句話，例如「今天下午三點開會」，說完再按一次。文字會直接出現在記事本裡。</li>
+        <li data-mac="選取一個字，改成你要的寫法。">切到聽字的注音（Win＋空白鍵），把游標移到一個字後面，按 ↓ 改選同音字。</li>
+      </ol>
+      <div class="group"><button id="welcome-editor" type="button" class="button" data-mac="開啟文字編輯">開啟記事本</button><button id="welcome-keyboard" type="button" class="button" data-windows>切換到注音</button></div>
+    </div>
+    <p id="welcome-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="welcome-skip" type="button" class="button">略過這一步</button>
+      <button id="welcome-back" type="button" class="button">上一步</button>
+      <button id="welcome-next" type="button" class="button primary">下一步</button>
     </div>
   </dialog>
 

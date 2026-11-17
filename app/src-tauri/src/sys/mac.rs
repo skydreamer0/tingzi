@@ -28,6 +28,8 @@ use tauri::Manager;
 pub const SYSTEM: &str = "macOS";
 /// What the settings page is told, so it can word itself for this system.
 pub const PLATFORM: &str = "macos";
+/// How the installer for this system is named on the Releases page: its start and end. None when there is none yet, so the page is opened instead.
+pub const UPDATE_INSTALLER: Option<(&str, &str)> = None;
 /// Where the service key is kept, as the user knows it.
 pub const KEY_STORE: &str = "鑰匙圈";
 /// The modifier pairs a shortcut may use, as the user reads them, in the order Windows lists
