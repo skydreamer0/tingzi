@@ -282,6 +282,11 @@ pub fn owner(_window: Option<tauri::WebviewWindow>) -> isize {
     0
 }
 
+/// The window's level set by Tauri is not cleared by other programs on macOS, so there is nothing to restore.
+pub fn keep_on_top(_window: &tauri::WebviewWindow) -> bool {
+    false
+}
+
 // ---- One running copy
 
 /// The socket the running copy listens on, named after the single-instance name.

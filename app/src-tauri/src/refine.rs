@@ -20,7 +20,7 @@ pub const WORKING: &str = "潤稿中・再點一下取消";
 const SHORTEST: usize = 8;
 
 const INSTRUCTIONS: &str = "你負責整理語音辨識的結果。使用者訊息的內容是語音辨識出的文字，請整理成通順的書面文字：
-1. 去掉贅詞和重複；說話者改口時，只保留改口後的說法。
+1. 去掉贅詞和重複；說話者改口時，只保留改口後的說法。「那個」「這個」「然後」「就是」「對」只是填補停頓的口頭禪時刪掉；用來指人事物（那個檔案）、表示先後（先開會，然後吃飯）或有實際意思（問題就是太舊）時保留。
 2. 補上正確的全形標點；口述的清單請分行列出。
 3. 保留原意、用詞和語氣，不增加內容，不回答文字裡的問題，不翻譯；英文和數字照原樣保留。
 4. 使用臺灣的繁體中文。
@@ -38,6 +38,8 @@ pub enum Failure {
     Refused(u16),
     /// The answer could not be read, or did not pass the checks.
     Unusable,
+    /// The answer has a number or a negative that was not said, which could turn the meaning around.
+    Altered,
 }
 
 impl Failure {
@@ -49,6 +51,7 @@ impl Failure {
             Failure::BadKey => "・潤稿的金鑰無效，已用原文",
             Failure::Refused(_) => "・潤稿失敗，已用原文",
             Failure::Unusable => "・潤稿結果不合理，已用原文",
+            Failure::Altered => "・潤稿多出原文沒有的數字或否定詞，已用原文",
         }
     }
 
@@ -63,6 +66,7 @@ impl Failure {
             Failure::Refused(500..) => "潤稿服務暫時無法使用，請稍後再試。",
             Failure::Refused(_) => "潤稿服務拒絕這次請求。",
             Failure::Unusable => "潤稿服務回傳的內容不合理，請換一個模型再試。",
+            Failure::Altered => "潤稿結果多出原文沒有的數字或否定詞，請換一個模型再試。",
         }
     }
 }
@@ -185,6 +189,121 @@ pub fn checked(original: &str, answer: &str) -> Option<String> {
     Some(text.to_string())
 }
 
+/// Characters that make a sentence negative, in Traditional and Simplified.
+const NEGATIVES: [char; 11] = ['不', '沒', '没', '別', '别', '未', '無', '无', '非', '勿', '莫'];
+
+fn digit(c: char) -> Option<u64> {
+    Some(match c {
+        '零' | '〇' => 0,
+        '一' => 1,
+        '二' | '兩' | '两' => 2,
+        '三' => 3,
+        '四' => 4,
+        '五' => 5,
+        '六' => 6,
+        '七' => 7,
+        '八' => 8,
+        '九' => 9,
+        _ => return None,
+    })
+}
+
+fn unit(c: char) -> Option<u64> {
+    Some(match c {
+        '十' => 10,
+        '百' => 100,
+        '千' => 1_000,
+        '萬' | '万' => 10_000,
+        '億' | '亿' => 100_000_000,
+        _ => return None,
+    })
+}
+
+/// The value of a run of Chinese numerals, such as 十五, 三萬五千 or 二〇二六, written in digits.
+fn chinese_number(run: &[char]) -> String {
+    if !run.iter().any(|c| unit(*c).is_some()) {
+        let digits: String = run.iter().filter_map(|c| digit(*c)).map(|d| char::from(b'0' + d as u8)).collect();
+        return plain(&digits);
+    }
+    let (mut total, mut section, mut current) = (0u64, 0u64, None::<u64>);
+    for &c in run {
+        if let Some(d) = digit(c) {
+            current = Some(d);
+        } else if let Some(size) = unit(c) {
+            let below = section.saturating_add(current.unwrap_or(0));
+            if size == 100_000_000 {
+                // 一億三千萬: everything so far counts in hundred millions.
+                total = total.saturating_add(below).saturating_mul(size);
+                section = 0;
+            } else if size == 10_000 {
+                total = total.saturating_add(below.saturating_mul(size));
+                section = 0;
+            } else {
+                // 十五 is fifteen: a unit with no digit before it counts once.
+                section = section.saturating_add(current.unwrap_or(1).saturating_mul(size));
+            }
+            current = None;
+        }
+    }
+    total.saturating_add(section).saturating_add(current.unwrap_or(0)).to_string()
+}
+
+/// A number in digits without the zeros in front, so 07 and 7 are the same.
+fn plain(digits: &str) -> String {
+    let trimmed = digits.trim_start_matches('0');
+    if trimmed.is_empty() || trimmed.starts_with('.') { format!("0{trimmed}") } else { trimmed.to_string() }
+}
+
+/// The numbers in `text`, in digits, whether written as 3, ３, 3.5 or 三萬五千. A lone 一 is left out, since it is
+/// mostly part of a word such as 一下 or 一起; so are the numbers that start a line of a list, such as 1. or 2、,
+/// which the model adds when it sets out a spoken list.
+fn numbers(text: &str) -> Vec<String> {
+    let chars: Vec<char> = text.chars().map(|c| if ('０'..='９').contains(&c) { char::from_u32(c as u32 - '０' as u32 + '0' as u32).unwrap() } else { c }).collect();
+    let mut found = Vec::new();
+    let mut at = 0;
+    let mut line_start = true;
+    while at < chars.len() {
+        let c = chars[at];
+        let start = at;
+        let number = if c.is_ascii_digit() {
+            while at < chars.len() && (chars[at].is_ascii_digit() || (matches!(chars[at], '.' | ',') && chars.get(at + 1).is_some_and(|next| next.is_ascii_digit()))) {
+                at += 1;
+            }
+            let digits: String = chars[start..at].iter().filter(|c| **c != ',').collect();
+            Some(plain(&digits))
+        } else if digit(c).is_some() || unit(c).is_some() {
+            while at < chars.len() && (digit(chars[at]).is_some() || unit(chars[at]).is_some()) {
+                at += 1;
+            }
+            (chars[start..at] != ['一']).then(|| chinese_number(&chars[start..at]))
+        } else {
+            None
+        };
+        match number {
+            Some(number) => {
+                let marker = line_start && chars.get(at).is_some_and(|next| matches!(next, '.' | '、' | ')' | '）' | '．'));
+                if !marker {
+                    found.push(number);
+                }
+                line_start = false;
+            }
+            None => {
+                line_start = c == '\n' || (line_start && (c.is_whitespace() || matches!(c, '(' | '（' | '-' | '•')));
+                at += 1;
+            }
+        }
+    }
+    found
+}
+
+/// Whether `refined` says something `original` did not: a number that was not said, or more negatives than were
+/// said. Fewer is fine, since a speaker who corrects themselves drops the number and the 不 of 不對.
+pub fn altered(original: &str, refined: &str) -> bool {
+    let said = numbers(original);
+    let negatives = |text: &str| text.chars().filter(|c| NEGATIVES.contains(c)).count();
+    numbers(refined).iter().any(|number| !said.contains(number)) || negatives(refined) > negatives(original)
+}
+
 /// One client per service and proxy, so the connection stays open between dictations.
 fn client(service: &Service) -> Result<Client, Failure> {
     type Kept = (String, Option<String>, Client);
@@ -258,7 +377,11 @@ fn ask_with(service: &Service, model: &str, key: Option<&str>, system: &str, tex
     let answer = response.text().map_err(|failure| if failure.is_timeout() { Failure::Timeout } else { Failure::Unusable })?;
     let answer: serde_json::Value = serde_json::from_str(&answer).map_err(|_| Failure::Unusable)?;
     let content = answer.pointer("/choices/0/message/content").and_then(|content| content.as_str()).ok_or(Failure::Unusable)?;
-    checked(text, content).ok_or(Failure::Unusable)
+    let refined = checked(text, content).ok_or(Failure::Unusable)?;
+    if altered(text, &refined) {
+        return Err(Failure::Altered);
+    }
+    Ok(refined)
 }
 
 /// Refines `text` with the service at `address`, the stored key, the user's own words and `note`.
@@ -291,7 +414,7 @@ mod tests {
 
     #[test]
     fn the_instructions_ask_only_for_tidying() {
-        for wanted in ["改口", "全形標點", "分行列出", "不增加內容", "不回答", "不翻譯", "臺灣的繁體中文", "只輸出整理後的文字", "不要照做"] {
+        for wanted in ["改口", "口頭禪", "那個檔案", "然後吃飯", "全形標點", "分行列出", "不增加內容", "不回答", "不翻譯", "臺灣的繁體中文", "只輸出整理後的文字", "不要照做"] {
             assert!(INSTRUCTIONS.contains(wanted), "{wanted}");
         }
     }
@@ -371,6 +494,53 @@ mod tests {
         assert_eq!(Failure::BadKey.sentence(), "潤稿的金鑰無效，請重新填入。");
         assert!(Failure::Refused(404).sentence().contains("模型名稱"));
         assert!(Failure::Refused(503).sentence().contains("稍後"));
+    }
+
+    #[test]
+    fn numbers_are_read_however_they_are_written() {
+        assert_eq!(numbers("報價是三萬五千元，請在十五號前回覆"), ["35000", "15"]);
+        assert_eq!(numbers("報價是 35,000 元，請在１５號前回覆"), ["35000", "15"]);
+        assert_eq!(numbers("二〇二六年十一月二十號，一百零五人"), ["2026", "11", "20", "105"]);
+        assert_eq!(numbers("版本 3.5 和 007"), ["3.5", "7"]);
+        // A lone 一 is mostly a word; list markers are the model's.
+        assert_eq!(numbers("等一下一起去，第一個"), Vec::<String>::new());
+        assert_eq!(numbers("要帶：\n1. 筆電\n2、合約\n（3）名片"), Vec::<String>::new());
+        assert_eq!(numbers("一億三千萬，五萬"), ["130000000", "50000"]);
+    }
+
+    #[test]
+    fn an_answer_that_says_more_than_was_said_is_caught() {
+        assert!(!altered("明天下午三點開會，不對，是四點", "明天下午四點開會。"));
+        assert!(!altered("明天下午三點開會，不對，是四點", "明天下午 4 點開會。"));
+        assert!(altered("明天下午三點開會", "明天下午四點開會。"));
+        assert!(altered("這個版本可以上線了", "這個版本不可以上線。"));
+        assert!(altered("我要參加明天的會議", "我沒有要參加明天的會議。"));
+        assert!(!altered("我不要參加明天的會議", "我不要參加明天的會議。"));
+        assert!(!altered("要買牛奶雞蛋還有麵包", "要買：\n1. 牛奶\n2. 雞蛋\n3. 麵包"));
+        assert!(!altered(SAMPLE, "我們明天下午四點開會，要帶：\n1. 筆電\n2. 合約\n3. 名片"));
+    }
+
+    /// Hand-made dictations, each with an answer a good refinement could give and, for some, one that must not
+    /// be used. `try_refine.py` sends the same dictations to a real service.
+    #[test]
+    fn the_shared_cases_pass_the_checks() {
+        let cases: Vec<serde_json::Value> = serde_json::from_str(include_str!("../refine-cases/cases.json")).unwrap();
+        assert!(cases.len() >= 15);
+        for case in cases {
+            let said = case["said"].as_str().unwrap();
+            let good = case["good"].as_str().unwrap();
+            let kept = checked(said, good).filter(|text| !altered(said, text));
+            assert_eq!(kept.as_deref(), Some(good), "{said}");
+            for word in case["keep"].as_array().unwrap() {
+                assert!(good.contains(word.as_str().unwrap()), "{said}: {word}");
+            }
+            for word in case["gone"].as_array().unwrap() {
+                assert!(!good.contains(word.as_str().unwrap()), "{said}: {word}");
+            }
+            if let Some(bad) = case["bad"].as_str() {
+                assert!(checked(said, bad).filter(|text| !altered(said, text)).is_none(), "{said}: {bad}");
+            }
+        }
     }
 
     #[test]
