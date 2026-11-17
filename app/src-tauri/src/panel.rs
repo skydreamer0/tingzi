@@ -178,16 +178,24 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
 }
 
 pub fn open(app: &AppHandle) {
+    open_at(app, None);
+}
+
+/// Opens the settings window, on the page with this name when one is given (voice, zhuyin, look or about).
+pub fn open_at(app: &AppHandle, page: Option<&'static str>) {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
+        if let Some(page) = page {
+            let _ = app.emit_to("settings", "open-page", page);
+        }
         return;
     }
     // Creating a window from an event handler can stall on Windows, so it happens on its own thread.
     let app = app.clone();
     std::thread::spawn(move || {
-        let _ = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
+        let _ = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App(page.map_or_else(|| "settings.html".to_string(), |page| format!("settings.html#{page}")).into()))
             .title("聽字・注音與語音輸入法 · 設定")
             .inner_size(860.0, 660.0)
             .min_inner_size(660.0, 460.0)

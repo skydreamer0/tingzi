@@ -412,6 +412,43 @@ fn copy_preview(app: AppHandle) -> bool {
     copy_preview_text(&app)
 }
 
+/// Pastes the most recent dictation where the user was typing before they clicked this window.
+fn paste_last_there(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Some(latest) = history::load().into_iter().next() else {
+            let _ = app.emit("notice", "還沒有辨識紀錄");
+            return;
+        };
+        let target = deliver::begin();
+        let pasted = deliver::deliver(&latest.text, Mode::Insert, &mut Desktop::new(target), &|| false).inserted;
+        deliver::end();
+        let _ = app.emit("notice", if pasted { "已貼上上一則" } else { "上一則已複製，請手動貼上" });
+    });
+}
+
+/// The strip of quick actions under the status line.
+#[tauri::command]
+fn quick(app: AppHandle, action: String) {
+    if busy(&app) {
+        return;
+    }
+    match action.as_str() {
+        "zhuyin" | "pad" => {
+            let which = if action == "zhuyin" { "keyboard" } else { "pad" };
+            if !panel::open_target(which.into()) {
+                let _ = app.emit("notice", "找不到這個工具，請確認完整套件已安裝");
+            }
+        }
+        "words" => panel::open_at(&app, Some("zhuyin")),
+        "history" => layout::arrange(&app, Layout::Editor),
+        "last" => paste_last_there(&app),
+        "traditional" => convert_clipboard(&app, false),
+        "simplified" => convert_clipboard(&app, true),
+        _ => {}
+    }
+}
+
 #[tauri::command(async)]
 fn history_list() -> Vec<history::Item> {
     history::load()
@@ -653,6 +690,7 @@ fn main() {
             history_list,
             history_use,
             history_clear,
+            quick,
             arrange,
             facts,
             panel::open_settings,

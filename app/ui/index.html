@@ -50,6 +50,15 @@
         <button id="dock" class="tool" type="button" title="收合到螢幕右側" aria-label="收合到螢幕右側"><svg class="glyph"><use href="#i-dock"/></svg></button>
       </div>
     </div>
+    <nav class="quick" aria-label="快捷列">
+      <button type="button" data-quick="zhuyin" title="切換到注音輸入法">注音</button>
+      <button type="button" data-quick="pad" title="開啟本機打字板">打字板</button>
+      <button type="button" data-quick="words" title="管理自訂詞、範本與已學會的詞">詞語</button>
+      <button type="button" data-quick="history" title="最近的辨識紀錄">紀錄</button>
+      <button type="button" data-quick="last" title="把上一則貼回剛才打字的地方">貼上一則</button>
+      <button type="button" data-quick="traditional" title="把剪貼簿的文字轉成繁體">轉繁</button>
+      <button type="button" data-quick="simplified" title="把剪貼簿的文字轉成簡體">轉簡</button>
+    </nav>
     <section class="editor" aria-label="辨識文字">
       <textarea id="text" spellcheck="false" aria-label="辨識文字，可以修改"></textarea>
       <div class="actions">

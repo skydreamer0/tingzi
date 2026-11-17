@@ -125,8 +125,14 @@ struct Dictionary {
     std::map<wchar_t, Text> keys;
     std::map<Text, std::vector<Text>> byCode;
     std::map<Text, std::vector<Term>> phrases;
-    std::map<Text,double> singleScore;
+    // How common each character is under each of its readings.
+    std::map<std::pair<Text,Text>,double> charScore;
     size_t longestPhrase = 1;
+    // A character the word list does not score ranks below every one it does.
+    double scoreOf(const Text& reading,const Text& text) const {
+        auto found=charScore.find({reading,text});
+        return found==charScore.end()?-12.0:found->second;
+    }
     bool load(const Text& dir) {
         std::ifstream cin(dir + L"Tingzi.cin", std::ios::binary);
         std::string line, key, value;
@@ -148,7 +154,7 @@ struct Dictionary {
             std::istringstream row(line);
             if (!(row >> key >> value >> score)) continue;
             if(key.find('-')==std::string::npos){
-                auto [entry,inserted]=singleScore.emplace(wide(key),score);
+                auto [entry,inserted]=charScore.emplace(std::make_pair(wide(key),wide(value)),score);
                 if(!inserted)entry->second=(std::max)(entry->second,score);
                 continue;
             }
@@ -157,6 +163,11 @@ struct Dictionary {
             phrases[wide(key)].push_back({wide(value), score});
         }
         for (auto& bucket : phrases) std::stable_sort(bucket.second.begin(), bucket.second.end(), [](const Term& a, const Term& b){ return a.score > b.score; });
+        // Characters with the same sound are offered most common first; the character table's own order breaks ties.
+        for (auto& [code, characters] : byCode) {
+            const Text sound = reading(code);
+            std::stable_sort(characters.begin(), characters.end(), [&](const Text& a, const Text& b){ return scoreOf(sound, a) > scoreOf(sound, b); });
+        }
         return !byCode.empty() && !keys.empty();
     }
     // Same line format as phrases.txt; only multi-syllable words of one character per syllable.
@@ -315,9 +326,11 @@ class Input {
         if(i && prefix[i]>=0xdc00 && prefix[i]<=0xdfff)--i;
         return prefix.substr(i);
     }
+    // The key a correction is remembered under: the two characters before it, or a mark for the start of the sentence.
+    static Text place(const Text& left){return left.empty()?Text(L"^"):context(left);}
     Text preferred(const Text& left,size_t pos) const {
-        if(!preferences || left.empty())return {};
-        auto it=preferences->find({context(left),dict.reading(syllables[pos])});
+        if(!preferences)return {};
+        auto it=preferences->find({place(left),dict.reading(syllables[pos])});
         return it==preferences->end()?Text():it->second;
     }
     const Segment* owner(size_t pos) const {
@@ -374,8 +387,7 @@ class Input {
             reading+=dict.reading(syllables[end]);
             if(end==pos) {
                 auto it=dict.byCode.find(syllables[pos]);
-                auto weight=dict.singleScore.find(reading);
-                if(it!=dict.byCode.end()) for(const auto& text:it->second) result.push_back({text,1,weight==dict.singleScore.end()?-12.0:weight->second});
+                if(it!=dict.byCode.end()) for(const auto& text:it->second) result.push_back({text,1,dict.scoreOf(reading,text)});
             } else {
                 auto it=dict.phrases.find(reading);
                 if(it!=dict.phrases.end()) for(const auto& term:it->second) result.push_back({term.text,end-pos+1,term.score});
@@ -492,6 +504,9 @@ class Input {
             for(auto& span:spans){
                 if(!owner(at) && span.text.size()==span.count){
                     for(size_t i=0;i<span.count;++i){
+                        // At the very start there is no context to go by, so a remembered choice only replaces
+                        // a character standing alone, never the first character of a word.
+                        if(left.empty() && span.count>1){left+=span.text[i];continue;}
                         auto choice=preferred(left,at+i);
                         auto candidates=dict.byCode.find(syllables[at+i]);
                         if(choice.size()==1 && candidates!=dict.byCode.end() &&
@@ -755,7 +770,7 @@ public:
                 if(nearMode){place({target,picked.text,1,{},false});leavePicking();firstLimit=0;return {};}
                 std::optional<Correction> edit;
                 const Text before=leftOf(target);
-                auto left=context(before);
+                auto left=place(before);
                 const auto firstSingle=wasSettled?list.begin():std::find_if(list.begin(),list.end(),[](const Choice& item){return item.count==1;});
                 if(preferences && !left.empty() && picked.count==1 && firstSingle!=list.end() && firstSingle->text!=picked.text)
                     edit=Correction{{left,dict.reading(syllables[target])},picked.text};
@@ -764,7 +779,7 @@ public:
                     size_t change=0,changes=0;
                     if(baseline.size()==picked.count){
                         for(size_t i=0;i<picked.count;++i)if(baseline[i]!=picked.text[i]){change=i;++changes;}
-                        Text ahead=context(before+picked.text.substr(0,change));
+                        Text ahead=place(before+picked.text.substr(0,change));
                         auto valid=dict.byCode.find(syllables[target+change]);
                         if(changes==1 && !ahead.empty() && valid!=dict.byCode.end()){
                             Text selected=picked.text.substr(change,1);

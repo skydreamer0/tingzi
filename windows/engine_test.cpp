@@ -179,6 +179,27 @@ int wmain(int argc,wchar_t** argv) {
     expect(input.listTitle().rfind(L"符號・括號",0)==0 && input.press('1')==L"「","Tab in the symbol list moves to the next group");
 
     input.clear();
+    enter("T");input.press(VK_OEM_1);enter("6JP61P3");
+    expect(input.preview()==L"長文本","the more common of two same-sounding characters is chosen");
+    input.press(VK_DOWN);options=input.choices();
+    auto longer=std::find_if(options.begin(),options.end(),[](const Choice& c){return c.text==L"長";});
+    auto often=std::find_if(options.begin(),options.end(),[](const Choice& c){return c.text==L"常";});
+    expect(longer!=options.end() && often!=options.end() && longer<often,"and the list offers them in that order");
+    input.clear();
+    input.setPreferences(std::make_shared<const Preferences>(Preferences{{{L"^",L"ㄋㄧˇ"},L"妳"}}));
+    enter("SU3");
+    expect(input.preview()==L"妳","a choice made at the start of a sentence is remembered");
+    enter("CL3");
+    expect(input.preview()==L"你好","but it does not break a word that starts the sentence");
+    input.clear();input.setPreferences(std::make_shared<const Preferences>());
+    enter("SU3");input.press(VK_DOWN);
+    options=input.choices();
+    size_t second=0;while(second<options.size() && !(options[second].count==1 && options[second].text==L"妳"))++second;
+    while(input.currentPage()<second/9)input.press(VK_NEXT);
+    input.press('1'+second%9);
+    auto opening=input.corrections();
+    expect(opening.size()==1 && opening[0].key.first==L"^" && opening[0].choice==L"妳","choosing the first character records a correction for the start");
+    input.clear();input.setPreferences(nullptr);
     enter("SU3CL3A87");
     expect(input.wants(controlKey|'2') && !input.wants(controlKey|'4') && input.press(controlKey|'2').empty()
         && input.addedWord() && input.addedWord()->text==L"好嗎" && input.addedWord()->reading==L"ㄏㄠˇ-ㄇㄚ˙" && input.preview()==L"你好嗎" && input.active(),

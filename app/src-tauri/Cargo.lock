@@ -4369,7 +4369,7 @@ dependencies = [
 
 [[package]]
 name = "tingzi-app"
-version = "0.7.3"
+version = "0.7.4"
 dependencies = [
  "arboard",
  "codex-asr",

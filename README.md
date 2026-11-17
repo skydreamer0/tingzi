@@ -50,12 +50,12 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-主分支為 **0.7.3 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+最新版本是 **0.7.4**，安裝包在 [Releases](https://github.com/skydreamer0/tingzi/releases) 下載。這是預覽版：安裝包沒有數位簽章，Windows 可能會跳出警告。要自己建置請看[開發指南](docs/development/README.md)。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
-## 安裝（自行建置的套件）
+## 安裝
 
 1. 準備 x64 Windows 10/11。語音浮窗需要 Microsoft Edge WebView2 Runtime；Windows 11 已內建，大多數 Windows 10 電腦也已經有，不必另外安裝 .NET。
-2. 完整解壓縮套件，以系統管理員身分執行 `InstallTingzi.cmd`。
+2. 從 Releases 下載 `Tingzi-<版本>-windows-x64.zip`，完整解壓縮，以系統管理員身分執行 `InstallTingzi.cmd`。
 3. 開始功能表搜尋 **聽字**，開啟設定，在「語音輸入」選麥克風和辨識方式。
 
 移除時以系統管理員身分執行安裝目錄裡的 `RemoveTingzi.cmd`。詳細步驟見 [Windows 使用手冊](windows/README.md)。

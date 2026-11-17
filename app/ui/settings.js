@@ -168,6 +168,10 @@ byId('microphone').addEventListener('change', stopTest);
 listen('mic-level', event => { if (testing) byId('mic-level').style.width = Math.round(Math.sqrt(event.payload) * 100) + '%'; });
 listen('mic-test-ended', () => showTest(false));
 listen('look', event => applyLook(event.payload));
+// The voice window's quick strip opens settings straight on a page.
+const pageFor = name => byId('tab-' + name);
+listen('open-page', event => { if (pageFor(event.payload)) openPage(pageFor(event.payload)); });
+if (pageFor(location.hash.slice(1))) openPage(pageFor(location.hash.slice(1)));
 
 // Local learning
 const learning = byId('learning');

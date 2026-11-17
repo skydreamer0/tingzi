@@ -164,6 +164,31 @@ html, body { background: transparent; }
 [data-state="done"] .for-text { display: grid; }
 [data-state="retry"] .for-retry { display: grid; }
 
+/* Quick actions: what a language bar would hold, kept beside the voice controls. */
+.quick {
+  flex: none;
+  display: flex;
+  gap: 6px;
+  padding: 0 14px 12px;
+}
+.quick button {
+  flex: 1;
+  min-width: 0;
+  height: 30px;
+  padding: 0 4px;
+  border: 1px solid var(--border);
+  border-radius: 9px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 13px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+.quick button:hover { background: var(--input); color: var(--text); }
+.quick button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
+[data-layout="docked"] .quick { display: none; }
+[data-state="recording"] .quick button, [data-state="working"] .quick button { opacity: 0.45; pointer-events: none; }
+
 .editor {
   flex: 1;
   min-height: 0;

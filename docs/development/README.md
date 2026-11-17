@@ -61,7 +61,7 @@ python windows/package_release.py <package-directory> <new-output.zip> --cargo-m
 
 ## 版本與授權界線
 
-主分支的浮窗專案（`app/src-tauri`）、升級目錄與打包器均標記程式版本 `0.7.3`，這是開發版資訊，不代表已發行。
+主分支的浮窗專案（`app/src-tauri`）、升級目錄與打包器均標記程式版本 `0.7.4`，這是開發版資訊，不代表已發行。
 
 浮窗內建第三方 codex-asr 0.1.2。打包器把它與其他 Rust 相依套件的名稱、版本與授權記錄在套件的 `notices/rust-dependencies.json` 與 `THIRD-PARTY-NOTICES.txt`。專案整體授權、公開時間、可重現建置、簽章和試行驗收仍待確認。
 

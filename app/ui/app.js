@@ -109,6 +109,9 @@ function setLayout(shape) {
 }
 
 mic.addEventListener('click', () => invoke('toggle_recording'));
+for (const button of document.querySelectorAll('[data-quick]')) {
+  button.addEventListener('click', () => invoke('quick', { action: button.dataset.quick }));
+}
 // The docked button has no others beside it, so a right-click opens the full bar.
 mic.addEventListener('contextmenu', event => { event.preventDefault(); invoke('arrange', { shape: 'bar' }); });
 byId('copy').addEventListener('click', () => invoke('copy_preview'));
