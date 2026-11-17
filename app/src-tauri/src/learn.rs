@@ -179,7 +179,7 @@ mod tests {
     }
 
     fn said(text: &str, at: u64) -> Item {
-        Item { at, text: text.into(), inserted: true }
+        Item { at, text: text.into(), before: None, inserted: true }
     }
 
     const NAME: &str = "ㄌㄧˇ-ㄒㄧㄠˇ-ㄇㄧㄥˊ";
