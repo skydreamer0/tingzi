@@ -1,25 +1,78 @@
-name: 回報輸入問題
-description: 描述在 Windows 遇到的語音、注音或安裝問題
+name: 回報問題
+description: 回報語音浮窗、注音輸入法或安裝時遇到的問題
 title: "[問題] "
+labels: ["bug"]
 body:
+  - type: markdown
+    attributes:
+      value: |
+        回報前請先搜尋[既有的 issue](https://github.com/skydreamer0/tingzi/issues?q=is%3Aissue)，避免重複。
+        請勿貼出帳號、金鑰、token、私人詞表、錄音、診斷原始資料或本機完整使用者路徑。截圖請先遮除私人內容。
+  - type: dropdown
+    id: platform
+    attributes:
+      label: 平台
+      options:
+        - Windows
+        - macOS
+    validations:
+      required: true
   - type: input
     id: version
     attributes:
-      label: 聽字與 Windows 版本
-      placeholder: 例如「0.6.0，Windows 11 24H2」
+      label: 聽字與作業系統版本
+      description: 聽字版號或 commit，以及作業系統版本。
+      placeholder: 例如「0.7.7，Windows 11 24H2」
+    validations:
+      required: true
+  - type: dropdown
+    id: recognition
+    attributes:
+      label: 辨識方式
+      description: 與語音無關的問題（例如注音輸入或安裝）請選「不適用」。
+      options:
+        - 本機 Whisper
+        - Codex 線上辨識
+        - 自選雲端服務
+        - 不適用
     validations:
       required: true
   - type: textarea
     id: steps
     attributes:
-      label: 如何重現
-      description: 請寫下使用的程式、輸入方式與操作順序。語音或詞庫內容請使用可分享的範例。
+      label: 重現步驟
+      description: 寫下使用的程式、輸入方式與操作順序。語音或詞庫內容請使用可公開的範例。
+      placeholder: |
+        1. 在記事本開始錄音
+        2. 停止前改點另一個欄位
+        3. ……
     validations:
       required: true
   - type: textarea
-    id: result
+    id: expected
     attributes:
-      label: 預期結果與實際結果
-      description: 例如「預期插入在記事本游標，實際只出現在浮窗預覽」。
+      label: 預期結果
+      placeholder: 例如「複製到剪貼簿並展開預覽，不自動插入」。
     validations:
       required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 實際結果
+      placeholder: 例如「沒有展開預覽」。
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 記錄或截圖
+      description: 選填。貼上前請先移除私人內容。
+  - type: checkboxes
+    id: privacy
+    attributes:
+      label: 確認
+      options:
+        - label: 已搜尋既有的 issue，沒有找到相同的問題。
+          required: true
+        - label: 內容不含私人文字、錄音、金鑰或本機完整使用者路徑。
+          required: true
