@@ -180,8 +180,8 @@ html, body { background: transparent; }
 .tools .for-text, .tools .for-retry { display: none; }
 [data-state="done"] .tools .for-text { display: grid; }
 [data-state="retry"] .tools .for-retry { display: grid; }
-/* Converting the clipboard mid-dictation could disturb the paste, so the button steps aside. */
-[data-state="recording"] .tools #convert, [data-state="working"] .tools #convert { display: none; }
+/* The pill is short while dictating and holds only the clock, so the tools wait for the result. */
+[data-state="recording"] .tools, [data-state="working"] .tools { display: none; }
 
 .editor {
   flex: 1;
@@ -240,22 +240,37 @@ html, body { background: transparent; }
 [data-layout="docked"] .body, [data-layout="docked"] .tools { display: none; }
 [data-side="right"] .body { text-align: right; }
 
-/* The pill grows out of the keycap and folds back into it. The window takes its full size first,
-   so the growth is a clip that starts at the keycap's square on its edge of the screen. */
-.capsule { --keycap-only: inset(0 calc(100% - 72px) 0 0 round var(--radius-lg)); --whole: inset(0 0 0 0 round var(--radius-lg)); }
-.capsule[data-side="right"] { --keycap-only: inset(0 0 0 calc(100% - 72px) round var(--radius-lg)); }
+/* The pill grows out of the keycap and folds back into it, always towards the keycap's edge of the
+   screen: rightwards on the right, leftwards on the left. The window takes its full size first, so the
+   growth is a clip that starts at what was shown before (--shown: the keycap's square, or the short
+   pill of a dictation). The clip's ends are as round as the pill's, so its moving edge looks like one. */
+.capsule {
+  --shown: 72px;
+  --start: inset(0 calc(100% - var(--shown)) 0 0 round 36px);
+  --whole: inset(0 0 0 0 round 36px);
+}
+.capsule[data-side="right"] { --start: inset(0 0 0 calc(100% - var(--shown)) round 36px); }
 .capsule.opening .bar { animation: pill-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
-.capsule.closing .bar { animation: pill-close var(--motion-base) ease-in forwards; }
-.capsule.closing .editor { opacity: 0; transition: opacity var(--motion-fast) ease-in; }
-@keyframes pill-open { from { clip-path: var(--keycap-only); } to { clip-path: var(--whole); } }
-@keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--keycap-only); } }
+.capsule.closing .bar { animation: pill-close var(--motion-base) cubic-bezier(0.4, 0, 1, 1) forwards; }
+/* The words and tools fade first, so the fold does not look like it cuts through them. */
+.capsule.closing .body, .capsule.closing .tools { opacity: 0; transition: opacity 100ms ease-in; }
+@keyframes pill-open { from { clip-path: var(--start); } to { clip-path: var(--whole); } }
+@keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--start); } }
+
+/* The card unrolls from the pill's side, downwards below it or upwards above it, and rolls back up into it. */
+.capsule { --card-start: inset(0 0 100% 0 round var(--radius-lg)); --card-whole: inset(0 0 0 0 round var(--radius-lg)); }
+.capsule[data-above="true"] { --card-start: inset(100% 0 0 0 round var(--radius-lg)); }
+.capsule.card-opening .editor { animation: card-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
+.capsule.card-closing .editor { animation: card-close var(--motion-fast) cubic-bezier(0.4, 0, 1, 1) forwards; }
+@keyframes card-open { from { clip-path: var(--card-start); opacity: 0.4; } to { clip-path: var(--card-whole); opacity: 1; } }
+@keyframes card-close { from { clip-path: var(--card-whole); opacity: 1; } to { clip-path: var(--card-start); opacity: 0; } }
 
 /* Reduced motion: no travel, no wave, static bars; colour still tells the state. */
 @media (prefers-reduced-motion: reduce) {
   #level, .key-face, .key-bar { transition: none; }
   .mic:hover .key-face, .mic:active .key-face, .mic.tap .key-face { transform: none; }
   [data-state] .key-bar { transform: none; animation: none; }
-  .capsule.opening .bar, .capsule.closing .bar { animation: none; }
+  .capsule.opening .bar, .capsule.closing .bar, .capsule.card-opening .editor, .capsule.card-closing .editor { animation: none; }
   [data-layout="docked"][data-state="done"] .done-badge { animation-name: badge-fade; }
 }
 @keyframes badge-fade {
