@@ -152,18 +152,23 @@ fn correct(text: &str, prefs: &Settings) -> String {
 }
 
 /// Tidies cleaned speech into written text with the user's service, when this dictation is refined. `chosen` says
-/// Refine is on in the main settings. A failure keeps the text as it was and says why, so the dictation still goes through.
+/// Refine is on in the main settings. A failure keeps the text as it was and says why, so the dictation still goes
+/// through; the status is None only when Refine is off everywhere, so there is nothing to tell.
 /// Blocks; call it on the dictation's own thread.
-fn refined(app: &AppHandle, run: u64, cleaned: String, prefs: &Settings, chosen: bool) -> (String, Option<refine::Failure>) {
+fn refined(app: &AppHandle, run: u64, cleaned: String, prefs: &Settings, chosen: bool) -> (String, Option<refine::Status>) {
     // Nothing is read from the key store, and nothing is sent, while refinement is off.
-    if !prefs.refine || !refine::wanted(prefs, chosen, secret::refine_exists(), &cleaned) {
-        return (cleaned, None);
+    if !prefs.refine {
+        return (cleaned, chosen.then_some(refine::Status::OffHere));
+    }
+    if let Some(skipped) = refine::skipped(prefs, chosen, secret::refine_exists(), &cleaned) {
+        return (cleaned, Some(skipped));
     }
     working(app, run, refine::WORKING);
+    let started = std::time::Instant::now();
     match refine::refine(&cleaned, &prefs.refine_url, &prefs.refine_model, &prefs.refine_note) {
         // The model may answer in Simplified characters; the user's words are matched in Traditional.
-        Ok(text) => (deliver::convert_script(&text, false), None),
-        Err(failure) => (cleaned, Some(failure)),
+        Ok(text) => (deliver::convert_script(&text, false), Some(refine::Status::Refined(started.elapsed()))),
+        Err(failure) => (cleaned, Some(refine::Status::Failed(failure))),
     }
 }
 
@@ -215,11 +220,17 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             return;
         }
         // Refinement goes between tidying and the user's own words, so their words win over the model's.
-        let mut unrefined = None;
+        // What the text would have been without the model is kept with a refined dictation, to compare and get back.
+        let (mut refinement, mut before) = (None, None);
         let text = heard.map(|heard| {
-            let (text, failure) = refined(&app, run, clean(&heard, &prefs), &prefs, main.refine);
-            unrefined = failure;
-            apps::finish(&correct(&text, &prefs), rule.as_ref())
+            let finish = |text: &str| apps::finish(&correct(text, &prefs), rule.as_ref());
+            let cleaned = clean(&heard, &prefs);
+            let (text, status) = refined(&app, run, cleaned.clone(), &prefs, main.refine);
+            if matches!(status, Some(refine::Status::Refined(_))) {
+                before = Some(finish(&cleaned));
+            }
+            refinement = status;
+            finish(&text)
         });
         // A request cannot be stopped once sent, so a cancel while refining is honoured when it returns.
         if cancelled() {
@@ -238,12 +249,12 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 }
                 let Outcome { message, expand, inserted, .. } = outcome;
                 if prefs.keep_history {
-                    history::add(&text, inserted);
+                    history::add(&text, before.filter(|before| *before != text), inserted);
                 }
                 // Words learned from the user's fixes since the last dictation are mentioned once.
-                // A refinement that failed is mentioned after the usual message; the unrefined text went in.
-                let message = match unrefined {
-                    Some(failure) => format!("{message}{}", failure.suffix()),
+                // Whether the text was refined, and why not, is told after the usual message.
+                let message = match refinement {
+                    Some(status) => format!("{message}{}", status.suffix()),
                     None => message.to_string(),
                 };
                 let learned = learn::take_fresh();
@@ -509,14 +520,17 @@ fn history_list() -> Vec<history::Item> {
     history::load()
 }
 
-/// Brings a past dictation back as the current text, so it can be edited, copied or pasted.
+/// Brings a past dictation back as the current text, so it can be edited, copied or pasted. `before` asks for
+/// the text as it was before the model refined it.
 #[tauri::command]
-fn history_use(app: AppHandle, index: usize) {
+fn history_use(app: AppHandle, index: usize, before: Option<bool>) {
     if busy(&app) {
         return;
     }
-    if let Some(item) = history::load().into_iter().nth(index) {
-        announce(&app, "done", "從紀錄取回・可編輯後複製", item.text);
+    let Some(item) = history::load().into_iter().nth(index) else { return };
+    match item.before.filter(|_| before == Some(true)) {
+        Some(text) => announce(&app, "done", "從紀錄取回潤稿前的文字・可編輯後複製", text),
+        None => announce(&app, "done", "從紀錄取回・可編輯後複製", item.text),
     }
 }
 

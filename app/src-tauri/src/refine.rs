@@ -67,6 +67,34 @@ impl Failure {
     }
 }
 
+/// What became of refinement for one dictation, told after the window's usual message, so the user can tell a
+/// dictation the model tidied from one it never saw.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Status {
+    /// The model's text went in, after the service took this long.
+    Refined(Duration),
+    /// The service was asked and the unrefined text went in.
+    Failed(Failure),
+    /// Too short to be worth a request.
+    TooShort,
+    /// Refine is on, but the service is not filled in, or a program's rule turned it on for a service with no key.
+    NotSetUp,
+    /// Refine is on in the main settings, and the rule for this program turns it off.
+    OffHere,
+}
+
+impl Status {
+    pub fn suffix(self) -> String {
+        match self {
+            Status::Refined(took) => format!("・已潤稿 {:.1} 秒", took.as_secs_f32()),
+            Status::Failed(failure) => failure.suffix().to_string(),
+            Status::TooShort => format!("・不到 {SHORTEST} 個字，未潤稿"),
+            Status::NotSetUp => "・潤稿服務沒有設定完整，未潤稿".into(),
+            Status::OffHere => "・這個程式設定為不潤稿".into(),
+        }
+    }
+}
+
 /// How many characters `text` has, not counting spaces and line breaks.
 fn size(text: &str) -> usize {
     text.chars().filter(|c| !c.is_whitespace()).count()
@@ -92,12 +120,24 @@ pub fn problem(address: &str, model: &str, has_key: bool) -> Option<String> {
     None
 }
 
-/// Whether this dictation's `text` goes to the service. `chosen` says Refine is on in the main settings: a program's
-/// rule that turns it on only counts once the service is filled in, key and all, while with Refine on a missing key
-/// is reported as a failure.
-pub fn wanted(prefs: &Settings, chosen: bool, has_key: bool, text: &str) -> bool {
-    let Ok(service) = Service::parse(&prefs.refine_url) else { return false };
-    prefs.refine && !prefs.refine_model.trim().is_empty() && long_enough(text) && (chosen || has_key || service.on_this_computer)
+/// Why this dictation's `text` does not go to the service although Refine is on for it; None when it goes.
+/// `chosen` says Refine is on in the main settings: a program's rule that turns it on only counts once the service
+/// is filled in, key and all, while with Refine on a missing key is reported as a failure.
+pub fn skipped(prefs: &Settings, chosen: bool, has_key: bool, text: &str) -> Option<Status> {
+    let Ok(service) = Service::parse(&prefs.refine_url) else { return Some(Status::NotSetUp) };
+    if prefs.refine_model.trim().is_empty() || !(chosen || has_key || service.on_this_computer) {
+        return Some(Status::NotSetUp);
+    }
+    if !long_enough(text) {
+        return Some(Status::TooShort);
+    }
+    None
+}
+
+/// Whether this dictation's `text` goes to the service.
+#[cfg(test)]
+fn wanted(prefs: &Settings, chosen: bool, has_key: bool, text: &str) -> bool {
+    prefs.refine && skipped(prefs, chosen, has_key, text).is_none()
 }
 
 /// The instructions for the model, with the user's own words and note when there are any.
@@ -313,6 +353,29 @@ mod tests {
         assert_eq!(Failure::BadKey.sentence(), "潤稿的金鑰無效，請重新填入。");
         assert!(Failure::Refused(404).sentence().contains("模型名稱"));
         assert!(Failure::Refused(503).sentence().contains("稍後"));
+    }
+
+    #[test]
+    fn the_window_says_whether_the_dictation_was_refined() {
+        assert_eq!(Status::Refined(Duration::from_millis(1440)).suffix(), "・已潤稿 1.4 秒");
+        assert_eq!(Status::Failed(Failure::Timeout).suffix(), "・潤稿逾時，已用原文");
+        assert_eq!(Status::TooShort.suffix(), "・不到 8 個字，未潤稿");
+        assert_eq!(Status::NotSetUp.suffix(), "・潤稿服務沒有設定完整，未潤稿");
+        assert_eq!(Status::OffHere.suffix(), "・這個程式設定為不潤稿");
+    }
+
+    #[test]
+    fn a_dictation_not_sent_says_why() {
+        let text = "我們三點開會不對是四點";
+        let prefs = Settings { refine: true, refine_url: "https://api.example.com/v1".into(), refine_model: "m".into(), ..Settings::default() };
+        assert_eq!(skipped(&prefs, true, true, text), None);
+        assert_eq!(skipped(&prefs, true, true, "好的謝謝你"), Some(Status::TooShort));
+        assert_eq!(skipped(&Settings { refine_model: " ".into(), ..prefs.clone() }, true, true, text), Some(Status::NotSetUp));
+        assert_eq!(skipped(&Settings { refine_url: "不是網址".into(), ..prefs.clone() }, true, true, text), Some(Status::NotSetUp));
+        // A program's rule alone, with no key for a remote service.
+        assert_eq!(skipped(&prefs, false, false, text), Some(Status::NotSetUp));
+        // An incomplete service is told before a short text, since it would stop every dictation.
+        assert_eq!(skipped(&prefs, false, false, "好的"), Some(Status::NotSetUp));
     }
 
     #[test]
