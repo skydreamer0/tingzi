@@ -26,6 +26,15 @@ fn lenient_engine<'de, D: Deserializer<'de>>(source: D) -> Result<Option<Engine>
 pub const DEFAULT_API_URL: &str = "https://api.openai.com/v1";
 pub const DEFAULT_API_MODEL: &str = "whisper-1";
 
+#[cfg(not(target_os = "macos"))]
+const DRAFT_CLASH: &str = "Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。";
+#[cfg(target_os = "macos")]
+const DRAFT_CLASH: &str = "Control+Option+V 用於貼入草稿，請選其他錄音鍵。";
+#[cfg(not(target_os = "macos"))]
+const LAST_CLASH: &str = "Alt+Shift+Z 用於貼上上一則，請選其他錄音鍵。";
+#[cfg(target_os = "macos")]
+const LAST_CLASH: &str = "Option+Shift+Z 用於貼上上一則，請選其他錄音鍵。";
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct Settings {
@@ -40,7 +49,7 @@ pub struct Settings {
     pub api_model: String,
     /// The Whisper model file chosen on this computer; None uses the one installed first.
     pub local_model: Option<String>,
-    /// 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift.
+    /// 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift; on macOS, Control and Option take the place of Ctrl and Alt.
     pub modifiers: u32,
     /// A Windows virtual key from A to Z, or 0 when the shortcut is off.
     pub record_key: u32,
@@ -54,7 +63,7 @@ pub struct Settings {
     pub use_phrases: bool,
     /// Whether the user's "heard → wanted" replacement rules are applied to recognised speech.
     pub use_replacements: bool,
-    /// 0 follows Windows, 1 is light, 2 is dark.
+    /// 0 follows the system, 1 is light, 2 is dark.
     pub appearance: u32,
     pub system_accent: bool,
     /// 0 inserts and copies, 1 only copies, 2 only shows the text.
@@ -124,10 +133,10 @@ impl Settings {
             return Some("請選擇 A 到 Z 的錄音鍵。");
         }
         if self.modifiers == 3 && self.record_key == u32::from(b'V') {
-            return Some("Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。");
+            return Some(DRAFT_CLASH);
         }
         if self.modifiers == 5 && self.record_key == u32::from(b'Z') {
-            return Some("Alt+Shift+Z 用於貼上上一則，請選其他錄音鍵。");
+            return Some(LAST_CLASH);
         }
         if !matches!(self.text_size, 18 | 20 | 24) || self.appearance > 2 || self.delivery_mode.is_some_and(|mode| mode > 2) {
             return Some("設定內容不完整，請重新選擇。");
@@ -146,10 +155,7 @@ impl Settings {
         std::fs::rename(&draft, &file).inspect_err(|_| {
             let _ = std::fs::remove_file(&draft);
         })?;
-        let user = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-        // The text service converts committed Zhuyin text, and draws its windows, by the same choices.
-        user.create_subkey(r"Software\Tingzi\Engine")?.0.set_value("SimplifiedOutput", &u32::from(self.simplified))?;
-        user.create_subkey(r"Software\Tingzi\Appearance")?.0.set_value("Theme", &self.appearance)
+        crate::sys::share_with_text_service(self.simplified, self.appearance)
     }
 
     pub fn mode(&self) -> Mode {
@@ -167,10 +173,11 @@ impl Settings {
         if self.record_key == 0 {
             return "停用".into();
         }
+        let [control_alt, alt_shift, control_shift] = crate::sys::MODIFIER_NAMES;
         let modifiers = match self.modifiers {
-            5 => "Alt+Shift",
-            6 => "Ctrl+Shift",
-            _ => "Ctrl+Alt",
+            5 => alt_shift,
+            6 => control_shift,
+            _ => control_alt,
         };
         format!("{modifiers}+{}", char::from_u32(self.record_key).unwrap_or('?'))
     }
@@ -188,7 +195,7 @@ mod tests {
         .unwrap();
         assert_eq!((saved.modifiers, saved.record_key, saved.simplified, saved.online), (6, 84, true, true));
         assert_eq!(saved.mode(), Mode::Copy);
-        assert_eq!(saved.gesture(), "Ctrl+Shift+T");
+        assert_eq!(saved.gesture(), format!("{}+T", crate::sys::MODIFIER_NAMES[2]));
         assert_eq!(saved.problem(), None);
         assert!(saved.use_phrases);
         assert_eq!(saved.engine(), Engine::Codex);

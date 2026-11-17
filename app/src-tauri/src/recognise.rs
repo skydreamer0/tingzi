@@ -3,7 +3,6 @@
 
 use crate::settings::{Engine, Settings};
 use codex_asr::{CodexAsrClient, CodexAsrError, CodexAuth};
-use std::os::windows::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
@@ -97,9 +96,7 @@ fn drop_echo(heard: String, hint: &str) -> String {
 const LARGEST_UPLOAD: usize = 50 * 1024 * 1024;
 
 fn auth_file() -> PathBuf {
-    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| {
-        PathBuf::from(std::env::var_os("USERPROFILE").unwrap_or_default()).join(".codex")
-    });
+    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::sys::home().join(".codex"));
     home.join("auth.json")
 }
 
@@ -145,24 +142,15 @@ fn client() -> Result<CodexAsrClient, String> {
 }
 
 /// The proxy to reach `host` through: one named in the environment first, as `codex-asr` reads it,
-/// then the one set in Windows' proxy settings, which `codex-asr` does not read on Windows.
+/// then the one set in the system's proxy settings, which `codex-asr` does not read.
 pub fn proxy_for(host: &str) -> Option<String> {
-    codex_asr::resolve_proxy(None).or_else(|| system_proxy(host))
+    codex_asr::resolve_proxy(None).or_else(|| crate::sys::system_proxy(host))
 }
 
-fn system_proxy(host: &str) -> Option<String> {
-    let user = winreg::RegKey::predef(winreg::enums::HKEY_CURRENT_USER);
-    let settings = user.open_subkey(r"Software\Microsoft\Windows\CurrentVersion\Internet Settings").ok()?;
-    let enabled: u32 = settings.get_value("ProxyEnable").ok()?;
-    let server: String = settings.get_value("ProxyServer").ok()?;
-    let bypass: String = settings.get_value("ProxyOverride").unwrap_or_default();
-    https_proxy(enabled != 0, &server, &bypass, host)
-}
-
-/// Reads Windows' manual proxy setting for HTTPS traffic to `host`.
+/// Reads a manual proxy setting, as Windows writes it, for HTTPS traffic to `host`.
 /// `server` is either one `host:port` for every protocol or a list like `http=a:80;https=b:443`.
 /// Automatic configuration scripts and SOCKS proxies are not followed.
-fn https_proxy(enabled: bool, server: &str, bypass: &str, host: &str) -> Option<String> {
+pub fn https_proxy(enabled: bool, server: &str, bypass: &str, host: &str) -> Option<String> {
     if !enabled || bypassed(bypass, host) {
         return None;
     }
@@ -219,12 +207,16 @@ fn explain(error: CodexAsrError) -> String {
 /// The model the local recogniser was first set up with, used unless the user picks another.
 const FIRST_MODEL: &str = "ggml-base.bin";
 
-/// The folder named in `voice-root.txt`, written when the local recogniser was set up.
+/// The folder named in `voice-root.txt`, written when the local recogniser was set up,
+/// or the system's usual place for it when there is no such file.
 fn local_root() -> Option<PathBuf> {
     let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("voice-root.txt")));
     let installed = crate::paths::install().map(|folder| folder.join("TingziFloat").join("voice-root.txt"));
-    let named = [beside, installed].into_iter().flatten().find_map(|file| std::fs::read_to_string(file).ok())?;
-    Some(PathBuf::from(named.trim())).filter(|root| root.is_absolute())
+    let named = [beside, installed].into_iter().flatten().find_map(|file| std::fs::read_to_string(file).ok());
+    match named {
+        Some(named) => Some(PathBuf::from(named.trim())).filter(|root| root.is_absolute()),
+        None => crate::sys::voice_root(),
+    }
 }
 
 /// The Whisper model files in the local recogniser's folder, by file name.
@@ -251,14 +243,14 @@ fn is_model_name(name: &str) -> bool {
 /// `chosen` names a model file; a missing or unset choice falls back to the first model set up.
 pub fn local_parts(chosen: Option<&str>) -> Option<(PathBuf, PathBuf)> {
     let root = local_root()?;
-    let program = root.join("whisper-v1.9.2").join("Release").join("whisper-cli.exe");
+    let program = crate::sys::whisper_program(&root)?;
     let models = root.join("downloads");
     let model = chosen
         .filter(|name| is_model_name(name))
         .map(|name| models.join(name))
         .filter(|model| model.is_file())
         .unwrap_or_else(|| models.join(FIRST_MODEL));
-    (program.is_file() && model.is_file()).then_some((program, model))
+    model.is_file().then_some((program, model))
 }
 
 /// Recognises 16 kHz mono WAV bytes on this computer; nothing is uploaded.
@@ -282,8 +274,8 @@ fn run_whisper(program: &Path, model: &Path, folder: &Path, wav: &[u8], cancelle
     std::fs::write(&input, wav).map_err(|_| "無法寫入暫存音檔")?;
     // Half the logical processors, between four and eight, measured fastest for short clips.
     let threads = (std::thread::available_parallelism().map_or(4, |count| count.get()) / 2).clamp(4, 8);
-    const NO_WINDOW: u32 = 0x0800_0000;
-    let mut child = Command::new(program)
+    let mut command = Command::new(program);
+    command
         .args(["-l", "zh", "-otxt", "-np", "-nt", "-ng", "-t", &threads.to_string(), "-m"])
         .arg(model)
         .arg("-f")
@@ -293,10 +285,8 @@ fn run_whisper(program: &Path, model: &Path, folder: &Path, wav: &[u8], cancelle
         .current_dir(program.parent().unwrap_or(folder))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .creation_flags(NO_WINDOW)
-        .spawn()
-        .map_err(|_| "無法啟動本機語音辨識")?;
+        .stderr(Stdio::null());
+    let mut child = crate::sys::quiet(&mut command).spawn().map_err(|_| "無法啟動本機語音辨識")?;
     let finished = loop {
         match child.try_wait() {
             Ok(Some(status)) => break status.success(),

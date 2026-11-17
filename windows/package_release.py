@@ -10,7 +10,9 @@ VERSION = '0.7.7'
 ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg', 'Tingzi.cin', 'phrases.txt', 'pairs.txt', 'pairs-NOTICE.txt', 'McBopomofo-LICENSE.txt']
 FLOAT_FILES = ['TingziFloat.exe', 'LICENSE']
 # Every licence name that may appear in a dependency's licence expression has been reviewed for redistribution.
-LICENSE_WORDS = {'MIT', 'Apache-2.0', 'BSD-3-Clause', 'BSD-2-Clause', 'Unicode-3.0', 'ISC', 'Zlib', 'Unlicense', 'BSL-1.0', 'CDLA-Permissive-2.0', 'MPL-2.0', '0BSD', 'CC0-1.0', 'MIT-0', 'AND', 'OR'}
+LICENSE_WORDS = {'MIT', 'Apache-2.0', 'BSD-3-Clause', 'BSD-2-Clause', 'Unicode-3.0', 'ISC', 'Zlib', 'Unlicense', 'BSL-1.0', 'CDLA-Permissive-2.0', 'MPL-2.0', '0BSD', 'CC0-1.0', 'MIT-0', 'AND', 'OR',
+                 # The LLVM exception only adds permissions to Apache-2.0; it is written `Apache-2.0 WITH LLVM-exception`.
+                 'WITH', 'LLVM-exception'}
 # Standard texts for dependencies that ship no licence file of their own.
 STANDARD_TEXTS = Path(__file__).parent / 'licenses'
 
@@ -38,7 +40,7 @@ def dependency_notices(metadata, entries):
                 included.append(folder + path.relative_to(base).as_posix())
         if not included:
             # The crate names its licence but ships no text: state who wrote it and attach the standard text.
-            names = sorted(words - {'AND', 'OR'})
+            names = sorted(words - {'AND', 'OR', 'WITH'})
             missing = [name for name in names if not (STANDARD_TEXTS / (name + '.txt')).is_file()]
             if missing:
                 raise ValueError('No license text: ' + item['name'] + ' (' + ', '.join(missing) + ')')

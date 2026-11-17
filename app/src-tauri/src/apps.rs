@@ -6,15 +6,11 @@
 use crate::settings::Settings;
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
-use windows::core::PWSTR;
-use windows::Win32::Foundation::{CloseHandle, BOOL, HWND, LPARAM, TRUE};
-use windows::Win32::System::Threading::{OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_WIN32, PROCESS_QUERY_LIMITED_INFORMATION};
-use windows::Win32::UI::WindowsAndMessaging::{EnumWindows, GetWindowThreadProcessId, IsWindowVisible};
 
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct AppRule {
-    /// The program's file name, such as Code.exe; compared without regard to case.
+    /// The program's file name, such as Code.exe, or Safari.app on macOS; compared without regard to case.
     pub program: String,
     pub tidy: Option<bool>,
     pub simplified: Option<bool>,
@@ -89,46 +85,11 @@ pub fn finish(text: &str, rule: Option<&AppRule>) -> String {
     }
 }
 
-/// The file name of the program a process runs, such as Code.exe. None when Windows will not say.
-pub fn program(process: u32) -> Option<String> {
-    if process == 0 {
-        return None;
-    }
-    let mut name = vec![0u16; 1024];
-    let mut length = name.len() as u32;
-    // SAFETY: the buffer and its length travel together; the handle is closed before returning.
-    let found = unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, process).ok()?;
-        let found = QueryFullProcessImageNameW(handle, PROCESS_NAME_WIN32, PWSTR(name.as_mut_ptr()), &mut length);
-        let _ = CloseHandle(handle);
-        found
-    };
-    found.ok()?;
-    let path = PathBuf::from(String::from_utf16_lossy(&name[..length as usize]));
-    path.file_name().map(|file| file.to_string_lossy().into_owned())
-}
-
-unsafe extern "system" fn note_window(window: HWND, found: LPARAM) -> BOOL {
-    // SAFETY: `found` is the vector `running` passed in, alive for the whole enumeration.
-    let processes = &mut *(found.0 as *mut Vec<u32>);
-    if IsWindowVisible(window).as_bool() {
-        let mut process = 0u32;
-        GetWindowThreadProcessId(window, Some(&mut process));
-        if process != 0 && !processes.contains(&process) {
-            processes.push(process);
-        }
-    }
-    TRUE
-}
+pub use crate::sys::program;
 
 /// The programs that have a window on screen now, so the user can pick one by name. Leaves this app out.
 pub fn running() -> Vec<String> {
-    let mut processes: Vec<u32> = Vec::new();
-    // SAFETY: the callback only reads window state and writes to the vector, which outlives the call.
-    unsafe {
-        let _ = EnumWindows(Some(note_window), LPARAM(&mut processes as *mut Vec<u32> as isize));
-    }
-    let mut names: Vec<String> = processes.into_iter().filter(|process| *process != std::process::id()).filter_map(program).collect();
+    let mut names: Vec<String> = crate::sys::processes_on_screen().into_iter().filter(|process| *process != std::process::id()).filter_map(program).collect();
     names.sort_by_key(|name| name.to_lowercase());
     names.dedup_by(|a, b| a.eq_ignore_ascii_case(b));
     names
@@ -191,8 +152,7 @@ mod tests {
 
     #[test]
     fn this_test_program_has_a_name() {
-        let name = program(std::process::id()).unwrap();
-        assert!(name.to_lowercase().ends_with(".exe"));
+        assert!(!program(std::process::id()).unwrap().is_empty());
         assert!(program(0).is_none());
     }
 }

@@ -192,6 +192,7 @@ function applyLook(look) {
 }
 
 invoke('facts').then(facts => {
+  if (facts.platform === 'macos') document.getElementById('paste-last-hint').textContent = 'Option+Shift+Z 再貼上一則';
   mode = facts.mode;
   applyLook(facts);
   setSide(facts.side);

@@ -16,6 +16,7 @@ mod recognise;
 mod replace;
 mod secret;
 mod settings;
+mod sys;
 mod tidy;
 mod words;
 
@@ -24,7 +25,6 @@ use instance::Request;
 use layout::Layout;
 use serde::Serialize;
 use settings::{Engine, Settings};
-use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -406,8 +406,7 @@ fn serve(app: &AppHandle, request: Request) {
 
 /// Starts one of the tools installed beside the word list.
 fn run_tool(app: &AppHandle, name: &str, argument: &str) {
-    const NO_WINDOW: u32 = 0x0800_0000;
-    let started = paths::tool(name).is_some_and(|tool| std::process::Command::new(tool).arg(argument).creation_flags(NO_WINDOW).spawn().is_ok());
+    let started = paths::tool(name).is_some_and(|tool| sys::quiet(std::process::Command::new(tool).arg(argument)).spawn().is_ok());
     if !started {
         let _ = app.emit("notice", "找不到這個工具，請確認完整套件已安裝");
     }
@@ -475,6 +474,8 @@ struct Facts {
     message: String,
     text: String,
     mode: String,
+    /// "windows" or "macos", so the page can name this system's keys.
+    platform: &'static str,
 }
 
 #[tauri::command]
@@ -486,6 +487,7 @@ fn facts(app: AppHandle, keys: State<'_, Keys>, session: State<'_, Session>) -> 
         side: layout::side(&app),
         state: if state.is_empty() { "idle" } else { state },
         mode: session.mode_label(),
+        platform: sys::PLATFORM,
         message: session.message.lock().unwrap().clone(),
         text: session.preview.lock().unwrap().clone(),
     }
@@ -512,7 +514,7 @@ impl Keys {
         self.bound.load(Ordering::SeqCst)
     }
 
-    /// Switches to the shortcut in `prefs`. Returns false, keeping the old one, when Windows refuses the new one.
+    /// Switches to the shortcut in `prefs`. Returns false, keeping the old one, when the system refuses the new one.
     pub fn rebind(&self, app: &AppHandle, prefs: &Settings) -> bool {
         let wanted = shortcut(prefs);
         let next = wanted.as_ref().map(|(keys, _)| *keys);
@@ -566,22 +568,29 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("history", "最近的辨識紀錄…")?,
             &item("copy", "複製辨識文字")?,
             &item("convert", "剪貼簿文字簡繁互轉")?,
+        ],
+    )?;
+    // The Zhuyin input method and its learning tool are part of the Windows package only.
+    if cfg!(windows) {
+        menu.append_items(&[
             &line()?,
             &item("zhuyin", "切換到注音輸入法")?,
             &item("learn-on", "啟用本機學習")?,
             &item("learn-off", "關閉本機學習")?,
-            &line()?,
-            &item("dock", "收合成圖示")?,
-            &item("quit", "結束聽字")?,
-        ],
-    )?;
+        ])?;
+    }
+    menu.append_items(&[&line()?, &item("dock", "收合成圖示")?, &item("quit", "結束聽字")?])?;
+    // A click on a menu bar icon opens its menu on macOS; on Windows it opens the settings.
+    let menu_on_click = cfg!(target_os = "macos");
     let mut tray = TrayIconBuilder::new()
-        .tooltip("聽字・注音與語音輸入法")
+        .tooltip(sys::TITLE)
         .menu(&menu)
-        .show_menu_on_left_click(false)
-        .on_tray_icon_event(|tray, event| {
+        .show_menu_on_left_click(menu_on_click)
+        .on_tray_icon_event(move |tray, event| {
             if let TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. } = event {
-                panel::open(tray.app_handle());
+                if !menu_on_click {
+                    panel::open(tray.app_handle());
+                }
             }
         })
         .on_menu_event(|app, event| match event.id().as_ref() {
@@ -719,6 +728,7 @@ fn main() {
             }
         })
         .setup(move |app| {
+            sys::prepare(app);
             deliver::watch();
             layout::keep(app.handle().clone());
             layout::arrange(app.handle(), Layout::Docked);
@@ -755,7 +765,7 @@ mod tests {
     fn shortcut_follows_saved_preferences() {
         std::env::remove_var("TINGZI_RECORD_KEY");
         let (_, name) = shortcut(&Settings { modifiers: 6, record_key: u32::from(b'T'), ..Settings::default() }).unwrap();
-        assert_eq!(name, "Ctrl+Shift+T");
+        assert_eq!(name, format!("{}+T", sys::MODIFIER_NAMES[2]));
         assert!(shortcut(&Settings { record_key: 0, ..Settings::default() }).is_none());
     }
 

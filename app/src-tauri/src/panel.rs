@@ -4,24 +4,16 @@ use crate::apps::{self, AppRule};
 use crate::dialogs::{self, Kind};
 use crate::replace::{self, Replacement};
 use crate::settings::Settings;
+use crate::sys::{set_login_start, starts_at_login};
 use crate::words::{self, Entry};
 use crate::{audio, paths, recognise};
 use std::ffi::OsStr;
 use serde::{Deserialize, Serialize};
-use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
-use winreg::enums::HKEY_CURRENT_USER;
-use winreg::RegKey;
-
-const ENGINE_KEY: &str = r"Software\Tingzi\Engine";
-const LOOK_KEY: &str = r"Software\Tingzi\Appearance";
-const RUN_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Run";
-const NO_WINDOW: u32 = 0x0800_0000;
-
-/// Zhuyin choices the text service reads from the registry when an application loads it.
+/// Zhuyin choices the Windows text service reads when an application loads it.
 #[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Zhuyin {
     /// 0 is the standard layout, 1 is ETen.
@@ -35,13 +27,12 @@ pub struct Zhuyin {
 
 impl Zhuyin {
     fn load() -> Self {
-        let user = RegKey::predef(HKEY_CURRENT_USER);
-        let number = |key: &str, name: &str| user.open_subkey(key).and_then(|key| key.get_value::<u32, _>(name)).ok();
+        let [layout, staged, candidate_size, line_size] = crate::sys::zhuyin_choices();
         Self {
-            layout: number(ENGINE_KEY, "KeyboardLayout").filter(|layout| *layout == 1).unwrap_or(0),
-            staged: number(ENGINE_KEY, "StagedSegmentation") == Some(1),
-            candidate_size: number(LOOK_KEY, "CandidateDIP").filter(|size| [20, 24, 32].contains(size)).unwrap_or(24),
-            line_size: number(LOOK_KEY, "CompositionDIP").filter(|size| [0, 36, 44, 52].contains(size)).unwrap_or(44),
+            layout: layout.filter(|layout| *layout == 1).unwrap_or(0),
+            staged: staged == Some(1),
+            candidate_size: candidate_size.filter(|size| [20, 24, 32].contains(size)).unwrap_or(24),
+            line_size: line_size.filter(|size| [0, 36, 44, 52].contains(size)).unwrap_or(44),
         }
     }
 
@@ -50,27 +41,7 @@ impl Zhuyin {
     }
 
     fn save(&self) -> std::io::Result<()> {
-        let user = RegKey::predef(HKEY_CURRENT_USER);
-        let (engine, _) = user.create_subkey(ENGINE_KEY)?;
-        engine.set_value("KeyboardLayout", &self.layout)?;
-        engine.set_value("StagedSegmentation", &u32::from(self.staged))?;
-        let (look, _) = user.create_subkey(LOOK_KEY)?;
-        look.set_value("CandidateDIP", &self.candidate_size)?;
-        look.set_value("CompositionDIP", &self.line_size)
-    }
-}
-
-fn starts_at_login() -> bool {
-    RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|run| run.get_value::<String, _>("Tingzi")).is_ok()
-}
-
-fn set_login_start(enabled: bool) -> std::io::Result<()> {
-    let (run, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey(RUN_KEY)?;
-    if enabled {
-        let program = std::env::current_exe()?;
-        run.set_value("Tingzi", &format!("\"{}\"", program.display()))
-    } else {
-        run.delete_value("Tingzi").or_else(|error| if error.kind() == std::io::ErrorKind::NotFound { Ok(()) } else { Err(error) })
+        crate::sys::store_zhuyin_choices(self.layout, u32::from(self.staged), self.candidate_size, self.line_size)
     }
 }
 
@@ -87,21 +58,15 @@ pub fn follow_upgrade() {
 pub struct Look {
     shortcut: String,
     text_size: u32,
-    /// 0 follows Windows, 1 is light, 2 is dark.
+    /// 0 follows the system, 1 is light, 2 is dark.
     appearance: u32,
-    /// The Windows accent colour and a readable colour on top of it, when the user chose to follow it.
+    /// The system's accent colour and a readable colour on top of it, when the user chose to follow it.
     accent: Option<(String, String)>,
 }
 
 pub fn look(prefs: &Settings, shortcut: String) -> Look {
-    let accent = prefs.system_accent.then(windows_accent).flatten();
+    let accent = prefs.system_accent.then(crate::sys::accent).flatten().map(|(red, green, blue)| accent_pair(red, green, blue));
     Look { shortcut, text_size: prefs.text_size, appearance: prefs.appearance, accent }
-}
-
-fn windows_accent() -> Option<(String, String)> {
-    let stored: u32 = RegKey::predef(HKEY_CURRENT_USER).open_subkey(r"Software\Microsoft\Windows\DWM").ok()?.get_value("AccentColor").ok()?;
-    // Windows stores the colour as alpha, blue, green, red.
-    Some(accent_pair(stored & 0xff, (stored >> 8) & 0xff, (stored >> 16) & 0xff))
 }
 
 /// The accent as a CSS colour, with dark text on light accents and white on dark ones.
@@ -128,6 +93,8 @@ pub struct Panel {
     has_keyboard: bool,
     has_learning: bool,
     has_word_list: bool,
+    /// "windows" or "macos", so the page can word itself for this system.
+    platform: &'static str,
     look: Look,
 }
 
@@ -147,6 +114,7 @@ pub fn load_settings(app: AppHandle) -> Panel {
         has_keyboard: paths::tool("TingziKeyboard.exe").is_some(),
         has_learning: paths::tool("TingziLearning.exe").is_some(),
         has_word_list: paths::word_list().is_some(),
+        platform: crate::sys::PLATFORM,
         look: look(&prefs, keys.label()),
         prefs,
     }
@@ -189,7 +157,7 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     Ok(())
 }
 
-/// Stores the key for the user's own transcription service in Windows Credential Manager.
+/// Stores the key for the user's own transcription service in the system's store for secrets.
 #[tauri::command]
 pub fn set_api_key(key: String) -> Result<(), String> {
     crate::secret::write(&key)
@@ -211,7 +179,7 @@ pub fn open(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         let _ = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
-            .title("聽字・注音與語音輸入法 · 設定")
+            .title(format!("{} · 設定", crate::sys::TITLE))
             .inner_size(860.0, 660.0)
             .min_inner_size(660.0, 460.0)
             .center()
@@ -248,7 +216,7 @@ pub fn test_microphone(app: AppHandle, test: State<'_, MicTest>, name: Option<St
     let recorder = audio::Recorder::start(name, move |peak| {
         let _ = meter.emit_to("settings", "mic-level", peak);
     })
-    .map_err(|_| "無法開啟這支麥克風，請確認 Windows 的麥克風權限。".to_string())?;
+    .map_err(|_| format!("無法開啟這支麥克風，請確認 {} 的麥克風權限。", crate::sys::SYSTEM))?;
     let number = previous + 1;
     *running = Some((number, recorder));
     std::thread::spawn(move || {
@@ -266,7 +234,9 @@ pub fn test_microphone(app: AppHandle, test: State<'_, MicTest>, name: Option<St
 /// Runs the learning tool and returns whether it succeeded, with what it printed.
 fn learning_tool(arguments: &[&std::ffi::OsStr]) -> Option<(bool, String)> {
     let tool = paths::tool("TingziLearning.exe")?;
-    let output = Command::new(tool).args(arguments).stdin(Stdio::null()).stderr(Stdio::null()).creation_flags(NO_WINDOW).output().ok()?;
+    let mut command = Command::new(tool);
+    command.args(arguments).stdin(Stdio::null()).stderr(Stdio::null());
+    let output = crate::sys::quiet(&mut command).output().ok()?;
     Some((output.status.success(), String::from_utf8_lossy(&output.stdout).trim().to_string()))
 }
 
@@ -323,7 +293,7 @@ pub fn forget_learned_word(reading: String, text: String) -> bool {
 }
 
 fn owner(app: &AppHandle) -> isize {
-    app.get_webview_window("settings").and_then(|window| window.hwnd().ok()).map_or(0, |handle| handle.0 as isize)
+    crate::sys::owner(app.get_webview_window("settings"))
 }
 
 /// Imports, exports or clears the learning data. None means the user closed the dialog.
@@ -425,11 +395,11 @@ pub fn running_programs() -> Vec<String> {
 #[tauri::command(async)]
 pub fn open_target(which: String) -> bool {
     let tool = |name: &str, argument: Option<&str>| {
-        paths::tool(name).is_some_and(|tool| Command::new(tool).args(argument).creation_flags(NO_WINDOW).spawn().is_ok())
+        paths::tool(name).is_some_and(|tool| crate::sys::quiet(Command::new(tool).args(argument)).spawn().is_ok())
     };
     match which.as_str() {
         "keyboard" => tool("TingziKeyboard.exe", Some("switch")),
-        "language" => dialogs::open("ms-settings:regionlanguage"),
+        "language" => dialogs::open(crate::sys::LANGUAGE_SETTINGS),
         "home" => dialogs::open("https://github.com/skydreamer0/tingzi"),
         "issues" => dialogs::open("https://github.com/skydreamer0/tingzi/issues"),
         "folder" => std::fs::create_dir_all(paths::data()).is_ok() && dialogs::open(&paths::data().to_string_lossy()),

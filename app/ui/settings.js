@@ -53,10 +53,21 @@ function option(value, label) {
   return item;
 }
 
+// The page is written for Windows. On macOS the Zhuyin input method's parts are hidden, since
+// that input method is Windows only, and the system's own names take the place of Windows' ones.
+const onMac = () => panel.platform === 'macos';
+function wordForSystem() {
+  if (!onMac()) return;
+  document.title = '聽字・語音輸入 · 設定';
+  for (const part of document.querySelectorAll('[data-windows]')) part.hidden = true;
+  for (const part of document.querySelectorAll('[data-mac]')) part.textContent = part.dataset.mac;
+  for (const part of document.querySelectorAll('[data-mac-placeholder]')) part.placeholder = part.dataset.macPlaceholder;
+}
+
 function fill() {
   const { prefs, zhuyin } = panel;
   const microphone = byId('microphone');
-  microphone.replaceChildren(option('', '跟隨 Windows 預設麥克風'), ...panel.microphones.map(name => option(name, name)));
+  microphone.replaceChildren(option('', onMac() ? '跟隨 macOS 預設麥克風' : '跟隨 Windows 預設麥克風'), ...panel.microphones.map(name => option(name, name)));
   if (prefs.MicrophoneName && !panel.microphones.includes(prefs.MicrophoneName)) {
     missingMicrophone = prefs.MicrophoneName;
     microphone.append(option(missingMicrophone, missingMicrophone + '（未連接）'));
@@ -154,9 +165,10 @@ function showEngine() {
 }
 function showKey() {
   byId('api-key').value = '';
+  const store = onMac() ? 'macOS 鑰匙圈' : 'Windows 認證管理員';
   byId('api-key-note').textContent = panel.api_key_set
-    ? '已存一把金鑰，存在 Windows 認證管理員。要換新的就貼上；留空會沿用。'
-    : '尚未存金鑰。金鑰存在 Windows 認證管理員，不會寫進設定檔；服務在 localhost 時可以不填。';
+    ? `已存一把金鑰，存在 ${store}。要換新的就貼上；留空會沿用。`
+    : `尚未存金鑰。金鑰存在 ${store}，不會寫進設定檔；服務在 localhost 時可以不填。`;
   byId('api-key-clear').disabled = !panel.api_key_set;
 }
 byId('engine').addEventListener('change', showEngine);
@@ -533,7 +545,7 @@ byId('manage-app-rules').addEventListener('click', async () => {
 byId('app-rules-close').addEventListener('click', () => rulesDialog.close());
 byId('add-app-rule').addEventListener('click', async () => {
   const program = ruleProgram.value.trim();
-  if (!program) return void (rulesStatus.textContent = '請輸入程式名稱，例如 Code.exe。');
+  if (!program) return void (rulesStatus.textContent = onMac() ? '請輸入程式名稱，例如 Safari.app。' : '請輸入程式名稱，例如 Code.exe。');
   const delivery = byId('rule-delivery').value;
   const rule = {
     Program: program,
@@ -599,6 +611,7 @@ document.addEventListener('keydown', event => {
 invoke('load_settings').then(async loaded => {
   panel = loaded;
   applyLook(panel.look);
+  wordForSystem();
   fill();
   for (const control of document.querySelectorAll('.pages select, .pages input')) accepted.set(control.id, valueOf(control));
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');

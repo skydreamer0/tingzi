@@ -26,7 +26,8 @@
 | `app/src-tauri/src/panel.rs` | 設定視窗的讀取與儲存、麥克風測試、學習資料與自訂詞的管理。 |
 | `app/src-tauri/src/settings.rs` | 偏好檔 `voice-settings.json`，格式與現有浮窗相同。 |
 | `app/src-tauri/src/instance.rs` | 單一執行個體，以及第二次啟動或注音服務傳來的要求。 |
-| `app/src-tauri/src/dialogs.rs`、`paths.rs` | Windows 的選檔與確認對話框；安裝資料夾與個人資料夾的位置。 |
+| `app/src-tauri/src/dialogs.rs`、`paths.rs` | 選檔與確認對話框；安裝資料夾與個人資料夾的位置。 |
+| `app/src-tauri/src/sys/` | 各模組用到的系統呼叫，Windows 與 macOS 各一個檔，提供同一組函式。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`），只顯示狀態與收集選擇。 |
 
 ## 貼入的規則

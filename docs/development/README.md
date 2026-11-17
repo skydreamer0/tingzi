@@ -11,11 +11,14 @@
 | `windows/keyboard.cpp`、`learning_cli.cpp` | 切換輸入法與學習工具。 |
 | `windows/editor.cpp` | 開發用的注音測試視窗；預設建置已不再編譯，也不隨安裝包發行。 |
 | `app/src-tauri/` | 語音浮窗與設定頁的 Rust 後端（Tauri 2）：錄音、辨識（內建 codex-asr 與本機 Whisper）、貼入規則、設定、系統匣與單一執行個體。各檔案的職責見[遷移規格](../specs/app-migration.md)的架構表；測試寫在各模組裡，以 `cargo test` 執行。 |
+| `app/src-tauri/src/sys/` | 向作業系統要求的每一件事，一個系統一個檔：`win.rs`（Win32、登錄檔、認證管理員）與 `mac.rs`（AppKit、Quartz 按鍵事件、鑰匙圈）。兩個檔提供同一組函式，其他模組只呼叫 `sys::`，不直接使用系統 API。 |
+| `macos/build.sh`、`notices.py`、`README.md` | macOS 版的建置腳本（組出 `Tingzi.app` 與 ZIP）、第三方聲明產生器與使用說明。macOS 版只有語音浮窗，沒有注音輸入法。 |
+| `.github/workflows/macos.yml` | 在 GitHub 的 Mac 上執行 `cargo test` 與 `macos/build.sh`，並把 ZIP 存成工作流程的產物。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`）的網頁介面，只顯示狀態與收集選擇。 |
 | `windows/engine_test.cpp`、`learning_test.cpp` | 自有引擎與學習測試原始碼。 |
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
-| `windows/licenses/` | 標準授權全文，打包時附給沒有自帶授權檔的 Rust 相依套件。 |
+| `windows/licenses/` | 標準授權全文，打包時附給沒有自帶授權檔的 Rust 相依套件；macOS 的建置也使用這一份。 |
 | `windows/standalone-data/pairs.txt`、`windows/tools/build_pairs.py` | 詞語搭配統計與產生它的腳本。腳本讀詞庫和一份語料（維基百科分卷或純文字檔），輸出常一起出現的詞對；語料本身不放進專案。授權見 `pairs-NOTICE.txt`。 |
 | `assets/icons/` | 介面圖示集的 SVG 原稿；規範見[圖示集說明](../../assets/icons/README.md)。 |
 | `assets/brand/` | 橫耳鍵品牌素材。Windows 建置使用 `windows/tingzi.svg` 與 `windows/tingzi.ico`。 |
@@ -35,11 +38,23 @@ cargo test
 cargo build --release
 ```
 
-`cargo test` 目前有 56 個測試，涵蓋貼入規則、簡繁轉換與啟動參數等邏輯。測試成功不代表真實麥克風、線上辨識、Windows 焦點或 TSF 安裝已通過。
+`cargo test` 在 Windows 目前有 68 個測試，涵蓋貼入規則、簡繁轉換與啟動參數等邏輯。測試成功不代表真實麥克風、線上辨識、Windows 焦點或 TSF 安裝已通過。
 
 要手動啟動剛建置的浮窗，執行建置輸出裡的 `Tingzi.exe`。已安裝的浮窗與開發版共用單一執行個體識別；先把環境變數 `TINGZI_RECORD_KEY` 設為一個字母（例如 `T`）再啟動，開發版會改用該字母當錄音鍵並使用另一組執行個體名稱，可以和已安裝的版本同時執行。`--show`、`--settings`、`--edit`、`--open-wav` 與 `--transcribe` 等啟動參數見[遷移規格](../specs/app-migration.md)的「開發與測試」。
 
 開發版浮窗不會替你安裝 TSF。線上辨識已內建，不需要另備 `codex-asr.exe`，但需要這台電腦上可用的 Codex 登入。本機模式需要既有 Whisper 工具與模型。不要為測試提交這些私人檔案。
+
+## 建置 macOS 版
+
+macOS 版要在 Mac 上建置，需要 Rust、Python 3 與 Xcode 命令列工具：
+
+```bash
+bash macos/build.sh
+```
+
+腳本以 `cargo build --release --locked` 建置 `app/src-tauri`，組出 `.build/macos/Tingzi.app`（執行檔、`Info.plist`、圖示、字音表 `phrases.txt` 與第三方聲明），做本機簽章，再壓成 ZIP。第三方聲明沿用 `windows/package_release.py` 的授權審核清單，遇到清單以外的授權字串會停下來。使用方式與目前的限制見 [macOS 說明](../../macos/README.md)。
+
+在 Windows 上無法編譯 macOS 版（錄音與加密的相依套件需要 Apple 的工具與 SDK）。改動 `sys/mac.rs` 後，以推送到 GitHub 觸發的 macOS 工作流程確認編譯與測試。
 
 ## 完整建置與打包
 

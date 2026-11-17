@@ -4,9 +4,6 @@
 //! work with either program.
 
 use std::path::PathBuf;
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{GetLastError, ERROR_ALREADY_EXISTS, HANDLE, WAIT_OBJECT_0};
-use windows::Win32::System::Threading::{CreateEventW, CreateMutexW, OpenEventW, SetEvent, WaitForMultipleObjects, EVENT_MODIFY_STATE, INFINITE};
 
 /// Something asked of the running app from outside.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -36,9 +33,9 @@ const SIGNALS: [(&str, fn() -> Request); 8] = [
 ];
 
 /// A development build started with TINGZI_RECORD_KEY uses its own names, so it can run beside the installed app.
-fn name(base: &str) -> Vec<u16> {
+fn name(base: &str) -> String {
     let suffix = if std::env::var_os("TINGZI_RECORD_KEY").is_some() { "Dev" } else { "" };
-    format!("Local\\{base}{suffix}").encode_utf16().chain(std::iter::once(0)).collect()
+    format!("{base}{suffix}")
 }
 
 fn request_file() -> PathBuf {
@@ -66,9 +63,7 @@ pub fn parse(arguments: &[String]) -> Option<Option<Request>> {
 
 /// Claims the single-instance name. False means another copy is already running.
 pub fn first() -> bool {
-    let name = name("TingziFloat020");
-    // SAFETY: the name is null-terminated; the handle is kept for the life of the process on purpose.
-    unsafe { CreateMutexW(None, true, PCWSTR(name.as_ptr())).is_ok() && GetLastError() != ERROR_ALREADY_EXISTS }
+    crate::sys::first_instance(&name("TingziFloat020"))
 }
 
 /// Passes a request to the copy that is already running. False when it could not be reached.
@@ -80,35 +75,15 @@ pub fn forward(request: &Request) -> bool {
         }
     }
     let Some((signal, _)) = SIGNALS.iter().find(|(_, make)| std::mem::discriminant(&make()) == std::mem::discriminant(request)) else { return false };
-    let name = name(signal);
-    // SAFETY: the name is null-terminated and the handle is only used to raise the signal.
-    unsafe { OpenEventW(EVENT_MODIFY_STATE, false, PCWSTR(name.as_ptr())).is_ok_and(|event| SetEvent(event).is_ok()) }
+    crate::sys::signal(&name(signal))
 }
 
 /// Listens for requests for the life of the app and hands each one to `handle`.
 pub fn listen(handle: impl Fn(Request) + Send + 'static) {
-    // Handles are plain numbers here so the list can move to the listening thread.
-    let events: Vec<isize> = SIGNALS
-        .iter()
-        .filter_map(|(signal, _)| {
-            let name = name(signal);
-            // SAFETY: the name is null-terminated; auto-reset events start unsignalled.
-            unsafe { CreateEventW(None, false, false, PCWSTR(name.as_ptr())).ok() }.map(|event| event.0 as isize)
-        })
-        .collect();
-    if events.len() != SIGNALS.len() {
-        return;
-    }
-    std::thread::spawn(move || {
-        let events: Vec<HANDLE> = events.into_iter().map(|event| HANDLE(event as *mut core::ffi::c_void)).collect();
-        loop {
-            // SAFETY: the handles stay open for the life of the process.
-            let raised = unsafe { WaitForMultipleObjects(&events, false, INFINITE) };
-            let index = raised.0.wrapping_sub(WAIT_OBJECT_0.0) as usize;
-            match SIGNALS.get(index) {
-                Some((_, make)) => handle(make()),
-                None => return,
-            }
+    let names = SIGNALS.iter().map(|(signal, _)| name(signal)).collect();
+    crate::sys::listen(names, move |index| {
+        if let Some((_, make)) = SIGNALS.get(index) {
+            handle(make());
         }
     });
 }
