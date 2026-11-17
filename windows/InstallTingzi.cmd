@@ -6,8 +6,9 @@ set "TARGET=%ProgramW6432%\Tingzi"
 reg query "HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32" /ve /reg:64 >nul 2>&1
 if not errorlevel 1 (
   "%~dp0TingziVersion.exe" upgrade || exit /b
-  call :voiceShortcuts
-  exit /b
+  call :voiceShortcuts || exit /b
+  call :keyboards
+  exit /b 0
 )
 reg query "HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32" /ve /reg:32 >nul 2>&1
 if not errorlevel 1 exit /b 9
@@ -30,12 +31,18 @@ for %%f in (Tingzi.cin phrases.txt McBopomofo-LICENSE.txt ACKNOWLEDGEMENTS.md) d
 "%TARGET%\TingziSetup32.exe" status || goto failed
 "%~dp0TingziVersion.exe" upgrade || goto failed
 call :voiceShortcuts || exit /b
+call :keyboards
 echo Tingzi Zhuyin and voice input installed. Use Win+Space to select it.
 if /i not "%~1"=="/quiet" pause
 exit /b 0
 :voiceShortcuts
 powershell.exe -NoProfile -NonInteractive -File "%~dp0VoiceShortcuts.ps1"
 exit /b
+:keyboards
+rem Windows lists the input method only for users who have it among their keyboards. Add it for the
+rem account running this script; a failure is not fatal, the settings page can add it later.
+"%~dp0TingziKeyboard.exe" enable >nul 2>&1
+exit /b 0
 :failed
 echo Registration failed. Cleaning up the new installation.
 "%TARGET%\TingziSetup32.exe" remove

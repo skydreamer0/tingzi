@@ -491,8 +491,8 @@ fn serve(app: &AppHandle, request: Request) {
 }
 
 /// Starts one of the tools installed beside the word list.
-fn run_tool(app: &AppHandle, name: &str, argument: &str) {
-    let started = paths::tool(name).is_some_and(|tool| sys::quiet(std::process::Command::new(tool).arg(argument)).spawn().is_ok());
+fn run_tool(app: &AppHandle, name: &str, argument: Option<&str>) {
+    let started = paths::tool(name).is_some_and(|tool| sys::quiet(std::process::Command::new(tool).args(argument)).spawn().is_ok());
     if !started {
         let _ = app.emit("notice", "找不到這個工具，請確認完整套件已安裝");
     }
@@ -722,9 +722,10 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 copy_preview_text(app);
             }
             "convert" => convert_clipboard(app),
-            "zhuyin" => run_tool(app, "TingziKeyboard.exe", "switch"),
-            "learn-on" => run_tool(app, "TingziLearning.exe", "on"),
-            "learn-off" => run_tool(app, "TingziLearning.exe", "off"),
+            // Without an argument the tool also adds Tingzi to this user's keyboards first, in case it is not there yet.
+            "zhuyin" => run_tool(app, "TingziKeyboard.exe", None),
+            "learn-on" => run_tool(app, "TingziLearning.exe", Some("on")),
+            "learn-off" => run_tool(app, "TingziLearning.exe", Some("off")),
             "dock" => layout::arrange(app, Layout::Docked),
             "quit" => app.exit(0),
             _ => {}

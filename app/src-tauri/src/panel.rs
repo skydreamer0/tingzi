@@ -267,6 +267,11 @@ pub fn welcome_first_run(app: &AppHandle) {
     if std::fs::create_dir_all(paths::data()).and_then(|_| std::fs::write(welcomed_file(), b"")).is_err() {
         return;
     }
+    // The installer registers the input method for the whole computer, but Windows lists it only for
+    // users who have it among their keyboards, so it is added for each new user here, once.
+    if let Some(tool) = paths::tool("TingziKeyboard.exe") {
+        let _ = crate::sys::quiet(Command::new(tool).arg("enable")).spawn();
+    }
     WELCOME.store(true, Ordering::SeqCst);
     open(app);
 }
@@ -509,7 +514,8 @@ pub fn open_target(which: String) -> bool {
         paths::tool(name).is_some_and(|tool| crate::sys::quiet(Command::new(tool).args(argument)).spawn().is_ok())
     };
     match which.as_str() {
-        "keyboard" => tool("TingziKeyboard.exe", Some("switch")),
+        // Without an argument the tool adds Tingzi to this user's keyboards when it is missing, then switches to it.
+        "keyboard" => tool("TingziKeyboard.exe", None),
         "language" => dialogs::open(crate::sys::LANGUAGE_SETTINGS),
         "home" => dialogs::open("https://github.com/skydreamer0/tingzi"),
         "issues" => dialogs::open("https://github.com/skydreamer0/tingzi/issues"),

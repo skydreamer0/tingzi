@@ -39,21 +39,21 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 | 平台 | 狀態 | 取得方式 |
 | --- | --- | --- |
-| Windows 10／11（x64） | 預覽版 0.7.7 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-windows-x64.zip` |
+| Windows 10／11（x64） | 預覽版 0.7.7 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
 | macOS | 準備中，尚未發行 | 只有語音輸入，沒有注音；目前只能[自行建置](macos/README.md) |
 
 **Windows 安裝步驟**
 
-1. 從 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 ZIP，完整解壓縮。
-2. 在解壓縮的資料夾，以系統管理員身分執行 `InstallTingzi.cmd`。
-3. 按 Windows 鍵搜尋 **聽字**，開啟設定，在「語音」頁選麥克風和辨識方式。
+1. 從 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`。
+2. 雙擊它，依畫面按「下一步」；Windows 詢問是否允許變更時按「是」。
+3. 裝好後語音浮窗會出現在螢幕右側，第一次開啟會帶你選麥克風和辨識方式。按 Windows＋空白鍵可以切換到「聽字・注音與語音輸入法」。
 
-語音浮窗需要 Microsoft Edge WebView2 Runtime，Windows 11 已內建，大多數 Windows 10 也已經有，不必另外安裝 .NET。要移除時，以系統管理員身分執行安裝目錄裡的 `RemoveTingzi.cmd`。升級與更多細節見 [Windows 使用手冊](windows/README.md)。
+安裝程式會把聽字加進你的鍵盤清單（缺少中文（台灣）時一併加入），缺少 Microsoft Edge WebView2 Runtime 時也會自動下載，不必另外安裝 .NET。已安裝的電腦再執行新版安裝程式就是升級；要移除時，到 Windows 的「設定 → 應用程式 → 已安裝的應用程式」按「解除安裝」。0.7.7 以前的版本是 ZIP 加 `InstallTingzi.cmd`。更多細節見 [Windows 使用手冊](windows/README.md)。
 
 > [!NOTE]
-> 這是預覽版。安裝包沒有數位簽章，Windows 可能會跳出警告；下載頁附有 `.sha256` 檔，可以核對 ZIP 是否完整。
+> 這是預覽版。安裝程式沒有數位簽章，Windows 可能會顯示「Windows 已保護您的電腦」，按「其他資訊」再按「仍要執行」。下載頁附有 `.sha256` 檔，可以核對下載的檔案是否完整。
 >
-> 準備中：下一版起，下載頁只放一個安裝程式 `Tingzi-Setup-<版本>-x64.exe`（與它的 `.sha256`）。雙擊後依畫面安裝即可，不用解壓縮或執行腳本；缺少 WebView2 Runtime 時會自動下載。已安裝的電腦執行它就是升級，移除則到 Windows 的「已安裝的應用程式」。
+> 單一安裝程式從 0.7.7 之後的下一版開始提供；在它發行之前，下載頁仍是 0.7.7 的 ZIP。
 >
 > macOS 版自行建置出的 `Tingzi.app` 只有本機簽章，沒有 Developer ID，也沒有經過 Apple 公證，第一次開啟時要在 Finder 按右鍵選「打開」。
 

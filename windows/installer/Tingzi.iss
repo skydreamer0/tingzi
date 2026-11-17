@@ -56,6 +56,8 @@ CloseApplications=no
 RestartIfNeededByRun=no
 ; 解除安裝時可選擇刪除目前使用者的個人資料。
 UsedUserAreasWarning=no
+; 一律寫安裝記錄到 %TEMP%（檔名「Setup Log <日期> #<編號>.txt」），在別人電腦上裝不起來時可以請對方傳回來。
+SetupLogging=yes
 
 [Languages]
 Name: "zh_TW"; MessagesFile: "ChineseTraditional.isl"
@@ -288,6 +290,29 @@ begin
   if FileExists(Active + '\Tingzi.cin') then FileCopy(Active + '\Tingzi.cin', Kept + '\Tingzi.cin', False);
   if FileExists(Active + '\phrases.txt') then FileCopy(Active + '\phrases.txt', Kept + '\phrases.txt', False);
   if FileExists(Active + '\TingziFloat\voice-root.txt') then FileCopy(Active + '\TingziFloat\voice-root.txt', Kept + '\voice-root.txt', False);
+end;
+
+// 輸入法登記在整台電腦，但 Windows 只在「把它加進鍵盤清單」的使用者那裡列出。安裝程式以系統管理員身分執行，
+// 所以用原本開啟安裝程式的使用者身分把聽字加進他的鍵盤清單；缺少中文（台灣）時 Windows 會一併加入。
+// 電腦上的其他使用者第一次開啟語音浮窗時，聽字會替他們做同一件事。
+procedure AddToUserKeyboards;
+var
+  Code: Integer;
+begin
+  if ExecAsOriginalUser(ExpandConstant('{app}\v{#AppVersion}\TingziKeyboard.exe'), 'enable', '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+    Log('Added Tingzi to the keyboards of the user who ran setup.')
+  else
+  begin
+    Log('Could not add Tingzi to the user''s keyboards (code ' + IntToStr(Code) + ').');
+    if not WizardSilent then
+      MsgBox('聽字已經裝好，但沒能自動加進你的鍵盤清單。請到「設定 → 時間與語言 → 語言與地區」，在「中文（台灣）」的「語言選項」裡按「新增鍵盤」，選「聽字・注音與語音輸入法」。', mbInformation, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    AddToUserKeyboards;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
