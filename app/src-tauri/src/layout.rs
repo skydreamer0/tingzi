@@ -223,7 +223,7 @@ fn settle(app: AppHandle) {
         return;
     }
     std::thread::spawn(move || {
-        while button_held() {
+        while crate::sys::mouse_held() {
             std::thread::sleep(Duration::from_millis(30));
         }
         let handle = app.clone();
@@ -232,12 +232,6 @@ fn settle(app: AppHandle) {
             SETTLING.store(false, Ordering::SeqCst);
         });
     });
-}
-
-fn button_held() -> bool {
-    use windows::Win32::UI::Input::KeyboardAndMouse::{GetAsyncKeyState, VK_LBUTTON};
-    // SAFETY: GetAsyncKeyState only reads input state.
-    unsafe { GetAsyncKeyState(i32::from(VK_LBUTTON.0)) < 0 }
 }
 
 fn snap(app: &AppHandle) {

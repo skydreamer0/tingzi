@@ -5,34 +5,7 @@
 
 use std::sync::Mutex;
 use std::time::Duration;
-use windows::core::PCWSTR;
-use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-use windows::Win32::Globalization::{LCMapStringEx, LCMAP_SIMPLIFIED_CHINESE, LCMAP_TRADITIONAL_CHINESE};
-use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
-use windows::Win32::UI::Input::KeyboardAndMouse::{
-    GetAsyncKeyState, IsWindowEnabled, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
-};
-use windows::Win32::UI::WindowsAndMessaging::{
-    GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW, GetWindowThreadProcessId, IsWindow,
-    SendMessageTimeoutW, SetForegroundWindow, GUITHREADINFO, GWL_STYLE, SMTO_ABORTIFHUNG,
-};
-
-/// Character-level script conversion from Windows; one-to-many characters follow the system table.
-pub fn convert_script(text: &str, simplified: bool) -> String {
-    let source: Vec<u16> = text.encode_utf16().collect();
-    if source.is_empty() {
-        return String::new();
-    }
-    let flag = if simplified { LCMAP_SIMPLIFIED_CHINESE } else { LCMAP_TRADITIONAL_CHINESE };
-    let mut mapped = vec![0u16; source.len() * 2 + 1];
-    // SAFETY: both buffers outlive the call and their lengths are passed with them.
-    let written = unsafe { LCMapStringEx(PCWSTR::null(), flag, &source, Some(&mut mapped), None, None, None) };
-    if written <= 0 {
-        return text.to_string();
-    }
-    String::from_utf16_lossy(&mapped[..written as usize])
-}
+pub use crate::sys::convert_script;
 
 /// The text in the other script and whether that is Simplified; None when neither conversion changes it.
 /// Any Simplified-only character means the text goes to Traditional, so mixed text is not flipped both ways.
@@ -54,7 +27,8 @@ pub fn clipboard_text() -> Option<String> {
 }
 
 /// A place the keyboard can be: a window, the process that owns it, and the control with the caret.
-/// Handles are kept as plain numbers so a spot can cross threads.
+/// Handles are kept as plain numbers so a spot can cross threads. Where the system does not tell
+/// windows or controls apart from outside, `window` stands for the program and `focus` is 0.
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub struct Spot {
     pub window: isize,
@@ -62,44 +36,14 @@ pub struct Spot {
     pub focus: isize,
 }
 
-fn handle(value: isize) -> HWND {
-    HWND(value as *mut core::ffi::c_void)
-}
-
 impl Spot {
     /// Where the keyboard is right now.
     pub fn current() -> Self {
-        // SAFETY: these calls only read window manager state; the struct is sized as the API requires.
-        unsafe {
-            let window = GetForegroundWindow();
-            let mut process = 0u32;
-            let thread = GetWindowThreadProcessId(window, Some(&mut process));
-            let mut info = GUITHREADINFO { cbSize: std::mem::size_of::<GUITHREADINFO>() as u32, ..Default::default() };
-            let focus = if thread != 0 && GetGUIThreadInfo(thread, &mut info).is_ok() { info.hwndFocus.0 as isize } else { 0 };
-            Self { window: window.0 as isize, process, focus }
-        }
+        crate::sys::spot()
     }
 
     pub fn ours(&self) -> bool {
         self.process == std::process::id()
-    }
-
-    /// The control with the caret, when it is a standard Windows text box that can be written to.
-    fn text_box(&self) -> Option<HWND> {
-        let control = handle(self.focus);
-        let mut name = [0u16; 64];
-        // SAFETY: the buffer length travels with the slice; the other calls only read state.
-        unsafe {
-            if self.focus == 0 || !IsWindow(control).as_bool() || !IsWindowEnabled(control).as_bool() {
-                return None;
-            }
-            let length = GetClassNameW(control, &mut name) as usize;
-            let class = String::from_utf16_lossy(&name[..length]).to_ascii_lowercase();
-            const READ_ONLY: i32 = 0x0800;
-            const PASSWORD: i32 = 0x0020;
-            let style = GetWindowLongW(control, GWL_STYLE);
-            ((class == "edit" || class.starts_with("richedit")) && style & (READ_ONLY | PASSWORD) == 0).then_some(control)
-        }
     }
 }
 
@@ -153,30 +97,6 @@ pub fn end() {
 
 fn left_target() -> bool {
     WATCH.lock().map(|watch| watch.left).unwrap_or(true)
-}
-
-fn held(key: VIRTUAL_KEY) -> bool {
-    // SAFETY: reads the current key state; no pointers involved.
-    unsafe { GetAsyncKeyState(i32::from(key.0)) < 0 }
-}
-
-fn modifier_held() -> bool {
-    [VK_CONTROL, VK_MENU, VK_SHIFT, VK_LWIN, VK_RWIN].into_iter().any(held)
-}
-
-fn key(code: VIRTUAL_KEY, up: bool) -> INPUT {
-    INPUT {
-        r#type: INPUT_KEYBOARD,
-        Anonymous: INPUT_0 {
-            ki: KEYBDINPUT {
-                wVk: code,
-                wScan: 0,
-                dwFlags: if up { KEYEVENTF_KEYUP } else { KEYBD_EVENT_FLAGS(0) },
-                time: 0,
-                dwExtraInfo: 0,
-            },
-        },
-    }
 }
 
 /// What the user chose to happen when recognition finishes.
@@ -258,7 +178,7 @@ pub fn deliver(text: &str, mode: Mode, desk: &mut dyn Desk, cancelled: &dyn Fn()
 pub struct Desktop {
     target: Spot,
     /// The clipboard's change counter right after this app wrote to it.
-    written: u32,
+    written: u64,
     /// False for the Codex draft shortcut, where the user is already in the editor they chose.
     watched: bool,
 }
@@ -278,7 +198,7 @@ impl Desk for Desktop {
     fn wait_released(&mut self, cancelled: &dyn Fn() -> bool) {
         // A shortcut still held down would turn Ctrl+V into something else.
         for _ in 0..40 {
-            if !modifier_held() || cancelled() {
+            if !crate::sys::modifier_held() || cancelled() {
                 break;
             }
             std::thread::sleep(Duration::from_millis(25));
@@ -287,14 +207,12 @@ impl Desk for Desktop {
 
     fn copy(&mut self, text: &str) -> bool {
         let copied = copy(text);
-        // SAFETY: takes no arguments and only reads a counter.
-        self.written = if copied { unsafe { GetClipboardSequenceNumber() } } else { 0 };
+        self.written = if copied { crate::sys::clipboard_serial() } else { 0 };
         copied
     }
 
     fn clipboard_holds(&mut self, text: &str) -> bool {
-        // SAFETY: takes no arguments and only reads a counter.
-        self.written != 0 && unsafe { GetClipboardSequenceNumber() } == self.written && clipboard_text().as_deref() == Some(text)
+        self.written != 0 && crate::sys::clipboard_serial() == self.written && clipboard_text().as_deref() == Some(text)
     }
 
     fn still_there(&mut self) -> bool {
@@ -304,36 +222,18 @@ impl Desk for Desktop {
         let mut now = Spot::current();
         if now.ours() {
             // The user clicked this app's mic button; hand the keyboard back to where they were.
-            // SAFETY: any handle value is accepted; failure only leaves focus where it is.
-            unsafe {
-                let _ = SetForegroundWindow(handle(self.target.window));
-            }
-            std::thread::sleep(Duration::from_millis(80));
+            crate::sys::bring_forward(&self.target);
             now = Spot::current();
         }
         now.window == self.target.window && now.process == self.target.process && (self.target.focus == 0 || now.focus == self.target.focus)
     }
 
     fn write_directly(&mut self, text: &str) -> bool {
-        let Some(control) = self.target.text_box() else { return false };
-        let wide: Vec<u16> = text.encode_utf16().chain(std::iter::once(0)).collect();
-        const REPLACE_SELECTION: u32 = 0x00C2;
-        // SAFETY: the text is null-terminated and outlives the call; Windows copies it across processes
-        // for this message. A message sent to one control cannot land in another application.
-        let done = unsafe {
-            SendMessageTimeoutW(control, REPLACE_SELECTION, WPARAM(1), LPARAM(wide.as_ptr() as isize), SMTO_ABORTIFHUNG, 1000, None)
-        };
-        done.0 != 0
+        crate::sys::write_to_text_box(&self.target, text)
     }
 
     fn paste(&mut self) -> bool {
-        if modifier_held() {
-            return false;
-        }
-        let strokes = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
-        // SAFETY: the slice and the element size describe the same array.
-        let sent = unsafe { SendInput(&strokes, std::mem::size_of::<INPUT>() as i32) };
-        sent as usize == strokes.len()
+        !crate::sys::modifier_held() && crate::sys::press_paste()
     }
 }
 
@@ -495,34 +395,6 @@ mod tests {
         assert_eq!(desk.written.as_deref(), Some("原生欄位結果"));
         assert_eq!(desk.pastes, 0);
         assert!(!outcome.copied && outcome.inserted && outcome.expand);
-    }
-
-    #[test]
-    fn text_reaches_a_real_text_box_without_the_clipboard() {
-        use windows::Win32::Foundation::HINSTANCE;
-        use windows::Win32::UI::WindowsAndMessaging::{CreateWindowExW, DestroyWindow, GetWindowTextW, HMENU, WINDOW_EX_STYLE, WINDOW_STYLE};
-        let class: Vec<u16> = "EDIT".encode_utf16().chain(std::iter::once(0)).collect();
-        // Hidden text boxes owned by this test; nothing appears on screen and focus does not move.
-        let make = |style: u32| unsafe {
-            CreateWindowExW(WINDOW_EX_STYLE(0), PCWSTR(class.as_ptr()), PCWSTR::null(), WINDOW_STYLE(style), 0, 0, 200, 40, HWND::default(), HMENU::default(), HINSTANCE::default(), None)
-                .unwrap()
-        };
-        let read = |control: HWND| {
-            let mut held = [0u16; 32];
-            let length = unsafe { GetWindowTextW(control, &mut held) } as usize;
-            String::from_utf16_lossy(&held[..length])
-        };
-        let spot = |control: HWND| Spot { window: control.0 as isize, process: std::process::id(), focus: control.0 as isize };
-        let (open, locked) = (make(0), make(0x0800));
-        assert!(Desktop::new(spot(open)).write_directly("語音"));
-        assert!(Desktop::new(spot(open)).write_directly("輸入"));
-        assert_eq!(read(open), "語音輸入");
-        assert!(!Desktop::new(spot(locked)).write_directly("不該寫入"));
-        assert_eq!(read(locked), "");
-        unsafe {
-            let _ = DestroyWindow(open);
-            let _ = DestroyWindow(locked);
-        }
     }
 
     #[test]

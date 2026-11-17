@@ -22,7 +22,7 @@
     <div role="tablist" aria-orientation="vertical">
       <button role="tab" id="tab-general" aria-controls="page-general" aria-selected="true"><svg class="glyph"><use href="#i-settings"/></svg>一般</button>
       <button role="tab" id="tab-voice" aria-controls="page-voice" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-mic"/></svg>語音</button>
-      <button role="tab" id="tab-zhuyin" aria-controls="page-zhuyin" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-keyboard"/></svg>注音</button>
+      <button role="tab" id="tab-zhuyin" aria-controls="page-zhuyin" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-keyboard"/></svg><span data-mac="自訂詞">注音</span></button>
       <button role="tab" id="tab-privacy" aria-controls="page-privacy" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-privacy"/></svg>隱私</button>
       <button role="tab" id="tab-about" aria-controls="page-about" aria-selected="false" tabindex="-1"><svg class="glyph"><use href="#i-info"/></svg>關於</button>
     </div>
@@ -36,7 +36,7 @@
         <div class="card">
           <div class="row">
             <div class="what"><span class="name">錄音快捷鍵</span><p>在任何程式裡按這組鍵開始錄音。</p></div>
-            <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3">Ctrl+Alt</option><option value="6">Ctrl+Shift</option><option value="5">Alt+Shift</option></select>
+            <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3" data-mac="Control+Option">Ctrl+Alt</option><option value="6" data-mac="Control+Shift">Ctrl+Shift</option><option value="5" data-mac="Option+Shift">Alt+Shift</option></select>
               <select id="record-key" aria-label="錄音快捷鍵的字母"></select></div></div>
           <div class="row">
             <div class="what"><label for="hold">錄音方式</label><p>選「按住說話」時，快按一下仍是再按一次才停止。</p></div>
@@ -45,17 +45,17 @@
         <h2>文字</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><label for="script">輸出文字</label><p>語音結果與注音送出的字都照這個選擇，逐字轉換。</p></div>
+            <div class="what"><label for="script">輸出文字</label><p data-mac="語音結果照這個選擇，逐字轉換。">語音結果與注音送出的字都照這個選擇，逐字轉換。</p></div>
             <select id="script" class="wide"><option value="0">繁體中文</option><option value="1">簡體中文</option></select></div>
         </div>
         <h2>外觀</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><label for="appearance">色系</label><p>套用到設定、浮窗，以及注音的候選窗與輸入行。</p></div>
-            <select id="appearance" class="wide"><option value="0">跟隨 Windows</option><option value="1">淺色</option><option value="2">深色</option></select></div>
+            <div class="what"><label for="appearance">色系</label><p data-mac="套用到設定和浮窗。">套用到設定、浮窗，以及注音的候選窗與輸入行。</p></div>
+            <select id="appearance" class="wide"><option value="0" data-mac="跟隨 macOS">跟隨 Windows</option><option value="1">淺色</option><option value="2">深色</option></select></div>
           <div class="row">
             <div class="what"><label for="accent">強調色</label><p>按鈕與選取項目使用的顏色。</p></div>
-            <select id="accent" class="wide"><option value="0">聽字靛色</option><option value="1">跟隨 Windows 強調色</option></select></div>
+            <select id="accent" class="wide"><option value="0">聽字靛色</option><option value="1" data-mac="跟隨 macOS 強調色">跟隨 Windows 強調色</option></select></div>
           <div class="row">
             <div class="what"><label for="text-size">預覽字級</label><p>浮窗裡辨識文字的大小。</p></div>
             <select id="text-size" class="wide"><option value="18">18</option><option value="20">20</option><option value="24">24</option></select></div>
@@ -63,7 +63,7 @@
         <h2>啟動</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><label for="startup">登入 Windows 時啟動語音浮窗</label><p>登入後就會在螢幕右側看到聽字圖示。</p></div>
+            <div class="what"><label for="startup" data-mac="登入 macOS 時啟動語音浮窗">登入 Windows 時啟動語音浮窗</label><p>登入後就會在螢幕右側看到聽字圖示。</p></div>
             <input id="startup" type="checkbox" role="switch" class="switch"></div>
         </div>
       </section>
@@ -100,7 +100,7 @@
         <h2>文字處理</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><label for="use-phrases">套用自訂詞</label><p>把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「注音」頁管理。</p></div>
+            <div class="what"><label for="use-phrases">套用自訂詞</label><p data-mac="把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「自訂詞」頁管理。">把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「注音」頁管理。</p></div>
             <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
           <div class="row">
             <div class="what"><label for="use-replacements">套用取代規則</label><p>把常聽錯的字換成你要的寫法，例如把「github」換成「GitHub」。</p></div>
@@ -121,9 +121,9 @@
       </section>
 
       <section id="page-zhuyin" role="tabpanel" aria-labelledby="tab-zhuyin" hidden>
-        <h1>注音</h1>
-        <h2>打字</h2>
-        <div class="card">
+        <h1 data-mac="自訂詞">注音</h1>
+        <h2 data-windows>打字</h2>
+        <div class="card" data-windows>
           <div class="row">
             <div class="what"><label for="key-layout">鍵盤配置</label><p>注音符號在鍵盤上的排法。</p></div>
             <select id="key-layout" class="wide"><option value="0">標準（大千）</option><option value="1">倚天</option></select></div>
@@ -137,18 +137,18 @@
             <div class="what"><label for="line-size">大字輸入行</label><p>打字時在游標旁放大顯示正在組的字。</p></div>
             <select id="line-size" class="wide"><option value="0">關閉</option><option value="36">36 px</option><option value="44">44 px</option><option value="52">52 px</option></select></div>
         </div>
-        <p class="note">以上四項會立刻存下，在重新開啟的應用程式生效。</p>
+        <p class="note" data-windows>以上四項會立刻存下，在重新開啟的應用程式生效。</p>
         <h2>詞語</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><span class="name">自訂詞</span><p id="words-note">加入姓名、專有名詞等詞語，打注音時優先出現。</p></div>
+            <div class="what"><span class="name">自訂詞</span><p id="words-note" data-mac="加入姓名、專有名詞等詞語，語音辨識的同音字會換成這些詞。">加入姓名、專有名詞等詞語，打注音時優先出現。</p></div>
             <button id="manage-words" type="button" class="button" aria-label="管理自訂詞">管理</button></div>
-          <div class="row">
+          <div class="row" data-windows>
             <div class="what"><span class="name">文字範本</span><p>打出觸發詞的注音後按 ↓，從候選清單選出整段文字，例如地址或常用回覆。</p></div>
             <button id="manage-templates" type="button" class="button" aria-label="管理文字範本">管理</button></div>
         </div>
-        <h2>學習</h2>
-        <div class="card">
+        <h2 data-windows>學習</h2>
+        <div class="card" data-windows>
           <div class="row">
             <div class="what"><label for="learning">本機學習</label><p id="learning-note">讀取學習狀態中…</p></div>
             <input id="learning" type="checkbox" role="switch" class="switch" disabled></div>
@@ -156,8 +156,8 @@
             <div class="what"><span class="name">已學會的詞</span><p>打字時連續選出的字會記成新詞。記錯的可以在這裡刪掉。</p></div>
             <button id="show-learned" type="button" class="button" aria-label="查看已學會的詞">查看</button></div>
         </div>
-        <h2>輸入法</h2>
-        <div class="card">
+        <h2 data-windows>輸入法</h2>
+        <div class="card" data-windows>
           <div class="row">
             <div class="what"><span class="name">切換到注音輸入法</span><p id="keyboard-note">切換後，在原本的應用程式內打字。</p></div>
             <button id="open-keyboard" type="button" class="button" aria-label="切換到注音輸入法">切換</button></div>
@@ -165,23 +165,23 @@
             <div class="what"><span class="name">Windows 語言與鍵盤設定</span><p>管理 Windows 的鍵盤清單和輸入語言。</p></div>
             <button id="open-language" type="button" class="button" aria-label="開啟 Windows 輸入法設定">開啟</button></div>
         </div>
-        <h2>打字時的按鍵</h2>
-        <p class="note">Shift 加 ， 。 ？ ！ 等鍵輸入全形標點，[ ] 輸入「」，` 開啟符號表。組字時按 Tab 把第一個詞切短，選字時按 Tab 切換近音字。Shift＋Enter 送出並把這段字存成自訂詞。</p>
+        <h2 data-windows>打字時的按鍵</h2>
+        <p class="note" data-windows>Shift 加 ， 。 ？ ！ 等鍵輸入全形標點，[ ] 輸入「」，` 開啟符號表。組字時按 Tab 把第一個詞切短，選字時按 Tab 切換近音字。Shift＋Enter 送出並把這段字存成自訂詞。</p>
       </section>
 
       <section id="page-privacy" role="tabpanel" aria-labelledby="tab-privacy" hidden>
         <h1>隱私</h1>
-        <p class="note">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。</p>
+        <p class="note" data-mac="自訂詞、辨識紀錄和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。</p>
         <h2>這台電腦上的資料</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><label for="keep-history">保留最近 50 則辨識紀錄</label><p id="history-note">沒貼上的文字可以從浮窗的紀錄取回，或按 Alt+Shift+Z 再貼一次上一則。</p></div>
+            <div class="what"><label for="keep-history">保留最近 50 則辨識紀錄</label><p id="history-note" data-mac="沒貼上的文字可以從浮窗的紀錄取回，或按 Option+Shift+Z 再貼一次上一則。">沒貼上的文字可以從浮窗的紀錄取回，或按 Alt+Shift+Z 再貼一次上一則。</p></div>
             <div class="group"><button id="history-clear" type="button" class="button" aria-label="清除辨識紀錄">清除</button><input id="keep-history" type="checkbox" role="switch" class="switch"></div></div>
           <div class="row" id="learning-data">
             <div class="what"><span class="name">學習資料</span><p id="learning-data-note">匯出成文字檔帶到另一台電腦再匯入，或全部清除。</p></div>
             <div class="group"><button id="learning-import" type="button" class="button" aria-label="匯入學習資料">匯入</button><button id="learning-export" type="button" class="button" aria-label="匯出學習資料">匯出</button><button id="learning-clear" type="button" class="button" aria-label="清除學習資料">清除</button></div></div>
           <div class="row">
-            <div class="what"><span class="name">個人資料夾</span><p>存放設定、學習資料和自訂詞；刪除它就會清除這台電腦上所有的個人資料。</p></div>
+            <div class="what"><span class="name">個人資料夾</span><p data-mac="存放設定、辨識紀錄和自訂詞；刪除它就會清除這台電腦上所有的個人資料。">存放設定、學習資料和自訂詞；刪除它就會清除這台電腦上所有的個人資料。</p></div>
             <button id="open-folder" type="button" class="button" aria-label="開啟個人資料夾">開啟</button></div>
         </div>
       </section>
@@ -190,7 +190,7 @@
         <h1>關於</h1>
         <div class="card">
           <div class="row identity"><img src="mark.svg" alt="" width="48" height="48">
-            <div class="what"><span class="name title">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
+            <div class="what"><span class="name title" data-mac="聽字・語音輸入">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
         </div>
         <h2>連結</h2>
         <div class="card">
@@ -204,7 +204,7 @@
         <h2>授權</h2>
         <div class="card">
           <div class="row">
-            <div class="what"><span class="name">注音詞庫</span><p>安裝包附的詞庫取自 McBopomofo（MIT 授權），授權全文在安裝資料夾的 McBopomofo-LICENSE.txt。</p></div></div>
+            <div class="what"><span class="name">注音詞庫</span><p data-mac="程式附的字音表取自 McBopomofo（MIT 授權），用來找出自訂詞的同音字；授權全文在應用程式套件的 Resources 資料夾。">安裝包附的詞庫取自 McBopomofo（MIT 授權），授權全文在安裝資料夾的 McBopomofo-LICENSE.txt。</p></div></div>
         </div>
       </section>
     </div>
@@ -253,9 +253,9 @@
 
   <dialog id="app-rules" aria-labelledby="app-rules-title">
     <h1 id="app-rules-title">依程式設定</h1>
-    <p class="note">在這些程式裡說話時，改用這裡的選擇；選「跟隨主要設定」的項目照設定頁的選擇。程式以執行檔名稱比對，例如 Code.exe。</p>
+    <p class="note">在這些程式裡說話時，改用這裡的選擇；選「跟隨主要設定」的項目照設定頁的選擇。程式以<span data-mac="應用程式名稱比對，例如 Safari.app。">執行檔名稱比對，例如 Code.exe。</span></p>
     <ul id="app-rules-list" class="list" role="listbox" tabindex="0" aria-label="已加入的程式"></ul>
-    <input id="rule-program" type="text" maxlength="120" autocomplete="off" list="running-programs" placeholder="程式名稱，例如 Code.exe" aria-label="程式名稱">
+    <input id="rule-program" type="text" maxlength="120" autocomplete="off" list="running-programs" placeholder="程式名稱，例如 Code.exe" data-mac-placeholder="程式名稱，例如 Safari.app" aria-label="程式名稱">
     <datalist id="running-programs"></datalist>
     <div class="choices">
       <label>整理口語<select id="rule-tidy"><option value="">跟隨主要設定</option><option value="1">整理</option><option value="0">不整理</option></select></label>

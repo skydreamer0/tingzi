@@ -1,0 +1,28 @@
+name: macOS
+
+# Tests and builds the voice window on a Mac, since it cannot be built on Windows.
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'macos/**', '.github/workflows/macos.yml']
+  pull_request:
+    paths: ['app/**', 'macos/**', '.github/workflows/macos.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
+      - name: Build Tingzi.app
+        run: bash macos/build.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Tingzi-macos
+          path: .build/macos/*.zip
+          if-no-files-found: error

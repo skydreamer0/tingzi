@@ -117,7 +117,7 @@ fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Resul
         ),
         _ => return Err("不支援這支麥克風的取樣格式".into()),
     }
-    .map_err(|_| "無法開啟麥克風，請確認 Windows 的麥克風權限")?;
+    .map_err(|_| format!("無法開啟麥克風，請確認 {} 的麥克風權限", crate::sys::SYSTEM))?;
     stream.play().map_err(|_| "無法開始錄音")?;
     Ok((stream, samples, rate))
 }
