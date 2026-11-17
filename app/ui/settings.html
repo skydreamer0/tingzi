@@ -60,6 +60,9 @@
         <div class="row"><svg class="glyph"><use href="#i-plus"/></svg>
           <div class="what"><label for="use-phrases">套用自訂詞</label><p>把辨識結果裡同音的字換成你加入的自訂詞，例如人名和專有名詞。</p></div>
           <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
+        <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
+          <div class="what"><label for="tidy">整理口語</label><p>去掉句首的「嗯、呃、欸」、重複的「我我我」「然後然後」，並把空白與半形標點補成中文標點。不會改寫你的句子。</p></div>
+          <input id="tidy" type="checkbox" role="switch" class="switch"></div>
         <div class="row"><svg class="glyph"><use href="#i-copy"/></svg>
           <div class="what"><label for="delivery">辨識完成後</label><p>錄音途中若切換到別的視窗，辨識文字會留在浮窗預覽，不會貼錯地方。</p></div>
           <select id="delivery" class="wide"><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></div>
@@ -68,6 +71,12 @@
           <div class="what"><span class="name">錄音快捷鍵</span><p>按一次開始錄音，再按一次停止。</p></div>
           <div class="group"><select id="modifiers" aria-label="錄音快捷鍵的輔助鍵"><option value="3">Ctrl+Alt</option><option value="6">Ctrl+Shift</option><option value="5">Alt+Shift</option></select>
             <select id="record-key" aria-label="錄音快捷鍵的字母"></select></div></div>
+        <div class="row"><svg class="glyph"><use href="#i-mic"/></svg>
+          <div class="what"><label for="hold">錄音方式</label><p>「按住說話」時按著快捷鍵講，放開就送出；快按一下則和原本一樣，再按一次才停止。</p></div>
+          <select id="hold" class="wide"><option value="0">按一下開始，再按一下停止</option><option value="1">按住說話，放開送出</option></select></div>
+        <div class="row"><svg class="glyph"><use href="#i-folder"/></svg>
+          <div class="what"><label for="keep-history">保留最近 50 則辨識紀錄</label><p id="history-note">只存在這台電腦。沒貼上的文字可以從浮窗的紀錄取回，或按 Alt+Shift+Z 再貼一次上一則。</p></div>
+          <div class="group"><button id="history-clear" type="button" class="button" aria-label="清除辨識紀錄">清除</button><input id="keep-history" type="checkbox" role="switch" class="switch"></div></div>
         <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
           <div class="what"><label for="text-size">預覽字級</label><p>浮窗裡辨識文字的大小。</p></div>
           <select id="text-size" class="wide"><option value="18">18</option><option value="20">20</option><option value="24">24</option></select></div>

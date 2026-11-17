@@ -50,7 +50,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-主分支為 **0.7.1 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+主分支為 **0.7.2 開發版**，尚未發布安裝包。要試用請依[開發指南](docs/development/README.md)自行建置。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
 ## 安裝（自行建置的套件）
 

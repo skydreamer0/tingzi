@@ -5,12 +5,14 @@ mod audio;
 mod codex;
 mod deliver;
 mod dialogs;
+mod history;
 mod instance;
 mod layout;
 mod panel;
 mod paths;
 mod recognise;
 mod settings;
+mod tidy;
 mod words;
 
 use deliver::{Desktop, Mode, Outcome, Spot};
@@ -21,7 +23,7 @@ use settings::Settings;
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
 use tauri::{AppHandle, Emitter, Manager, State, WindowEvent};
@@ -52,6 +54,8 @@ struct Session {
     mode: Mutex<&'static str>,
     /// Whether the input method is typing full-width letters and digits.
     full_width: AtomicBool,
+    /// When the shortcut went down to start a recording, while it may still be held.
+    held_since: Mutex<Option<Instant>>,
 }
 
 impl Session {
@@ -69,6 +73,11 @@ impl Session {
 
 fn draft_keys() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV)
+}
+
+/// Alt+Shift+Z pastes the most recent dictation again, wherever the keyboard is now.
+fn last_keys() -> Shortcut {
+    Shortcut::new(Some(Modifiers::ALT | Modifiers::SHIFT), Code::KeyZ)
 }
 
 /// Tells the window what happened, without changing its shape.
@@ -113,7 +122,8 @@ fn idle(app: &AppHandle, message: &str) {
 /// Traditional first, so the user's own words can be matched, then the script the user chose.
 fn polish(heard: &str, prefs: &Settings) -> String {
     let traditional = deliver::convert_script(heard.trim(), false);
-    let corrected = if prefs.use_phrases { words::apply(&traditional) } else { traditional };
+    let tidied = if prefs.tidy { tidy::tidy(&traditional) } else { traditional };
+    let corrected = if prefs.use_phrases { words::apply(&tidied) } else { tidied };
     deliver::convert_script(&corrected, prefs.simplified)
 }
 
@@ -154,7 +164,10 @@ fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) 
                 if outcome.cancelled || cancelled() {
                     return;
                 }
-                let Outcome { message, expand, .. } = outcome;
+                let Outcome { message, expand, inserted, .. } = outcome;
+                if prefs.keep_history {
+                    history::add(&text, inserted);
+                }
                 ("done", message.to_string(), text, expand)
             }
             (failed, Ok(wav)) if can_retry => {
@@ -200,12 +213,30 @@ fn toggle(app: &AppHandle) {
         Ok(recorder) => {
             *session.recorder.lock().unwrap() = Some(recorder);
             let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
-            show(app, "recording", "錄音中，再按一次停止", "", false);
+            show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
             stop_at_limit(app.clone(), run);
         }
         Err(reason) => {
             deliver::end();
             show(app, "error", reason, "", false);
+        }
+    }
+}
+
+/// The recording shortcut going down or coming up.
+/// With hold-to-talk, holding records and releasing sends; a tap shorter than a third of a second
+/// latches instead, so the next press stops, as it does without hold-to-talk.
+fn record_key(app: &AppHandle, pressed: bool) {
+    let session = app.state::<Session>();
+    let recording = || session.recorder.lock().unwrap().is_some();
+    if pressed {
+        let was_recording = recording();
+        toggle(app);
+        let started = !was_recording && recording();
+        *session.held_since.lock().unwrap() = (started && Settings::load().hold_to_talk).then(Instant::now);
+    } else if let Some(since) = session.held_since.lock().unwrap().take() {
+        if since.elapsed() >= Duration::from_millis(350) && recording() {
+            toggle(app);
         }
     }
 }
@@ -288,6 +319,19 @@ fn paste_draft(app: &AppHandle) {
     });
 }
 
+/// Alt+Shift+Z: pastes the most recent dictation where the keyboard is now.
+fn paste_last(app: &AppHandle) {
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let Some(latest) = history::load().into_iter().next() else {
+            let _ = app.emit("notice", "還沒有辨識紀錄");
+            return;
+        };
+        let pasted = deliver::deliver(&latest.text, Mode::Insert, &mut Desktop::here(Spot::current()), &|| false).inserted;
+        let _ = app.emit("notice", if pasted { "已貼上上一則" } else { "上一則已複製，請手動貼上" });
+    });
+}
+
 fn copy_preview_text(app: &AppHandle) -> bool {
     let text = app.state::<Session>().preview.lock().unwrap().clone();
     let copied = !text.is_empty() && deliver::copy(&text);
@@ -354,6 +398,27 @@ fn set_preview(text: String, session: State<'_, Session>) {
 #[tauri::command]
 fn copy_preview(app: AppHandle) -> bool {
     copy_preview_text(&app)
+}
+
+#[tauri::command(async)]
+fn history_list() -> Vec<history::Item> {
+    history::load()
+}
+
+/// Brings a past dictation back as the current text, so it can be edited, copied or pasted.
+#[tauri::command]
+fn history_use(app: AppHandle, index: usize) {
+    if busy(&app) {
+        return;
+    }
+    if let Some(item) = history::load().into_iter().nth(index) {
+        announce(&app, "done", "從紀錄取回・可編輯後複製", item.text);
+    }
+}
+
+#[tauri::command]
+fn history_clear() -> bool {
+    history::clear()
 }
 
 #[tauri::command]
@@ -463,6 +528,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("file", "辨識本機音檔…")?,
             &line()?,
             &item("edit", "編輯辨識文字…")?,
+            &item("history", "最近的辨識紀錄…")?,
             &item("copy", "複製辨識文字")?,
             &item("traditional", "剪貼簿文字轉成繁體")?,
             &item("simplified", "剪貼簿文字轉成簡體")?,
@@ -490,6 +556,12 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "record" => toggle(app),
             "file" => import(app, None),
             "edit" => edit(app),
+            "history" => {
+                layout::arrange(app, Layout::Editor);
+                if let Some(window) = app.get_webview_window("capsule") {
+                    let _ = window.set_focus();
+                }
+            }
             "copy" => {
                 copy_preview_text(app);
             }
@@ -544,13 +616,15 @@ fn main() {
         .plugin(
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, keys, event| {
-                    if event.state() != ShortcutState::Pressed {
-                        return;
-                    }
-                    if *keys == draft_keys() {
-                        paste_draft(app);
+                    let pressed = event.state() == ShortcutState::Pressed;
+                    if *keys == draft_keys() || *keys == last_keys() {
+                        if pressed && *keys == draft_keys() {
+                            paste_draft(app);
+                        } else if pressed {
+                            paste_last(app);
+                        }
                     } else {
-                        toggle(app);
+                        record_key(app, pressed);
                     }
                 })
                 .build(),
@@ -564,6 +638,9 @@ fn main() {
             set_preview,
             copy_preview,
             discard_result,
+            history_list,
+            history_use,
+            history_clear,
             arrange,
             facts,
             panel::open_settings,
@@ -595,6 +672,8 @@ fn main() {
             if !app.state::<Keys>().rebind(app.handle(), &Settings::load()) {
                 show(app.handle(), "error", "錄音快捷鍵被其他程式占用，請點圖示錄音或到設定更換", "", false);
             }
+            // Another program may hold this one; pasting the last dictation is then only in the window.
+            let _ = app.global_shortcut().register(last_keys());
             build_tray(app)?;
             panel::follow_upgrade();
             let handle = app.handle().clone();

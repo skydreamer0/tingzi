@@ -53,7 +53,8 @@
     <section class="editor" aria-label="辨識文字">
       <textarea id="text" spellcheck="false" aria-label="辨識文字，可以修改"></textarea>
       <div class="actions">
-        <span class="hint">在 Codex 草稿按 Ctrl+Alt+V 可直接貼入</span>
+        <select id="history" aria-label="最近的辨識紀錄"><option value="">最近紀錄…</option></select>
+        <span class="hint">Alt+Shift+Z 再貼上一則</span>
         <button id="copy-all" class="primary" type="button">複製</button>
         <button id="collapse" class="plain" type="button">收起</button>
       </div>

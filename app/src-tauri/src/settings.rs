@@ -26,6 +26,12 @@ pub struct Settings {
     pub system_accent: bool,
     /// 0 inserts and copies, 1 only copies, 2 only shows the text.
     pub delivery_mode: Option<u32>,
+    /// True records while the shortcut is held and sends on release; a quick tap still latches.
+    pub hold_to_talk: bool,
+    /// Whether hesitation sounds are dropped and punctuation repaired.
+    pub tidy: bool,
+    /// Whether recent dictations are kept on this computer.
+    pub keep_history: bool,
 }
 
 impl Default for Settings {
@@ -43,6 +49,9 @@ impl Default for Settings {
             appearance: 0,
             system_accent: false,
             delivery_mode: None,
+            hold_to_talk: false,
+            tidy: true,
+            keep_history: true,
         }
     }
 }
@@ -68,6 +77,9 @@ impl Settings {
         }
         if self.modifiers == 3 && self.record_key == u32::from(b'V') {
             return Some("Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。");
+        }
+        if self.modifiers == 5 && self.record_key == u32::from(b'Z') {
+            return Some("Alt+Shift+Z 用於貼上上一則，請選其他錄音鍵。");
         }
         if !matches!(self.text_size, 18 | 20 | 24) || self.appearance > 2 || self.delivery_mode.is_some_and(|mode| mode > 2) {
             return Some("設定內容不完整，請重新選擇。");
@@ -147,5 +159,6 @@ mod tests {
         assert!(clash.problem().is_some());
         assert_eq!(Settings { modifiers: 6, record_key: u32::from(b'V'), ..Settings::default() }.problem(), None);
         assert_eq!(Settings { record_key: 0, ..Settings::default() }.gesture(), "停用");
+        assert!(Settings { modifiers: 5, record_key: u32::from(b'Z'), ..Settings::default() }.problem().is_some());
     }
 }

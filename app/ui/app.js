@@ -87,10 +87,25 @@ function notice(text) {
   noticeTimer = setTimeout(render, 2000);
 }
 
+// Recent dictations, newest first; choosing one brings its text back into the editor.
+const recent = byId('history');
+async function loadRecent() {
+  const items = await invoke('history_list');
+  recent.replaceChildren(new Option('最近紀錄…', ''), ...items.map((item, index) => {
+    const time = new Date(item.at * 1000).toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+    const text = item.text.length > 18 ? item.text.slice(0, 18) + '…' : item.text;
+    return new Option(`${time}${item.inserted ? '' : '（未貼上）'} ${text}`, String(index));
+  }));
+}
+recent.addEventListener('change', () => {
+  if (recent.value !== '') invoke('history_use', { index: Number(recent.value) });
+  recent.value = '';
+});
+
 function setLayout(shape) {
   capsule.dataset.layout = shape;
   render();
-  if (shape === 'editor') editor.focus();
+  if (shape === 'editor') { loadRecent(); editor.focus(); }
 }
 
 mic.addEventListener('click', () => invoke('toggle_recording'));

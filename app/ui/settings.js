@@ -67,6 +67,9 @@ function fill() {
     + '選用線上辨識時，錄音會經第三方的 codex-asr 傳到 ChatGPT。';
   byId('script').value = prefs.Simplified ? '1' : '0';
   byId('use-phrases').checked = prefs.UsePhrases;
+  byId('tidy').checked = prefs.Tidy;
+  byId('hold').value = prefs.HoldToTalk ? '1' : '0';
+  byId('keep-history').checked = prefs.KeepHistory;
   byId('use-phrases').disabled = !panel.has_word_list;
   byId('delivery').value = String(prefs.DeliveryMode ?? (prefs.AutoInsert ? 0 : 2));
   byId('modifiers').value = String(prefs.Modifiers);
@@ -109,6 +112,9 @@ function collect() {
       AutoInsert: number('delivery') === 0,
       Simplified: byId('script').value === '1',
       UsePhrases: byId('use-phrases').checked,
+      Tidy: byId('tidy').checked,
+      HoldToTalk: byId('hold').value === '1',
+      KeepHistory: byId('keep-history').checked,
       Appearance: number('appearance'),
       SystemAccent: byId('accent').value === '1',
       DeliveryMode: number('delivery'),
@@ -185,6 +191,10 @@ for (const action of Object.keys(dataNotes)) {
     if (done !== null) byId('learning-data-note').textContent = dataNotes[action][done ? 0 : 1];
   });
 }
+
+byId('history-clear').addEventListener('click', async () => {
+  byId('history-note').textContent = await invoke('history_clear') ? '辨識紀錄已清除。' : '無法清除辨識紀錄。';
+});
 
 // Links and tools
 for (const which of ['keyboard', 'pad', 'language', 'home', 'issues', 'folder']) {
