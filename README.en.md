@@ -40,19 +40,21 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 
 | Platform | Status | How to get it |
 | --- | --- | --- |
-| Windows 10/11 (x64) | Preview, 0.7.7 | Download `Tingzi-<version>-windows-x64.zip` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) |
+| Windows 10/11 (x64) | Preview, 0.7.7 | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
 | macOS | In progress, not released | Voice input only, no Zhuyin; for now you can only [build it yourself](macos/README.md) |
 
 **Installing on Windows**
 
-1. Download the ZIP from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and extract all of it.
-2. In the extracted folder, run `InstallTingzi.cmd` as administrator.
-3. Press the Windows key, search for **聽字**, open the settings, and pick a microphone and a recognition method on the 語音 (Voice) page.
+1. Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest).
+2. Double-click it and follow the steps; choose Yes when Windows asks whether to allow changes.
+3. When it finishes, the voice window appears at the right of the screen and walks you through choosing a microphone and a recognition method. Press Windows+Space to switch to 聽字・注音與語音輸入法.
 
-The voice window needs the Microsoft Edge WebView2 Runtime. Windows 11 includes it and most Windows 10 PCs already have it. You don't need .NET. To uninstall, run `RemoveTingzi.cmd` from the install folder as administrator. See the [Windows manual](windows/README.md) for upgrades and other details.
+Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) and downloads the Microsoft Edge WebView2 Runtime if it is missing. You don't need .NET. Running a newer installer on a computer that has Tingzi upgrades it; to uninstall, open Windows Settings → Apps → Installed apps and choose Uninstall. Versions up to 0.7.7 came as a ZIP with `InstallTingzi.cmd`. See the [Windows manual](windows/README.md) for other details.
 
 > [!NOTE]
-> This is a preview. The package is not code-signed, so Windows may show a warning. There is no single installer yet; one is being built in [#7](https://github.com/skydreamer0/tingzi/issues/7). Each release includes a `.sha256` file you can use to check the ZIP.
+> This is a preview. The installer is not code-signed, so Windows may show "Windows protected your PC"; choose More info, then Run anyway. Each release includes a `.sha256` file you can use to check the download.
+>
+> The single installer starts with the release after 0.7.7; until it is out, the download page still has the 0.7.7 ZIP.
 >
 > A self-built macOS `Tingzi.app` is signed locally only. It has no Developer ID and is not notarized by Apple, so the first time you open it, right-click it in Finder and choose Open.
 

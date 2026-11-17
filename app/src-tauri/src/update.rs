@@ -4,7 +4,9 @@
 
 use crate::{fetch, paths, settings::Settings};
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
+use sha2::{Digest, Sha256};
+use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter};
@@ -156,23 +158,69 @@ fn state() -> UpdateState {
     }
 }
 
-/// The automatic check at start: once a day at most, and never when the user turned it off.
+/// How often the running app looks at whether a day has passed since the last check.
+const LOOK_AGAIN: Duration = Duration::from_secs(60 * 60);
+/// How long to wait before asking again while the user is recording or a dictation is being recognised.
+const WHILE_BUSY: Duration = Duration::from_secs(30);
+
+/// Automatic updates: at start and then once an hour, a check is made if a day has passed since the
+/// last one. A newer version's installer is downloaded and checked in the background; then the user
+/// is asked, once per start of the app, whether to install it now. Nothing happens while the check is off.
 pub fn start(app: &AppHandle) {
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(SETTLE);
-        // The user may have turned the check off since the app started.
-        if !Settings::load().check_updates || !due(load().checked, now()) {
-            return;
-        }
-        let earlier = load().latest.map(|release| release.version);
-        let Ok(state) = check_now() else { return };
-        // Each newer version is announced once; the settings page keeps showing it.
-        if let Some(offered) = state.offered.as_ref().filter(|offered| earlier.as_deref() != Some(&offered.version)) {
-            let _ = app.emit("notice", format!("聽字有新版 {}，可到設定的「關於」頁更新", offered.version.trim_start_matches('v')));
-            let _ = app.emit("update", &state);
+        let mut asked: Option<String> = None;
+        loop {
+            // The user may have turned the check off since the app started.
+            if Settings::load().check_updates {
+                look(&app, &mut asked);
+            }
+            std::thread::sleep(LOOK_AGAIN);
         }
     });
+}
+
+fn look(app: &AppHandle, asked: &mut Option<String>) {
+    let earlier = load().latest.map(|release| release.version);
+    let state = if due(load().checked, now()) { check_now().unwrap_or_else(|_| state()) } else { state() };
+    let Some(offered) = state.offered.clone() else { return };
+    if earlier.as_deref() != Some(&offered.version) {
+        let _ = app.emit("update", &state);
+    }
+    if asked.as_deref() == Some(&offered.version) {
+        return;
+    }
+    let Some(installer) = offered.installer.as_ref() else {
+        // Without an installer for this system the user can only be told; once per version.
+        if earlier.as_deref() != Some(&offered.version) {
+            let _ = app.emit("notice", format!("聽字有新版 {}，可到設定的「關於」頁下載", short(&offered.version)));
+        }
+        *asked = Some(offered.version.clone());
+        return;
+    };
+    if INSTALLING.swap(true, Ordering::SeqCst) {
+        return;
+    }
+    let ready = fetch_installer(app, installer);
+    INSTALLING.store(false, Ordering::SeqCst);
+    let Ok(file) = ready else { return };
+    // Never interrupt a dictation.
+    while crate::busy(app) {
+        std::thread::sleep(WHILE_BUSY);
+    }
+    *asked = Some(offered.version.clone());
+    let question = format!(
+        "聽字新版 {} 已經下載好了。\n\n要現在安裝嗎？安裝時語音浮窗會暫時關閉，裝好後自動開啟；設定、詞表、學習資料與模型都會保留。\n\n按「取消」的話，下次開啟聽字時會再問一次，也可以到設定的「關於」頁安裝。",
+        short(&offered.version)
+    );
+    if crate::dialogs::confirm(0, &question) && !run_installer(&file, true) {
+        let _ = app.emit("notice", "無法啟動安裝程式，請到設定的「關於」頁再試一次");
+    }
+}
+
+fn short(version: &str) -> &str {
+    version.trim_start_matches(['v', 'V'])
 }
 
 #[tauri::command]
@@ -192,9 +240,62 @@ fn read_checksum(text: &str) -> Option<String> {
     (word.len() == 64 && word.chars().all(|letter| letter.is_ascii_hexdigit())).then_some(word)
 }
 
-/// Downloads the offered installer, checks it against its published SHA-256 and starts it; the
-/// installer closes this window and opens the new one. Without an installer for this system, opens
-/// the release page. Returns what the page tells the user.
+fn hash_of(file: &Path) -> Option<String> {
+    let mut source = std::fs::File::open(file).ok()?;
+    let mut hash = Sha256::new();
+    std::io::copy(&mut source, &mut hash).ok()?;
+    Some(hash.finalize().iter().map(|byte| format!("{byte:02x}")).collect())
+}
+
+/// The offered installer on this computer, checked against its published SHA-256: one downloaded
+/// earlier is used again if it still matches, otherwise it is downloaded, carrying on from a part
+/// left by an interrupted try.
+fn fetch_installer(app: &AppHandle, installer: &Asset) -> Result<PathBuf, String> {
+    let client = fetch::client(&installer.url)?;
+    let checksum = client
+        .get(&installer.checksum)
+        .header("User-Agent", user_agent())
+        .send()
+        .ok()
+        .filter(|answer| answer.status().is_success())
+        .and_then(|answer| answer.text().ok())
+        .and_then(|text| read_checksum(&text))
+        .ok_or("無法取得新版的檢查碼，請稍後再試。")?;
+    let folder = paths::data().join("updates");
+    std::fs::create_dir_all(&folder).map_err(|_| "無法建立下載資料夾，請確認磁碟空間。")?;
+    let file = folder.join(&installer.name);
+    let part = folder.join(format!("{}.part", installer.name));
+    // Earlier versions' installers are not needed again; a part of this one is kept so the download carries on.
+    if let Ok(entries) = std::fs::read_dir(&folder) {
+        for entry in entries.flatten().filter(|entry| entry.path() != file && entry.path() != part) {
+            let _ = std::fs::remove_file(entry.path());
+        }
+    }
+    if hash_of(&file).as_deref() == Some(checksum.as_str()) {
+        return Ok(file);
+    }
+    let tell = |stage: &'static str, have: u64| {
+        let _ = app.emit("update-progress", (stage, have, installer.size));
+    };
+    fetch::download(&client, &installer.url, installer.size, &checksum, &part, fetch::CHUNK, &|| false, &tell)?;
+    std::fs::rename(&part, &file).map_err(|_| "無法寫入下載的檔案，請確認磁碟空間。")?;
+    Ok(file)
+}
+
+/// Starts the installer. `quiet` shows only its progress, for an update the user agreed to in one
+/// question; otherwise its usual pages. Windows asks for administrator permission either way.
+fn run_installer(file: &Path, quiet: bool) -> bool {
+    let mut command = Command::new(file);
+    if quiet {
+        command.args(["/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"]);
+    }
+    // Should the system refuse to start it directly, opening it the usual way still asks for permission and shows its pages.
+    command.spawn().is_ok() || crate::dialogs::open(&file.to_string_lossy())
+}
+
+/// The page's button: downloads the offered installer (or uses the one already downloaded), checks
+/// it and starts it; the installer closes this window and opens the new one. Without an installer
+/// for this system, opens the release page. Returns what the page tells the user.
 #[tauri::command(async)]
 pub fn update_install(app: AppHandle) -> Result<String, String> {
     let offered = state().offered.ok_or("目前已是最新版。")?;
@@ -206,41 +307,14 @@ pub fn update_install(app: AppHandle) -> Result<String, String> {
         };
     };
     if INSTALLING.swap(true, Ordering::SeqCst) {
-        return Err("新版正在下載。".into());
+        return Err("新版正在下載，請稍候。".into());
     }
-    let result = (|| -> Result<String, String> {
-        let client = fetch::client(&installer.url)?;
-        let checksum = client
-            .get(&installer.checksum)
-            .header("User-Agent", user_agent())
-            .send()
-            .ok()
-            .filter(|answer| answer.status().is_success())
-            .and_then(|answer| answer.text().ok())
-            .and_then(|text| read_checksum(&text))
-            .ok_or("無法取得新版的檢查碼，請稍後再試。")?;
-        let folder = paths::data().join("updates");
-        std::fs::create_dir_all(&folder).map_err(|_| "無法建立下載資料夾，請確認磁碟空間。")?;
-        let file = folder.join(&installer.name);
-        let part = folder.join(format!("{}.part", installer.name));
-        // Earlier versions' installers are not needed again; a part of this one is kept so the download carries on.
-        if let Ok(entries) = std::fs::read_dir(&folder) {
-            for entry in entries.flatten().filter(|entry| entry.path() != file && entry.path() != part) {
-                let _ = std::fs::remove_file(entry.path());
-            }
-        }
-        let tell = |stage: &'static str, have: u64| {
-            let _ = app.emit("update-progress", (stage, have, installer.size));
-        };
-        fetch::download(&client, &installer.url, installer.size, &checksum, &part, fetch::CHUNK, &|| false, &tell)?;
-        std::fs::rename(&part, &file).map_err(|_| "無法寫入下載的檔案，請確認磁碟空間。")?;
-        if !crate::dialogs::open(&file.to_string_lossy()) {
-            return Err("無法啟動安裝程式。".into());
-        }
-        Ok("安裝程式已開啟。依畫面完成安裝後，語音浮窗會自動換成新版。".into())
-    })();
+    let ready = fetch_installer(&app, &installer);
     INSTALLING.store(false, Ordering::SeqCst);
-    result
+    if !run_installer(&ready?, false) {
+        return Err("無法啟動安裝程式。".into());
+    }
+    Ok("安裝程式已開啟。依畫面完成安裝後，語音浮窗會自動換成新版。".into())
 }
 
 #[cfg(test)]

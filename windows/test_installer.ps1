@@ -55,7 +55,12 @@ $data = Join-Path $env:LOCALAPPDATA 'Tingzi'
 New-Item -ItemType Directory -Force $data | Out-Null
 Set-Content -LiteralPath (Join-Path $data 'installer-test.txt') -Value 'keep me'
 
+# Reinstalling the same version over a different build must replace the files, not stop with code 6.
+$readme = "$root\v$($entry.DisplayVersion)\README.md"
+$shipped = Get-FileHash $readme
+Add-Content -LiteralPath $readme -Value 'an earlier build'
 Install 'upgrade'
+Check ((Get-FileHash $readme).Hash -eq $shipped.Hash) 'reinstalling the same version replaces a file from a different build'
 Check ((Get-ItemProperty $serviceKey).'(default)' -eq $dll) 'running the installer again keeps one registration'
 Check ((Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -eq '聽字・注音與語音輸入法' }).Count -eq 1) 'the apps list has one entry'
 

@@ -1,0 +1,61 @@
+name: Release
+
+# Pushing a tag such as v0.8.0 builds the Windows installer the same way the Windows workflow does and
+# attaches only the installer and its .sha256 to a draft release for that tag. A draft is visible to the
+# maintainers only; it reaches users when a maintainer edits the notes and presses "Publish release".
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to build, such as v0.8.0; it must already exist'
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Test
+        run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
+      - name: Build
+        shell: cmd
+        run: windows\build.cmd
+      - name: Package the release ZIP
+        run: python windows/package_release.py .build/package .build/release/Tingzi-windows-x64.zip --cargo-metadata .build/cargo-metadata.json
+      - name: Make sure Inno Setup is available
+        run: |
+          if (!(Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build the installer
+        run: python windows/build_installer.py .build/release/Tingzi-windows-x64.zip .build/installer
+      - name: Check the installer on this machine
+        run: windows/test_installer.ps1 -Installer (Get-ChildItem .build/installer/Tingzi-Setup-*-x64.exe).FullName
+      - name: Attach the installer to a draft release
+        run: |
+          $installer = Get-ChildItem .build/installer/Tingzi-Setup-*-x64.exe
+          $version = $installer.Name -replace '^Tingzi-Setup-(.+)-x64\.exe$', '$1'
+          if ("v$version" -ne $env:TAG) { throw "The tag $env:TAG does not match the version in the build ($version). Update the version numbers first." }
+          $files = @($installer.FullName, "$($installer.FullName).sha256")
+          gh release view $env:TAG *> $null
+          if ($LASTEXITCODE -eq 0) {
+            gh release upload $env:TAG @files --clobber
+          } else {
+            gh release create $env:TAG @files --draft --verify-tag --title "聽字 $version" --notes "下載 Tingzi-Setup-$version-x64.exe，雙擊安裝。已安裝舊版的話會直接升級，設定、自訂詞與學習資料都保留。"
+          }
+          if ($LASTEXITCODE -ne 0) { throw 'Could not attach the installer to the release.' }
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tingzi-release
+          path: .build/installer/*
+          if-no-files-found: error

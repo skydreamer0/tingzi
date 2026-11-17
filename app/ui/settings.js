@@ -98,10 +98,9 @@ function fill() {
   byId('learn-fixes').checked = prefs.LearnFixes;
   byId('use-phrases').disabled = !panel.has_word_list;
   byId('delivery').value = String(prefs.DeliveryMode ?? (prefs.AutoInsert ? 0 : 2));
-  byId('modifiers').value = String(prefs.Modifiers);
-  const key = byId('record-key');
-  key.replaceChildren(option('0', '停用'), ...Array.from({ length: 26 }, (_, i) => option(String(65 + i), String.fromCharCode(65 + i))));
-  key.value = String(prefs.RecordKey);
+  const hotkey = prefs.Hotkey ?? { Modifiers: prefs.Modifiers, Key: prefs.RecordKey };
+  byId('hotkey').value = hotkey.Modifiers + ',' + hotkey.Key;
+  showHotkey();
   byId('text-size').value = String(prefs.TextSize);
   for (const item of byId('text-size').options) item.textContent = item.value + ' px';
 
@@ -140,8 +139,7 @@ function collect(engineFromPage) {
       Gpu: byId('gpu').disabled ? panel.prefs.Gpu : byId('gpu').checked,
       ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
       ApiModel: engineFromPage ? byId('api-model').value.trim() : panel.prefs.ApiModel,
-      Modifiers: number('modifiers'),
-      RecordKey: number('record-key'),
+      Hotkey: readHotkey(),
       TextSize: number('text-size'),
       MicrophoneName: name,
       AutoInsert: number('delivery') === 0,
@@ -419,6 +417,91 @@ document.querySelector('.pages').addEventListener('change', event => {
 });
 byId('close').addEventListener('click', () => invoke('close_settings'));
 
+// Recording shortcut. Keys are stored as Windows virtual-key numbers and modifier bits, as the app reads them.
+const HOTKEY_BITS = { ctrlKey: 2, altKey: 1, shiftKey: 4, metaKey: 8 };
+const hotkeyField = byId('hotkey');
+let listening = false;
+function readHotkey() {
+  const [modifiers, key] = hotkeyField.value.split(',').map(Number);
+  return { Modifiers: modifiers || 0, Key: key || 0 };
+}
+function keyName(key) {
+  if (key >= 65 && key <= 90) return String.fromCharCode(key);
+  if (key >= 48 && key <= 57) return String(key - 48);
+  if (key >= 112 && key <= 135) return 'F' + (key - 111);
+  return '';
+}
+// Control, Alt, Shift and the Windows key, in that order, as this system names them.
+function hotkeyLabel(modifiers, key) {
+  const names = panel.modifier_keys;
+  const held = [2, 1, 4, 8].map((bit, i) => modifiers & bit ? names[i] : '').filter(Boolean);
+  return [...held, keyName(key)].filter(Boolean).join('+');
+}
+function showHotkey() {
+  const { Modifiers, Key } = readHotkey();
+  const label = byId('hotkey-label');
+  label.classList.remove('listening');
+  label.textContent = Key ? hotkeyLabel(Modifiers, Key) : '停用';
+  byId('hotkey-change').textContent = '變更';
+  byId('hotkey-off').disabled = !Key;
+}
+function keyFromCode(code) {
+  let match = /^Key([A-Z])$/.exec(code);
+  if (match) return match[1].charCodeAt(0);
+  match = /^Digit([0-9])$/.exec(code);
+  if (match) return 48 + Number(match[1]);
+  match = /^F([0-9]{1,2})$/.exec(code);
+  if (match && Number(match[1]) >= 1 && Number(match[1]) <= 24) return 111 + Number(match[1]);
+  return 0;
+}
+async function stopListening() {
+  if (!listening) return;
+  listening = false;
+  window.removeEventListener('keydown', onHotkeyKey, true);
+  window.removeEventListener('blur', cancelListening);
+  await storing;
+  await invoke('capture_shortcut', { on: false });
+  showHotkey();
+}
+function cancelListening() {
+  say('');
+  stopListening();
+}
+function saveHotkey(modifiers, key) {
+  hotkeyField.value = modifiers + ',' + key;
+  store(hotkeyField);
+}
+function onHotkeyKey(event) {
+  event.preventDefault();
+  event.stopImmediatePropagation();
+  const modifiers = Object.entries(HOTKEY_BITS).reduce((sum, [flag, bit]) => event[flag] ? sum + bit : sum, 0);
+  if (event.key === 'Escape' && !modifiers) return cancelListening();
+  if (/^(Control|Alt|Shift|Meta|OS)/.test(event.code)) {
+    byId('hotkey-label').textContent = hotkeyLabel(modifiers, 0) + '+…';
+    return;
+  }
+  const key = keyFromCode(event.code);
+  if (!key) return say('請用字母、數字或 F1 到 F24，可以搭配輔助鍵。Esc 取消。');
+  saveHotkey(modifiers, key);
+  stopListening();
+}
+byId('hotkey-change').addEventListener('click', async () => {
+  if (listening) return cancelListening();
+  listening = true;
+  await invoke('capture_shortcut', { on: true });
+  const label = byId('hotkey-label');
+  label.classList.add('listening');
+  label.textContent = '請按下組合…';
+  byId('hotkey-change').textContent = '取消';
+  say(`按下想用的組合，例如 ${hotkeyLabel(3, 82)} 或單獨的 F9；Esc 取消。`, true);
+  window.addEventListener('keydown', onHotkeyKey, true);
+  window.addEventListener('blur', cancelListening);
+});
+byId('hotkey-off').addEventListener('click', () => {
+  saveHotkey(readHotkey().Modifiers, 0);
+  storing.then(showHotkey);
+});
+
 // Microphone test
 const micTest = byId('mic-test');
 let testing = false;
@@ -448,7 +531,10 @@ byId('microphone').addEventListener('change', stopTest);
 // Square root keeps quiet speech visible on the meter.
 listen('mic-level', event => { if (testing) byId('mic-level').style.width = Math.round(Math.sqrt(event.payload) * 100) + '%'; });
 listen('mic-test-ended', () => showTest(false));
-listen('look', event => applyLook(event.payload));
+listen('look', event => {
+  if (panel) panel.look = event.payload;
+  applyLook(event.payload);
+});
 
 // Local learning
 const learning = byId('learning');

@@ -95,6 +95,8 @@ pub struct Panel {
     has_word_list: bool,
     /// "windows" or "macos", so the page can word itself for this system.
     platform: &'static str,
+    /// Control, Alt, Shift and the Windows key as this system names them, for the shortcut the page is recording.
+    modifier_keys: [&'static str; 4],
     look: Look,
 }
 
@@ -114,8 +116,20 @@ pub fn load_settings(app: AppHandle) -> Panel {
         has_learning: paths::tool("TingziLearning.exe").is_some(),
         has_word_list: paths::word_list().is_some(),
         platform: crate::sys::PLATFORM,
+        modifier_keys: crate::sys::MODIFIER_KEYS,
         look: look(&prefs, keys.label()),
         prefs,
+    }
+}
+
+/// While the page waits for the user to press new keys, the current shortcut is let go so it reaches the page; `on` false takes it back.
+#[tauri::command]
+pub fn capture_shortcut(app: AppHandle, on: bool) {
+    let keys = app.state::<crate::Keys>();
+    if on {
+        keys.suspend(&app);
+    } else {
+        keys.rebind(&app, &Settings::load());
     }
 }
 
@@ -145,9 +159,13 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     let prefs = Settings { microphone_id: before.microphone_id.clone().filter(|_| before.microphone_name == prefs.microphone_name), ..prefs };
     let keys = app.state::<crate::Keys>();
     // The page saves after every change; a shortcut another program already held must not block the other choices.
-    let same_keys = (before.modifiers, before.record_key) == (prefs.modifiers, prefs.record_key);
+    let same_keys = before.hotkey() == prefs.hotkey();
     if !keys.rebind(&app, &prefs) && !same_keys {
-        return Err("此快捷鍵已被占用，請選其他組合。".into());
+        let taken = prefs.hotkey();
+        return Err(match crate::free_keys(&app, taken) {
+            Some(free) => format!("{} 已被其他程式或系統占用，請換一組，例如 {}。", taken.label(), free.label()),
+            None => format!("{} 已被其他程式或系統占用，請換一組。", taken.label()),
+        });
     }
     if prefs.store().is_err() {
         keys.rebind(&app, &before);
@@ -248,6 +266,11 @@ pub fn welcome_first_run(app: &AppHandle) {
     // Marked before showing, so closing the window, or a crash, does not bring the steps back at every start.
     if std::fs::create_dir_all(paths::data()).and_then(|_| std::fs::write(welcomed_file(), b"")).is_err() {
         return;
+    }
+    // The installer registers the input method for the whole computer, but Windows lists it only for
+    // users who have it among their keyboards, so it is added for each new user here, once.
+    if let Some(tool) = paths::tool("TingziKeyboard.exe") {
+        let _ = crate::sys::quiet(Command::new(tool).arg("enable")).spawn();
     }
     WELCOME.store(true, Ordering::SeqCst);
     open(app);
@@ -491,7 +514,8 @@ pub fn open_target(which: String) -> bool {
         paths::tool(name).is_some_and(|tool| crate::sys::quiet(Command::new(tool).args(argument)).spawn().is_ok())
     };
     match which.as_str() {
-        "keyboard" => tool("TingziKeyboard.exe", Some("switch")),
+        // Without an argument the tool adds Tingzi to this user's keyboards when it is missing, then switches to it.
+        "keyboard" => tool("TingziKeyboard.exe", None),
         "language" => dialogs::open(crate::sys::LANGUAGE_SETTINGS),
         "home" => dialogs::open("https://github.com/skydreamer0/tingzi"),
         "issues" => dialogs::open("https://github.com/skydreamer0/tingzi/issues"),

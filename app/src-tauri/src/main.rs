@@ -9,6 +9,7 @@ mod deliver;
 mod dialogs;
 mod fetch;
 mod history;
+mod hotkey;
 mod instance;
 mod layout;
 mod learn;
@@ -373,7 +374,8 @@ fn discard(app: &AppHandle) {
     idle(app, "");
 }
 
-fn busy(app: &AppHandle) -> bool {
+/// Whether a recording is running or a dictation is being recognised, so nothing should interrupt the user.
+pub fn busy(app: &AppHandle) -> bool {
     let session = app.state::<Session>();
     let recording = session.recorder.lock().unwrap().is_some();
     recording || session.working.load(Ordering::SeqCst)
@@ -490,8 +492,8 @@ fn serve(app: &AppHandle, request: Request) {
 }
 
 /// Starts one of the tools installed beside the word list.
-fn run_tool(app: &AppHandle, name: &str, argument: &str) {
-    let started = paths::tool(name).is_some_and(|tool| sys::quiet(std::process::Command::new(tool).arg(argument)).spawn().is_ok());
+fn run_tool(app: &AppHandle, name: &str, argument: Option<&str>) {
+    let started = paths::tool(name).is_some_and(|tool| sys::quiet(std::process::Command::new(tool).args(argument)).spawn().is_ok());
     if !started {
         let _ = app.emit("notice", "找不到這個工具，請確認完整套件已安裝");
     }
@@ -608,6 +610,16 @@ impl Keys {
         self.bound.load(Ordering::SeqCst)
     }
 
+    /// Lets go of the shortcut while the settings page listens for new keys, so pressing the current ones does not start a recording.
+    /// `rebind` takes it back.
+    pub fn suspend(&self, app: &AppHandle) {
+        let current = self.current.lock().unwrap();
+        if let Some(keys) = current.filter(|_| self.bound()) {
+            let _ = app.global_shortcut().unregister(keys);
+            self.bound.store(false, Ordering::SeqCst);
+        }
+    }
+
     /// Switches to the shortcut in `prefs`. Returns false, keeping the old one, when the system refuses the new one.
     pub fn rebind(&self, app: &AppHandle, prefs: &Settings) -> bool {
         let wanted = shortcut(prefs);
@@ -630,21 +642,29 @@ impl Keys {
 
 /// The recording shortcut from the saved preferences; None when the user turned it off.
 fn shortcut(prefs: &Settings) -> Option<(Shortcut, String)> {
-    const LETTERS: [Code; 26] = [
-        Code::KeyA, Code::KeyB, Code::KeyC, Code::KeyD, Code::KeyE, Code::KeyF, Code::KeyG, Code::KeyH, Code::KeyI,
-        Code::KeyJ, Code::KeyK, Code::KeyL, Code::KeyM, Code::KeyN, Code::KeyO, Code::KeyP, Code::KeyQ, Code::KeyR,
-        Code::KeyS, Code::KeyT, Code::KeyU, Code::KeyV, Code::KeyW, Code::KeyX, Code::KeyY, Code::KeyZ,
-    ];
+    let mut keys = prefs.hotkey();
     // A development override keeps this app from fighting the installed voice window for the same keys.
-    let key = std::env::var("TINGZI_RECORD_KEY").ok().and_then(|value| value.bytes().next()).map(|b| u32::from(b.to_ascii_uppercase())).unwrap_or(prefs.record_key);
-    let chosen = Settings { record_key: key, ..prefs.clone() };
-    let index = key.checked_sub(u32::from(b'A')).filter(|i| *i < 26)? as usize;
-    let modifiers = match chosen.modifiers {
-        5 => Modifiers::ALT | Modifiers::SHIFT,
-        6 => Modifiers::CONTROL | Modifiers::SHIFT,
-        _ => Modifiers::CONTROL | Modifiers::ALT,
-    };
-    Some((Shortcut::new(Some(modifiers), LETTERS[index]), chosen.gesture()))
+    if let Some(letter) = std::env::var("TINGZI_RECORD_KEY").ok().and_then(|value| value.bytes().next()).filter(u8::is_ascii_alphabetic) {
+        let held = keys.modifiers & (hotkey::CONTROL | hotkey::ALT | hotkey::SUPER) != 0;
+        keys = hotkey::Hotkey { modifiers: if held { keys.modifiers } else { hotkey::DEFAULT.modifiers }, key: u32::from(letter.to_ascii_uppercase()) };
+    }
+    Some((keys.shortcut()?, keys.label()))
+}
+
+/// Keys the system would accept now, to offer when the chosen ones are taken.
+pub fn free_keys(app: &AppHandle, taken: hotkey::Hotkey) -> Option<hotkey::Hotkey> {
+    hotkey::suggestion(taken, |keys| {
+        let Some(shortcut) = keys.shortcut() else { return false };
+        // Keys this app holds already are the current shortcut; offering them would change nothing.
+        if app.global_shortcut().is_registered(shortcut) {
+            return false;
+        }
+        let free = app.global_shortcut().register(shortcut).is_ok();
+        if free {
+            let _ = app.global_shortcut().unregister(shortcut);
+        }
+        free
+    })
 }
 
 fn build_tray(app: &tauri::App) -> tauri::Result<()> {
@@ -703,9 +723,10 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 copy_preview_text(app);
             }
             "convert" => convert_clipboard(app),
-            "zhuyin" => run_tool(app, "TingziKeyboard.exe", "switch"),
-            "learn-on" => run_tool(app, "TingziLearning.exe", "on"),
-            "learn-off" => run_tool(app, "TingziLearning.exe", "off"),
+            // Without an argument the tool also adds Tingzi to this user's keyboards first, in case it is not there yet.
+            "zhuyin" => run_tool(app, "TingziKeyboard.exe", None),
+            "learn-on" => run_tool(app, "TingziLearning.exe", Some("on")),
+            "learn-off" => run_tool(app, "TingziLearning.exe", Some("off")),
             "dock" => layout::arrange(app, Layout::Docked),
             "quit" => app.exit(0),
             _ => {}
@@ -814,6 +835,7 @@ fn main() {
             panel::open_settings,
             panel::take_welcome,
             panel::close_settings,
+            panel::capture_shortcut,
             panel::load_settings,
             panel::save_settings,
             panel::set_api_key,
@@ -899,7 +921,10 @@ mod tests {
     fn shortcut_follows_saved_preferences() {
         std::env::remove_var("TINGZI_RECORD_KEY");
         let (_, name) = shortcut(&Settings { modifiers: 6, record_key: u32::from(b'T'), ..Settings::default() }).unwrap();
-        assert_eq!(name, format!("{}+T", sys::MODIFIER_NAMES[2]));
+        let [control, _, shift, _] = sys::MODIFIER_KEYS;
+        assert_eq!(name, format!("{control}+{shift}+T"));
+        let (_, name) = shortcut(&Settings { hotkey: Some(hotkey::Hotkey { modifiers: 0, key: 0x78 }), ..Settings::default() }).unwrap();
+        assert_eq!(name, "F9");
         assert!(shortcut(&Settings { record_key: 0, ..Settings::default() }).is_none());
     }
 

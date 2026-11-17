@@ -56,6 +56,8 @@ CloseApplications=no
 RestartIfNeededByRun=no
 ; 解除安裝時可選擇刪除目前使用者的個人資料。
 UsedUserAreasWarning=no
+; 一律寫安裝記錄到 %TEMP%（檔名「Setup Log <日期> #<編號>.txt」），在別人電腦上裝不起來時可以請對方傳回來。
+SetupLogging=yes
 
 [Languages]
 Name: "zh_TW"; MessagesFile: "ChineseTraditional.isl"
@@ -159,17 +161,33 @@ begin
   end;
 end;
 
+// 沒有 WebView2 Runtime 時直接從微軟下載安裝，不另外詢問：語音浮窗和設定視窗少了它開不起來。
+// 有畫面時顯示下載進度；無人值守安裝（/VERYSILENT）在 PrepareToInstall 裡安靜地下載。
+// 下載失敗不擋安裝，注音照常可用。
 function NextButtonClick(CurPageID: Integer): Boolean;
 begin
   Result := True;
-  if (CurPageID = wpReady) and (not WebView2Installed) and (not WizardSilent) then
+  if (CurPageID = wpReady) and (not WizardSilent) and (not WebView2Installed) then
   begin
-    if MsgBox('這台電腦沒有 Microsoft Edge WebView2 Runtime，語音浮窗和設定視窗需要它才能開啟（注音輸入不需要）。' + #13#10#13#10 +
-              '要現在從微軟下載並安裝嗎？大約需要 2 MB 的下載，之後會再自動取得其餘部分。', mbConfirmation, MB_YESNO) = IDYES then
-    begin
-      if not InstallWebView2 then
-        MsgBox('WebView2 Runtime 沒有裝好。聽字會繼續安裝，注音可以照常使用；之後可以到 https://developer.microsoft.com/microsoft-edge/webview2/ 下載「Evergreen Bootstrapper」再裝一次。', mbInformation, MB_OK);
-    end;
+    if not InstallWebView2 then
+      MsgBox('WebView2 Runtime 沒有裝好，可能是網路無法連到微軟。聽字會繼續安裝，注音可以照常使用；語音浮窗需要它，之後可以到 https://developer.microsoft.com/microsoft-edge/webview2/ 下載「Evergreen Bootstrapper」再裝一次。', mbInformation, MB_OK);
+  end;
+end;
+
+procedure InstallWebView2Quietly;
+var
+  Code: Integer;
+begin
+  if WebView2Installed then
+    exit;
+  try
+    DownloadTemporaryFile('https://go.microsoft.com/fwlink/p/?LinkId=2124703', 'MicrosoftEdgeWebview2Setup.exe', '', nil);
+    if Exec(ExpandConstant('{tmp}\MicrosoftEdgeWebview2Setup.exe'), '/silent /install', '', SW_HIDE, ewWaitUntilTerminated, Code) then
+      Log('WebView2 Runtime setup exit code ' + IntToStr(Code))
+    else
+      Log('WebView2 Runtime setup could not start.');
+  except
+    Log('WebView2 Runtime download failed: ' + GetExceptionMessage);
   end;
 end;
 
@@ -224,6 +242,8 @@ var
   Payload, Archive, Output: String;
 begin
   Result := '';
+  if WizardSilent then
+    InstallWebView2Quietly;
   ExtractTemporaryFile('payload.zip');
   Archive := ExpandConstant('{tmp}\payload.zip');
   Payload := ExpandConstant('{tmp}\payload');
@@ -270,6 +290,29 @@ begin
   if FileExists(Active + '\Tingzi.cin') then FileCopy(Active + '\Tingzi.cin', Kept + '\Tingzi.cin', False);
   if FileExists(Active + '\phrases.txt') then FileCopy(Active + '\phrases.txt', Kept + '\phrases.txt', False);
   if FileExists(Active + '\TingziFloat\voice-root.txt') then FileCopy(Active + '\TingziFloat\voice-root.txt', Kept + '\voice-root.txt', False);
+end;
+
+// 輸入法登記在整台電腦，但 Windows 只在「把它加進鍵盤清單」的使用者那裡列出。安裝程式以系統管理員身分執行，
+// 所以用原本開啟安裝程式的使用者身分把聽字加進他的鍵盤清單；缺少中文（台灣）時 Windows 會一併加入。
+// 電腦上的其他使用者第一次開啟語音浮窗時，聽字會替他們做同一件事。
+procedure AddToUserKeyboards;
+var
+  Code: Integer;
+begin
+  if ExecAsOriginalUser(ExpandConstant('{app}\v{#AppVersion}\TingziKeyboard.exe'), 'enable', '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+    Log('Added Tingzi to the keyboards of the user who ran setup.')
+  else
+  begin
+    Log('Could not add Tingzi to the user''s keyboards (code ' + IntToStr(Code) + ').');
+    if not WizardSilent then
+      MsgBox('聽字已經裝好，但沒能自動加進你的鍵盤清單。請到「設定 → 時間與語言 → 語言與地區」，在「中文（台灣）」的「語言選項」裡按「新增鍵盤」，選「聽字・注音與語音輸入法」。', mbInformation, MB_OK);
+  end;
+end;
+
+procedure CurStepChanged(CurStep: TSetupStep);
+begin
+  if CurStep = ssPostInstall then
+    AddToUserKeyboards;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

@@ -36,7 +36,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 
 | 項目 | macOS |
 | --- | --- |
-| 錄音快捷鍵 | Control＋Option＋R；可在設定改成 Control＋Shift 或 Option＋Shift 加字母 |
+| 錄音快捷鍵 | 預設 Control＋Option＋R；在設定按「變更」後按下想用的組合，字母或數字要搭配 Control、Option 或 Command，F1 到 F24 可以單獨使用 |
 | 再貼一次上一則 | Option＋Shift＋Z |
 | 貼入方式 | 一律經剪貼簿送出 Command＋V |
 | 換了地方就不貼 | 以「程式」判斷：錄音途中切到別的程式就不貼入。同一個程式裡換視窗或換欄位無法分辨，文字會貼到目前游標所在的地方 |
