@@ -226,6 +226,11 @@ pub fn processes_on_screen() -> Vec<u32> {
     })
 }
 
+/// None: on macOS the Codex recogniser reads the installed version itself.
+pub fn codex_version() -> Option<String> {
+    None
+}
+
 /// Whether the keyboard is in the Codex desktop app. Telling its message box from its other
 /// fields needs the accessibility permission, so any field in Codex counts here.
 pub fn in_codex_message_box(process: u32) -> bool {
@@ -463,17 +468,22 @@ pub fn install() -> Option<PathBuf> {
     [bundled, Some(data())].into_iter().flatten().find(|folder| folder.join("phrases.txt").is_file())
 }
 
-/// The folder the local recogniser lives in when no `voice-root.txt` names one.
-/// Model files go in its `downloads` folder.
-pub fn voice_root() -> Option<PathBuf> {
-    Some(data().join("whisper"))
-}
-
 /// The Whisper program: one placed in the local recogniser's folder, or the one Homebrew installs.
-pub fn whisper_program(root: &Path) -> Option<PathBuf> {
+/// The same program works with and without the graphics card.
+pub fn whisper_program(root: &Path, _gpu: bool) -> Option<PathBuf> {
     [root.join("whisper-cli"), PathBuf::from("/opt/homebrew/bin/whisper-cli"), PathBuf::from("/usr/local/bin/whisper-cli")]
         .into_iter()
         .find(|program| program.is_file())
+}
+
+/// Nothing to look for: no separate build is downloaded on macOS.
+pub fn gpu_driver() -> bool {
+    false
+}
+
+/// The archive tool that ships with macOS.
+pub fn tar() -> PathBuf {
+    PathBuf::from("/usr/bin/tar")
 }
 
 /// Programs started from here never open a window of their own on macOS.

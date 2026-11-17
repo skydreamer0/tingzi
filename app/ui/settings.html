@@ -87,6 +87,12 @@
           <div class="row sub" id="local-model-row">
             <div class="what"><label for="local-model">本機模型</label><p>較大的模型比較準，但只用 CPU 時每句要等比較久。</p></div>
             <select id="local-model" class="wide"></select></div>
+          <div class="row sub" id="gpu-row">
+            <div class="what"><label for="gpu">顯示卡加速</label><p id="gpu-note"></p></div>
+            <div class="group"><button id="gpu-get" type="button" class="button"></button><input id="gpu" type="checkbox" role="switch" class="switch"></div></div>
+          <div class="row sub" id="fetch-row" hidden>
+            <div class="what"><span class="name" id="fetch-title"></span><p id="fetch-note" role="status" aria-live="polite"></p></div>
+            <div class="group"><div class="meter" aria-hidden="true"><span id="fetch-level"></span></div><button id="fetch-cancel" type="button" class="button">取消</button></div></div>
           <div class="row sub" id="api-url-row">
             <div class="what"><label for="api-url">服務網址</label><p>OpenAI 格式的轉寫服務，例如 OpenAI、Groq，或自己電腦上的 Whisper 服務（http://localhost）。</p></div>
             <input id="api-url" type="text" class="wide" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></div>

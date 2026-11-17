@@ -5,6 +5,8 @@ const byId = id => document.getElementById(id);
 const status = byId('status');
 
 let panel = null;
+// The local recogniser's models and programs: what is here and what can be downloaded.
+let local = null;
 // The saved microphone when it is not plugged in right now; kept so saving does not lose the choice.
 let missingMicrophone = null;
 
@@ -74,10 +76,7 @@ function fill() {
   }
   microphone.value = prefs.MicrophoneName || '';
   byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
-  const models = panel.local_models;
-  byId('local-model').replaceChildren(...(models.length ? models : ['ggml-base.bin']).map(name => option(name, name)));
-  byId('local-model').value = prefs.LocalModel && models.includes(prefs.LocalModel) ? prefs.LocalModel : (models.includes('ggml-base.bin') ? 'ggml-base.bin' : models[0] || 'ggml-base.bin');
-  byId('local-model').disabled = models.length === 0;
+  showLocal();
   byId('api-url').value = prefs.ApiUrl;
   byId('api-model').value = prefs.ApiModel;
   showKey();
@@ -129,6 +128,7 @@ function collect(engineFromPage) {
       Engine: engine,
       Online: engine === 'codex',
       LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
+      Gpu: byId('gpu').disabled ? panel.prefs.Gpu : byId('gpu').checked,
       ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
       ApiModel: engineFromPage ? byId('api-model').value.trim() : panel.prefs.ApiModel,
       Modifiers: number('modifiers'),
@@ -153,7 +153,7 @@ function collect(engineFromPage) {
 
 // Recognition engine
 const engineNotes = {
-  local: () => panel.local_ready ? '在這台電腦辨識，錄音不會離開電腦。' : '本機 Whisper 或模型尚未就緒，請先完成本機語音模型安裝。',
+  local: () => local.ready ? '在這台電腦辨識，錄音不會離開電腦。' : '這台電腦還沒有模型，請在下面下載一個；下載後錄音不會離開電腦。',
   api: () => '錄音會傳到你填的服務，費用依該服務計算；網址是 localhost 時錄音留在這台電腦。',
   codex: () => '錄音會經第三方的 codex-asr 傳到 ChatGPT，需要這台電腦上有效的 Codex 登入。',
 };
@@ -161,6 +161,8 @@ function showEngine() {
   const engine = byId('engine').value;
   byId('engine-note').textContent = engineNotes[engine]();
   byId('local-model-row').hidden = engine !== 'local';
+  byId('gpu-row').hidden = engine !== 'local' || !(local.gpu_ready || local.gpu_offer);
+  for (const row of document.querySelectorAll('.model-row')) row.hidden = engine !== 'local';
   for (const id of ['api-url-row', 'api-model-row', 'api-key-row']) byId(id).hidden = engine !== 'api';
 }
 function showKey() {
@@ -172,6 +174,100 @@ function showKey() {
   byId('api-key-clear').disabled = !panel.api_key_set;
 }
 byId('engine').addEventListener('change', showEngine);
+
+// Local models and the graphics card build. Downloads report on the `local-fetch` event.
+function showLocal() {
+  const titles = new Map(local.models.map(model => [model.file, model.title]));
+  const select = byId('local-model');
+  const files = local.files;
+  select.replaceChildren(...(files.length ? files : ['']).map(name => option(name, name ? titles.get(name) || name : '尚未下載')));
+  const saved = panel.prefs.LocalModel;
+  select.value = saved && files.includes(saved) ? saved : (files.includes('ggml-base.bin') ? 'ggml-base.bin' : files[0] || '');
+  select.disabled = files.length === 0;
+
+  const gpu = byId('gpu');
+  gpu.disabled = !local.gpu_ready;
+  gpu.checked = local.gpu_ready && panel.prefs.Gpu;
+  byId('gpu-get').hidden = !local.gpu_offer;
+  byId('gpu-get').textContent = `下載（${local.gpu_offer}）`;
+  byId('gpu-get').disabled = Boolean(local.busy);
+  byId('gpu-note').textContent = local.gpu_ready
+    ? '用顯示卡辨識，大的模型也不用久等。顯示卡出問題時，那一句會自動改用 CPU。'
+    : '這台電腦有 NVIDIA 顯示卡。下載加速元件後，大的模型也不用久等。';
+
+  for (const row of document.querySelectorAll('.model-row')) row.remove();
+  for (const model of local.models) {
+    const row = document.createElement('div');
+    row.className = 'row sub model-row';
+    const what = document.createElement('div');
+    what.className = 'what';
+    const name = document.createElement('span');
+    name.className = 'name';
+    name.textContent = `${model.title}・${model.size}`;
+    const note = document.createElement('p');
+    note.textContent = model.note;
+    what.append(name, note);
+    const get = document.createElement('button');
+    get.type = 'button';
+    get.className = 'button';
+    get.textContent = model.installed ? '已下載' : '下載';
+    get.disabled = model.installed || Boolean(local.busy);
+    get.setAttribute('aria-label', `${get.textContent} ${model.title}`);
+    get.addEventListener('click', () => fetchItem(model.id));
+    row.append(what, get);
+    byId('api-url-row').before(row);
+  }
+  byId('fetch-row').hidden = !local.busy;
+}
+async function readLocal() {
+  local = await invoke('local_state');
+  showLocal();
+  showEngine();
+}
+async function fetchItem(id) {
+  try {
+    if (!await invoke('local_fetch', { id })) return;
+    byId('fetch-title').textContent = '準備下載';
+    byId('fetch-note').textContent = '';
+    byId('fetch-level').style.width = '0';
+    byId('fetch-cancel').disabled = false;
+    say('');
+    await readLocal();
+  } catch (reason) {
+    say(String(reason));
+  }
+}
+byId('gpu-get').addEventListener('click', () => fetchItem('gpu'));
+byId('fetch-cancel').addEventListener('click', () => {
+  byId('fetch-cancel').disabled = true;
+  byId('fetch-note').textContent = '正在取消…';
+  invoke('local_fetch_cancel');
+});
+const megabytes = bytes => Math.round(bytes / 1e6);
+const fetchSteps = { verify: '核對檔案…', unpack: '解開檔案…', trial: '試跑中…' };
+listen('local-fetch', async ({ payload }) => {
+  const { id, stage, title, done, total, note } = payload;
+  if (stage === 'download' || fetchSteps[stage]) {
+    byId('fetch-row').hidden = false;
+    byId('fetch-title').textContent = title;
+    byId('fetch-level').style.width = (total ? Math.round(done / total * 100) : 0) + '%';
+    if (!byId('fetch-cancel').disabled) byId('fetch-note').textContent = fetchSteps[stage] || `下載中 ${megabytes(done)} / ${megabytes(total)} MB`;
+    return;
+  }
+  await readLocal();
+  if (stage === 'failed') return say(note);
+  if (stage === 'cancelled') return say('已取消。已下載的部分會保留，再按一次「下載」會接續。');
+  // What was just downloaded is put to use at once.
+  const model = local.models.find(model => model.id === id);
+  if (model) {
+    byId('local-model').value = model.file;
+    store(byId('local-model'));
+  } else {
+    byId('gpu').checked = true;
+    store(byId('gpu'));
+  }
+  storing = storing.then(readLocal).then(() => say(`「${title}」已下載並通過試跑，現在開始使用。`, true));
+});
 byId('api-key-clear').addEventListener('click', async () => {
   await invoke('clear_api_key');
   panel.api_key_set = false;
@@ -610,6 +706,7 @@ document.addEventListener('keydown', event => {
 
 invoke('load_settings').then(async loaded => {
   panel = loaded;
+  local = await invoke('local_state');
   applyLook(panel.look);
   wordForSystem();
   fill();

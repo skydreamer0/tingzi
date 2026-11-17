@@ -14,7 +14,7 @@ use windows::Win32::Globalization::{LCMapStringEx, LCMAP_SIMPLIFIED_CHINESE, LCM
 use windows::Win32::Security::Credentials::{
     CredDeleteW, CredFree, CredReadW, CredWriteW, CREDENTIALW, CRED_FLAGS, CRED_PERSIST_LOCAL_MACHINE, CRED_TYPE_GENERIC,
 };
-use windows::Win32::Storage::Packaging::Appx::GetPackageFamilyName;
+use windows::Win32::Storage::Packaging::Appx::{GetPackageFamilyName, GetPackagesByPackageFamily};
 use windows::Win32::System::Com::{CoCreateInstance, CoInitializeEx, CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED};
 use windows::Win32::System::DataExchange::GetClipboardSequenceNumber;
 use windows::Win32::System::Threading::{
@@ -219,6 +219,28 @@ pub fn processes_on_screen() -> Vec<u32> {
 }
 
 const CODEX_PACKAGE: &str = "OpenAI.Codex_2p2nqsd0c76g0";
+
+/// The version of the Codex desktop app installed for this user, as Codex writes it; the newest
+/// when there is more than one. None when it is not installed.
+pub fn codex_version() -> Option<String> {
+    let family = wide(CODEX_PACKAGE);
+    let (mut count, mut length) = (0u32, 0u32);
+    // SAFETY: the first call only asks for sizes; the second is given buffers of exactly those sizes,
+    // and the names it points to live in `text`, which outlives their use.
+    let names: Vec<String> = unsafe {
+        let _ = GetPackagesByPackageFamily(PCWSTR(family.as_ptr()), &mut count, None, &mut length, PWSTR::null());
+        if count == 0 || length == 0 {
+            return None;
+        }
+        let mut found = vec![PWSTR::null(); count as usize];
+        let mut text = vec![0u16; length as usize];
+        if GetPackagesByPackageFamily(PCWSTR(family.as_ptr()), &mut count, Some(found.as_mut_ptr()), &mut length, PWSTR(text.as_mut_ptr())) != ERROR_SUCCESS {
+            return None;
+        }
+        found.iter().take(count as usize).filter(|name| !name.is_null()).filter_map(|name| name.to_string().ok()).collect()
+    };
+    names.iter().filter_map(|name| crate::codex::package_version(name)).max().map(crate::codex::version_text)
+}
 
 /// Whether `process` is the Codex desktop app, by the package Windows installed it from.
 fn is_codex(process: u32) -> bool {
@@ -500,14 +522,25 @@ pub fn install() -> Option<PathBuf> {
     versions.pop().map(|(_, folder)| folder)
 }
 
-/// The folder the local recogniser lives in when no `voice-root.txt` names one. Windows has none.
-pub fn voice_root() -> Option<PathBuf> {
-    None
+/// The Whisper program inside one of the local recogniser's folders. With `gpu`, only the build that
+/// uses an NVIDIA card; without, the plain build the app downloaded or the one set up by hand.
+pub fn whisper_program(root: &Path, gpu: bool) -> Option<PathBuf> {
+    let folders: &[&str] = if gpu { &["engine-gpu"] } else { &["engine-cpu", "whisper-v1.9.2"] };
+    folders.iter().map(|folder| root.join(folder).join("Release").join("whisper-cli.exe")).find(|program| program.is_file())
 }
 
-/// The Whisper program inside the local recogniser's folder.
-pub fn whisper_program(root: &Path) -> Option<PathBuf> {
-    Some(root.join("whisper-v1.9.2").join("Release").join("whisper-cli.exe")).filter(|program| program.is_file())
+fn system_file(name: &str) -> PathBuf {
+    PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32").join(name)
+}
+
+/// Whether this computer has an NVIDIA driver, which the downloadable graphics card build needs.
+pub fn gpu_driver() -> bool {
+    system_file("nvcuda.dll").is_file()
+}
+
+/// The archive tool that ships with Windows; it reads zip files.
+pub fn tar() -> PathBuf {
+    system_file("tar.exe")
 }
 
 /// Keeps a console program from flashing a window of its own.
@@ -548,6 +581,14 @@ mod tests {
         unsafe {
             let _ = DestroyWindow(open);
             let _ = DestroyWindow(locked);
+        }
+    }
+
+    #[test]
+    fn the_installed_codex_version_reads_as_a_version() {
+        // Codex may or may not be installed where the tests run; when it is, the answer is numbers and dots.
+        if let Some(version) = codex_version() {
+            assert!(version.split('.').count() >= 3 && version.split('.').all(|part| part.parse::<u32>().is_ok()), "{version}");
         }
     }
 

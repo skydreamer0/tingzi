@@ -49,8 +49,8 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 ## 本機 Whisper
 
 1. 安裝 whisper.cpp 的命令列工具，例如 `brew install whisper-cpp`，會得到 `/opt/homebrew/bin/whisper-cli`。也可以把 `whisper-cli` 放進 `~/Library/Application Support/Tingzi/whisper/`。
-2. 把模型檔（檔名是 `ggml-<名稱>.bin`，例如 `ggml-base.bin`）放進 `~/Library/Application Support/Tingzi/whisper/downloads/`。
-3. 到設定的「語音」頁選「本機 Whisper」和要用的模型。
+2. 到設定的「語音」頁選「本機 Whisper」，在模型清單按「下載」。下載前會列出來源、大小與授權，下載後核對檔案並試跑一次。自己準備的模型檔（檔名是 `ggml-<名稱>.bin`）也可以放進 `~/Library/Application Support/Tingzi/whisper/downloads/`。
+3. 要用顯示卡辨識，開啟同一頁的「顯示卡加速」；`whisper-cli` 本身就支援，不必另外下載。
 
 ## 還沒做的事
 

@@ -7,6 +7,7 @@ mod audio;
 mod codex;
 mod deliver;
 mod dialogs;
+mod fetch;
 mod history;
 mod instance;
 mod layout;
@@ -230,6 +231,9 @@ fn toggle(app: &AppHandle) {
         Ok(recorder) => {
             *session.recorder.lock().unwrap() = Some(recorder);
             let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
+            // The connection to an online service is opened while the user speaks.
+            let ahead = prefs.clone();
+            std::thread::spawn(move || recognise::warm(ahead.engine(), &ahead));
             show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
             stop_at_limit(app.clone(), run);
         }
@@ -680,6 +684,7 @@ fn main() {
         .manage(Session::default())
         .manage(Keys::new())
         .manage(panel::MicTest::default())
+        .manage(fetch::Fetching::default())
         .manage(layout::start())
         .invoke_handler(tauri::generate_handler![
             toggle_recording,
@@ -716,7 +721,10 @@ fn main() {
             panel::running_programs,
             panel::learned_words,
             panel::forget_learned_word,
-            panel::open_target
+            panel::open_target,
+            fetch::local_state,
+            fetch::local_fetch,
+            fetch::local_fetch_cancel
         ])
         .on_window_event(|window, event| {
             // A minimised window is parked far off screen; that is not a place the user chose.

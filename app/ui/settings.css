@@ -115,7 +115,7 @@ select.wide, input.wide { flex: none; width: 250px; }
 .switch:checked::after { transform: translateX(20px); background: var(--on-accent); }
 
 .meter { width: 120px; height: 8px; border-radius: var(--radius-pill); background: var(--border); overflow: hidden; }
-#mic-level { display: block; height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+#mic-level, #fetch-level { display: block; height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
 
 footer {
   flex: none;

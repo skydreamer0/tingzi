@@ -49,6 +49,8 @@ pub struct Settings {
     pub api_model: String,
     /// The Whisper model file chosen on this computer; None uses the one installed first.
     pub local_model: Option<String>,
+    /// Whether local recognition uses the graphics card, when a program that can is in place.
+    pub gpu: bool,
     /// 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift; on macOS, Control and Option take the place of Ctrl and Alt.
     pub modifiers: u32,
     /// A Windows virtual key from A to Z, or 0 when the shortcut is off.
@@ -84,6 +86,7 @@ impl Default for Settings {
             api_url: DEFAULT_API_URL.into(),
             api_model: DEFAULT_API_MODEL.into(),
             local_model: None,
+            gpu: false,
             modifiers: 3,
             record_key: u32::from(b'R'),
             text_size: 20,

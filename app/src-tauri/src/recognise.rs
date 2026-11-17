@@ -8,10 +8,12 @@ use std::process::{Command, Stdio};
 use std::sync::Mutex;
 use std::time::{Duration, SystemTime};
 
+const NOT_READY: &str = "本機語音模型尚未就緒，請到設定的「語音」頁下載模型";
+
 /// Why `engine` cannot be used with these choices right now; None when it can be tried.
 pub fn problem(engine: Engine, prefs: &Settings) -> Option<String> {
     match engine {
-        Engine::Local => local_parts(prefs.local_model.as_deref()).is_none().then(|| "本機語音模型尚未就緒，請先完成本機語音模型安裝".into()),
+        Engine::Local => local_parts(prefs.local_model.as_deref(), prefs.gpu).is_none().then(|| NOT_READY.into()),
         Engine::Codex => None,
         Engine::Api => crate::api::problem(&prefs.api_url, &prefs.api_model, crate::secret::exists()),
     }
@@ -40,10 +42,19 @@ pub fn destination(engine: Engine, prefs: &Settings) -> Option<String> {
     }
 }
 
+/// Gets ready for a recording that has just started, off the UI thread. Only the user's own service
+/// is connected to ahead of time: the Codex client keeps its connection to itself and offers nothing
+/// to open it with short of sending audio.
+pub fn warm(engine: Engine, prefs: &Settings) {
+    if engine == Engine::Api && crate::api::problem(&prefs.api_url, &prefs.api_model, crate::secret::exists()).is_none() {
+        crate::api::warm(&prefs.api_url);
+    }
+}
+
 /// Recognises 16 kHz mono WAV bytes with `engine`. Blocks; call it off the UI thread.
 pub fn run(engine: Engine, prefs: &Settings, wav: Vec<u8>, cancelled: &dyn Fn() -> bool) -> Result<String, String> {
     match engine {
-        Engine::Local => local(prefs.local_model.as_deref(), &wav, cancelled),
+        Engine::Local => local(prefs.local_model.as_deref(), prefs.gpu, &wav, cancelled),
         Engine::Codex => online(wav),
         Engine::Api => {
             let hint = hint();
@@ -116,28 +127,36 @@ pub fn online(wav: Vec<u8>) -> Result<String, String> {
 const SERVICE_HOST: &str = "chatgpt.com";
 
 /// One client for the whole session keeps the connection to the service open between dictations.
-/// Codex rewrites its login file when the token refreshes, and the user may change the proxy,
-/// so the client is rebuilt when either changes.
+/// Codex rewrites its login file when the token refreshes, the user may change the proxy, and
+/// Codex updates itself, so the client is rebuilt when any of them changes.
+///
+/// The client names itself with the Codex version installed here rather than the one the
+/// recogniser was built with, which the service may one day turn away as too old.
 fn client() -> Result<CodexAsrClient, String> {
-    type Kept = (Option<SystemTime>, Option<String>, CodexAsrClient);
+    type Kept = (Option<SystemTime>, Option<String>, Option<String>, CodexAsrClient);
     static KEPT: Mutex<Option<Kept>> = Mutex::new(None);
     let file = auth_file();
     let changed = std::fs::metadata(&file).and_then(|meta| meta.modified()).ok();
     let proxy = proxy_for(SERVICE_HOST);
+    let named = crate::codex::user_agent();
     let mut kept = KEPT.lock().map_err(|_| "線上辨識無法使用".to_string())?;
-    if let Some((seen, routed, ready)) = kept.as_ref() {
-        if *seen == changed && *routed == proxy {
+    if let Some((seen, routed, known, ready)) = kept.as_ref() {
+        if *seen == changed && *routed == proxy && *known == named {
             return Ok(ready.clone());
         }
     }
     let auth = CodexAuth::from_auth_file(&file).map_err(explain)?;
-    let fresh = CodexAsrClient::builder(auth)
+    let mut builder = CodexAsrClient::builder(auth);
+    if let Some(name) = &named {
+        builder = builder.user_agent(name.clone());
+    }
+    let fresh = builder
         .proxy(proxy.clone())
         .timeout(Some(Duration::from_secs(90)))
         .connect_timeout(Some(Duration::from_secs(15)))
         .build()
         .map_err(explain)?;
-    *kept = Some((changed, proxy, fresh.clone()));
+    *kept = Some((changed, proxy, named, fresh.clone()));
     Ok(fresh)
 }
 
@@ -207,85 +226,159 @@ fn explain(error: CodexAsrError) -> String {
 /// The model the local recogniser was first set up with, used unless the user picks another.
 const FIRST_MODEL: &str = "ggml-base.bin";
 
-/// The folder named in `voice-root.txt`, written when the local recogniser was set up,
-/// or the system's usual place for it when there is no such file.
-fn local_root() -> Option<PathBuf> {
+/// The app's own folder for the local recogniser. Programs the app downloads go here, and models
+/// go in its `downloads` folder.
+pub fn own_root() -> PathBuf {
+    crate::paths::data().join("whisper")
+}
+
+/// The folders the local recogniser may be in: the app's own first, then the one named in
+/// `voice-root.txt`, written when the local recogniser was set up by hand.
+fn roots() -> Vec<PathBuf> {
     let beside = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.join("voice-root.txt")));
     let installed = crate::paths::install().map(|folder| folder.join("TingziFloat").join("voice-root.txt"));
     let named = [beside, installed].into_iter().flatten().find_map(|file| std::fs::read_to_string(file).ok());
-    match named {
-        Some(named) => Some(PathBuf::from(named.trim())).filter(|root| root.is_absolute()),
-        None => crate::sys::voice_root(),
-    }
+    let named = named.map(|named| PathBuf::from(named.trim())).filter(|root| root.is_absolute());
+    std::iter::once(own_root()).chain(named).collect()
 }
 
-/// The Whisper model files in the local recogniser's folder, by file name.
+/// The Whisper model files on this computer, by file name.
 pub fn local_models() -> Vec<String> {
-    let Some(root) = local_root() else { return Vec::new() };
-    let mut names: Vec<String> = std::fs::read_dir(root.join("downloads"))
-        .into_iter()
-        .flatten()
-        .flatten()
+    let mut names: Vec<String> = roots()
+        .iter()
+        .flat_map(|root| std::fs::read_dir(root.join("downloads")).into_iter().flatten().flatten())
         .filter_map(|entry| entry.file_name().into_string().ok())
         .filter(|name| is_model_name(name))
         .collect();
     names.sort();
+    names.dedup();
     names
 }
 
 /// `ggml-<name>.bin`, with nothing in the name that could reach outside the folder.
-fn is_model_name(name: &str) -> bool {
+pub fn is_model_name(name: &str) -> bool {
     let Some(middle) = name.strip_prefix("ggml-").and_then(|rest| rest.strip_suffix(".bin")) else { return false };
     !middle.is_empty() && !middle.contains("..") && middle.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
 }
 
+fn model_file(name: &str) -> Option<PathBuf> {
+    roots().into_iter().map(|root| root.join("downloads").join(name)).find(|model| model.is_file())
+}
+
+/// The Whisper program on this computer: the one that uses the graphics card when `gpu`, else the plain one.
+pub fn local_program(gpu: bool) -> Option<PathBuf> {
+    roots().iter().find_map(|root| crate::sys::whisper_program(root, gpu))
+}
+
+/// What one local recognition runs with.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Parts {
+    pub program: PathBuf,
+    pub model: PathBuf,
+    /// Whether the graphics card does the work.
+    pub gpu: bool,
+}
+
 /// The Whisper program and model on this computer, when both are in place.
-/// `chosen` names a model file; a missing or unset choice falls back to the first model set up.
-pub fn local_parts(chosen: Option<&str>) -> Option<(PathBuf, PathBuf)> {
-    let root = local_root()?;
-    let program = crate::sys::whisper_program(&root)?;
-    let models = root.join("downloads");
+/// `chosen` names a model file; a missing or unset choice falls back to the first model set up,
+/// then to any model there is. `gpu` is honoured only when a program that can use the card is in place.
+pub fn local_parts(chosen: Option<&str>, gpu: bool) -> Option<Parts> {
     let model = chosen
         .filter(|name| is_model_name(name))
-        .map(|name| models.join(name))
-        .filter(|model| model.is_file())
-        .unwrap_or_else(|| models.join(FIRST_MODEL));
-    model.is_file().then_some((program, model))
+        .and_then(model_file)
+        .or_else(|| model_file(FIRST_MODEL))
+        .or_else(|| local_models().first().and_then(|name| model_file(name)))?;
+    if let Some(program) = local_program(true).filter(|_| gpu) {
+        return Some(Parts { program, model, gpu: true });
+    }
+    Some(Parts { program: local_program(false)?, model, gpu: false })
 }
 
 /// Recognises 16 kHz mono WAV bytes on this computer; nothing is uploaded.
-/// Stops the program early when `cancelled` turns true.
+/// Stops the program early when `cancelled` turns true. When the graphics card fails, for example
+/// after a driver change, the same recording is recognised without it.
 ///
 /// The user's words are not passed as a prompt here: whisper-cli reads its arguments in the
 /// Windows code page, so Chinese in `--prompt` arrives garbled and has no effect.
-pub fn local(chosen: Option<&str>, wav: &[u8], cancelled: &dyn Fn() -> bool) -> Result<String, String> {
-    let (program, model) = local_parts(chosen).ok_or("本機語音模型尚未就緒，請先完成本機語音模型安裝")?;
+pub fn local(chosen: Option<&str>, gpu: bool, wav: &[u8], cancelled: &dyn Fn() -> bool) -> Result<String, String> {
+    let parts = local_parts(chosen, gpu).ok_or(NOT_READY)?;
+    let outcome = match whisper(&parts, wav, cancelled) {
+        Err(_) if parts.gpu && !cancelled() => match local_parts(chosen, false) {
+            Some(plain) => whisper(&plain, wav, cancelled),
+            None => Err("顯示卡加速無法使用，請在設定關閉顯示卡加速".into()),
+        },
+        outcome => outcome,
+    };
+    outcome.map(|(heard, _)| heard)
+}
+
+/// One second of silence, for trying a program and a model without a microphone.
+fn silence() -> Vec<u8> {
+    let bytes = 32_000u32;
+    let mut wav = Vec::with_capacity(44 + bytes as usize);
+    wav.extend_from_slice(b"RIFF");
+    wav.extend_from_slice(&(36 + bytes).to_le_bytes());
+    wav.extend_from_slice(b"WAVEfmt ");
+    wav.extend_from_slice(&16u32.to_le_bytes());
+    // PCM, one channel.
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&1u16.to_le_bytes());
+    wav.extend_from_slice(&16_000u32.to_le_bytes());
+    wav.extend_from_slice(&32_000u32.to_le_bytes());
+    // Two bytes a sample, sixteen bits.
+    wav.extend_from_slice(&2u16.to_le_bytes());
+    wav.extend_from_slice(&16u16.to_le_bytes());
+    wav.extend_from_slice(b"data");
+    wav.extend_from_slice(&bytes.to_le_bytes());
+    wav.resize(44 + bytes as usize, 0);
+    wav
+}
+
+/// Runs `parts` once on silence. Ok tells whether the graphics card really did the work:
+/// the program falls back to the processor by itself when it finds no card it can use.
+pub fn trial(parts: &Parts, cancelled: &dyn Fn() -> bool) -> Result<bool, String> {
+    whisper(parts, &silence(), cancelled).map(|(_, log)| parts.gpu && used_gpu(&log))
+}
+
+/// Whether the program's log says a graphics card was set up.
+fn used_gpu(log: &str) -> bool {
+    log.lines().any(|line| line.contains("whisper_backend_init_gpu: using"))
+}
+
+/// Runs the program in a folder of its own and returns the text with what the program logged.
+fn whisper(parts: &Parts, wav: &[u8], cancelled: &dyn Fn() -> bool) -> Result<(String, String), String> {
     let stamp = SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map(|since| since.as_nanos()).unwrap_or(0);
     let folder = std::env::temp_dir().join("TingziVoice").join(format!("local-{}-{stamp}", std::process::id()));
     std::fs::create_dir_all(&folder).map_err(|_| "無法建立暫存資料夾")?;
-    let outcome = run_whisper(&program, &model, &folder, wav, cancelled);
+    let outcome = run_whisper(parts, &folder, wav, cancelled);
     let _ = std::fs::remove_dir_all(&folder);
     outcome
 }
 
-fn run_whisper(program: &Path, model: &Path, folder: &Path, wav: &[u8], cancelled: &dyn Fn() -> bool) -> Result<String, String> {
+fn run_whisper(parts: &Parts, folder: &Path, wav: &[u8], cancelled: &dyn Fn() -> bool) -> Result<(String, String), String> {
     let input = folder.join("input.wav");
     let result = folder.join("result");
+    let log = folder.join("log.txt");
     std::fs::write(&input, wav).map_err(|_| "無法寫入暫存音檔")?;
+    let record = std::fs::File::create(&log).map_err(|_| "無法寫入暫存檔")?;
     // Half the logical processors, between four and eight, measured fastest for short clips.
     let threads = (std::thread::available_parallelism().map_or(4, |count| count.get()) / 2).clamp(4, 8);
-    let mut command = Command::new(program);
+    let mut command = Command::new(&parts.program);
+    command.args(["-l", "zh", "-otxt", "-np", "-nt", "-t", &threads.to_string()]);
+    if !parts.gpu {
+        command.arg("-ng");
+    }
     command
-        .args(["-l", "zh", "-otxt", "-np", "-nt", "-ng", "-t", &threads.to_string(), "-m"])
-        .arg(model)
+        .arg("-m")
+        .arg(&parts.model)
         .arg("-f")
         .arg(&input)
         .arg("-of")
         .arg(&result)
-        .current_dir(program.parent().unwrap_or(folder))
+        .current_dir(parts.program.parent().unwrap_or(folder))
         .stdin(Stdio::null())
         .stdout(Stdio::null())
-        .stderr(Stdio::null());
+        .stderr(record);
     let mut child = crate::sys::quiet(&mut command).spawn().map_err(|_| "無法啟動本機語音辨識")?;
     let finished = loop {
         match child.try_wait() {
@@ -300,7 +393,8 @@ fn run_whisper(program: &Path, model: &Path, folder: &Path, wav: &[u8], cancelle
         }
     };
     let text = std::fs::read_to_string(result.with_extension("txt")).ok().filter(|_| finished);
-    text.map(|heard| heard.trim().to_string()).ok_or_else(|| "本機語音辨識失敗，請檢查音檔或模型".to_string())
+    let logged = std::fs::read(&log).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
+    text.map(|heard| (heard.trim().to_string(), logged)).ok_or_else(|| "本機語音辨識失敗，請檢查音檔或模型".to_string())
 }
 
 #[cfg(test)]
@@ -370,6 +464,21 @@ mod tests {
         assert!(!is_model_name("ggml-../x.bin"));
         assert!(!is_model_name("ggml-a/x.bin"));
         assert!(!is_model_name("model.bin"));
+    }
+
+    #[test]
+    fn the_trial_recording_is_one_second_of_wav() {
+        let wav = silence();
+        assert_eq!((wav.len(), &wav[..4], &wav[8..12]), (44 + 32_000, &b"RIFF"[..], &b"WAVE"[..]));
+        assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 32_000);
+        assert!(crate::audio::normalise(&wav).is_ok());
+    }
+
+    #[test]
+    fn the_log_tells_whether_the_card_was_used() {
+        assert!(used_gpu("whisper_init: x\nwhisper_backend_init_gpu: using CUDA0 backend\n"));
+        assert!(!used_gpu("whisper_backend_init_gpu: no GPU found\n"));
+        assert!(!used_gpu(""));
     }
 
     #[test]

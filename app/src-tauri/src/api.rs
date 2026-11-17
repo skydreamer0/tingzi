@@ -95,6 +95,18 @@ pub fn transcribe(address: &str, model: &str, wav: Vec<u8>, hint: &str) -> Resul
     Ok(text.trim().to_string())
 }
 
+/// Opens the connection to the service ahead of time, so the handshake overlaps with the user
+/// speaking. Sends no recording and no key; a failure is left for the real request to report.
+pub fn warm(address: &str) {
+    let Ok(service) = Service::parse(address) else { return };
+    if service.on_this_computer {
+        return;
+    }
+    if let Ok(client) = client(&service) {
+        let _ = client.head(&service.base).timeout(Duration::from_secs(10)).send();
+    }
+}
+
 /// One client per service and proxy, so the connection stays open between dictations.
 fn client(service: &Service) -> Result<Client, String> {
     type Kept = (String, Option<String>, Client);

@@ -21,6 +21,8 @@ tauri-plugin-global-shortcut = "2"
 codex-asr = { version = "0.1.2", default-features = false }
 # The same build codex-asr already uses, so no new crates are compiled.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
+# Already built for the crates above; checks downloaded models.
+sha2 = "0.10"
 cpal = "0.15"
 arboard = "3"
 serde = { version = "1", features = ["derive"] }

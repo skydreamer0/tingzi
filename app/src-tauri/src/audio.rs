@@ -34,6 +34,9 @@ impl Recorder {
             let _ = stopped.recv();
             drop(stream);
             let captured = samples.lock().map_err(|_| "錄音資料損毀".to_string())?;
+            if too_short(&captured, rate) {
+                return Err(TOO_SHORT.into());
+            }
             Ok(wav(&resample(trim(&captured, rate), rate)))
         });
         match started.recv() {
@@ -122,19 +125,42 @@ fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Resul
     Ok((stream, samples, rate))
 }
 
-/// Drops the silence before and after speech, keeping a quarter second on each side.
-/// Less audio means a smaller upload and a faster answer; a recording with no clear speech is left whole.
-fn trim(samples: &[f32], rate: u32) -> &[f32] {
+/// Where the sound starts and ends, in samples, to the nearest 20 ms. None when nothing stands out.
+fn sound(samples: &[f32], rate: u32) -> Option<(usize, usize)> {
     let window = (rate as usize / 50).max(1); // 20 ms
     let loudest = samples.iter().fold(0f32, |peak, sample| peak.max(sample.abs()));
     // Speech stands well above the room; the floor keeps a silent recording from being cut to nothing.
     let threshold = (loudest * 0.08).max(0.004);
     let speaking = |chunk: &[f32]| chunk.iter().any(|sample| sample.abs() > threshold);
     let chunks = samples.chunks(window);
-    let (Some(first), Some(last)) = (chunks.clone().position(speaking), chunks.clone().rposition(speaking)) else { return samples };
+    let (first, last) = (chunks.clone().position(speaking)?, chunks.clone().rposition(speaking)?);
+    Some((first * window, ((last + 1) * window).min(samples.len())))
+}
+
+const TOO_SHORT: &str = "錄音太短，請再說一次";
+
+/// Sound shorter than this is a key press, a click or a cough, not a word. A single spoken
+/// syllable such as 「好」 runs longer, so it still goes through.
+const SHORTEST_SOUND_MS: usize = 200;
+
+/// Whether there is too little here to be worth recognising: a brush of the shortcut, or one brief
+/// noise in an otherwise quiet recording. Recognisers tend to make words up from such clips.
+/// A longer recording in which nothing stands out is not judged here; the recogniser answers with no text.
+fn too_short(samples: &[f32], rate: u32) -> bool {
+    let shortest = rate as usize * SHORTEST_SOUND_MS / 1000;
+    match sound(samples, rate) {
+        Some((start, end)) => end - start < shortest,
+        None => samples.len() < shortest,
+    }
+}
+
+/// Drops the silence before and after speech, keeping a quarter second on each side.
+/// Less audio means a smaller upload and a faster answer; a recording with no clear speech is left whole.
+fn trim(samples: &[f32], rate: u32) -> &[f32] {
+    let Some((first, last)) = sound(samples, rate) else { return samples };
     let margin = rate as usize / 4;
-    let start = (first * window).saturating_sub(margin);
-    let end = ((last + 1) * window + margin).min(samples.len());
+    let start = first.saturating_sub(margin);
+    let end = (last + margin).min(samples.len());
     if end - start < rate as usize * 3 / 10 {
         return samples;
     }
@@ -228,6 +254,9 @@ pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
     if mono.is_empty() {
         return Err("這個音檔沒有聲音".into());
     }
+    if too_short(&mono, rate) {
+        return Err(TOO_SHORT.into());
+    }
     Ok(wav(&resample(&mono, rate)))
 }
 
@@ -246,6 +275,26 @@ mod tests {
         let quiet = vec![0.0f32; rate as usize];
         assert_eq!(trim(&quiet, rate).len(), quiet.len());
         assert!(trim(&[], rate).is_empty());
+    }
+
+    #[test]
+    fn a_brief_noise_is_not_sent_but_a_single_word_is() {
+        let rate = 16_000usize;
+        let quiet_then = |milliseconds: usize| {
+            let mut recording = vec![0.001f32; rate];
+            recording.extend(std::iter::repeat_n(0.5, rate * milliseconds / 1000));
+            recording.extend(std::iter::repeat_n(0.001, rate));
+            recording
+        };
+        // A click or a key press.
+        assert!(too_short(&quiet_then(60), rate as u32));
+        // One syllable.
+        assert!(!too_short(&quiet_then(260), rate as u32));
+        // The shortcut brushed, with nothing said.
+        assert!(too_short(&vec![0.001; rate / 10], rate as u32));
+        assert!(too_short(&[], rate as u32));
+        // A long quiet recording is left for the recogniser to answer.
+        assert!(!too_short(&vec![0.0; rate * 2], rate as u32));
     }
 
     #[test]

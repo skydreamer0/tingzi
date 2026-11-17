@@ -6,7 +6,7 @@ use crate::replace::{self, Replacement};
 use crate::settings::Settings;
 use crate::sys::{set_login_start, starts_at_login};
 use crate::words::{self, Entry};
-use crate::{audio, paths, recognise};
+use crate::{audio, paths};
 use std::ffi::OsStr;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
@@ -84,9 +84,6 @@ pub struct Panel {
     microphones: Vec<String>,
     /// False when another program holds the recording shortcut.
     shortcut_bound: bool,
-    local_ready: bool,
-    /// The Whisper model files found on this computer.
-    local_models: Vec<String>,
     /// Whether a key for the user's own service is stored; the key itself never reaches the page.
     api_key_set: bool,
     version: &'static str,
@@ -107,8 +104,6 @@ pub fn load_settings(app: AppHandle) -> Panel {
         startup: starts_at_login(),
         microphones: audio::microphones(),
         shortcut_bound: keys.bound(),
-        local_ready: recognise::local_parts(prefs.local_model.as_deref()).is_some(),
-        local_models: recognise::local_models(),
         api_key_set: crate::secret::exists(),
         version: env!("CARGO_PKG_VERSION"),
         has_keyboard: paths::tool("TingziKeyboard.exe").is_some(),

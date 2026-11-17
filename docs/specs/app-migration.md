@@ -19,6 +19,7 @@
 | `app/src-tauri/src/main.rs` | 錄音、辨識、取消的流程；全域快捷鍵、系統匣、與介面之間的事件。 |
 | `app/src-tauri/src/audio.rs` | 用選定的麥克風錄音，切掉前後靜音，輸出 16 kHz 單聲道 WAV；把匯入的 WAV 轉成同一格式。 |
 | `app/src-tauri/src/recognise.rs` | 線上辨識（內建 `codex-asr`）與本機辨識（呼叫這台電腦上的 Whisper 程式）。 |
+| `app/src-tauri/src/fetch.rs` | 從設定頁下載本機辨識的模型與 Whisper 程式：固定來源與 SHA-256、分段續傳、核對、試跑後才啟用。 |
 | `app/src-tauri/src/deliver.rs` | 簡繁轉換、追蹤錄音開始時的視窗、複製與貼入的規則。 |
 | `app/src-tauri/src/words.rs` | 自訂詞與文字範本的讀寫，以及用自訂詞校正同音字。 |
 | `app/src-tauri/src/codex.rs` | 判斷鍵盤是否在 Codex 桌面版的訊息框，供 Ctrl＋Alt＋V 使用。 |
