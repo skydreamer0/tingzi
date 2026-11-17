@@ -3,6 +3,7 @@
 #include <fstream>
 #include <algorithm>
 #include <cstdio>
+#include <string>
 namespace fs=std::filesystem;
 namespace {
 struct Binding {
