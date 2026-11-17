@@ -21,7 +21,7 @@ struct Binding {
         wchar_t cls[40];StringFromGUID2(serviceId,cls,40);
         auto path=std::wstring(L"SOFTWARE\\Classes\\CLSID\\")+cls+L"\\InprocServer32";
         if(!read(view,path,nullptr))return false;
-        for(auto dir:{L"v0.6.0",L"v0.6.1",L"v0.6.2",L"v0.6.3",L"v0.6.4",L"v0.6.5",L"v0.6.6"})if(!_wcsicmp(old.c_str(),(original.parent_path()/dir/original.filename()).c_str()))return true;
+        for(auto dir:{L"v0.6.0",L"v0.6.1",L"v0.6.2",L"v0.6.3",L"v0.6.4",L"v0.6.5",L"v0.6.6",L"v0.7.0"})if(!_wcsicmp(old.c_str(),(original.parent_path()/dir/original.filename()).c_str()))return true;
         return !_wcsicmp(old.c_str(),original.c_str()) || !_wcsicmp(old.c_str(),next.c_str());
     }
     bool set(const fs::path& value){
@@ -44,7 +44,7 @@ int run(){
     if(RegGetValueW(HKEY_LOCAL_MACHINE,L"SOFTWARE\\Microsoft\\Windows\\CurrentVersion",L"ProgramFilesDir",
         RRF_RT_REG_SZ|RRF_SUBKEY_WOW6464KEY,nullptr,pf,&bytes))return 2;
     GetModuleFileNameW(nullptr,self,32768);
-    const fs::path source=fs::path(self).parent_path(),root=fs::path(pf)/L"Tingzi",dest=root/L"v0.6.6";
+    const fs::path source=fs::path(self).parent_path(),root=fs::path(pf)/L"Tingzi",dest=root/L"v0.7.0";
     if(!safeDirectory(root))return 3;
     Binding x64,x86;
     auto a=L"TingziTextService64.dll",b=L"TingziTextService32.dll";
@@ -57,10 +57,7 @@ int run(){
     {
         fs::create_directory(dest);if(!safeDirectory(dest))return 5;
         fs::create_directory(dest/L"TingziFloat");if(!safeDirectory(dest/L"TingziFloat"))return 5;
-        const wchar_t* names[]={L"README.md",L"THIRD-PARTY-NOTICES.txt",L"TingziFloat\\LICENSE",L"TingziFloat\\NAudio-LICENSE.txt",L"TingziFloat\\codex-asr.exe",L"TingziFloat\\codex-asr-LICENSE.txt",a,b,L"TingziPad.exe",L"TingziKeyboard.exe",L"TingziLearning.exe",L"TingziSetup64.exe",L"TingziSetup32.exe",L"TingziFloat\\TingziFloat.exe",
-          L"TingziFloat\\TingziFloat.dll",L"TingziFloat\\TingziFloat.runtimeconfig.json",L"TingziFloat\\TingziFloat.deps.json",
-          L"TingziFloat\\NAudio.dll",L"TingziFloat\\NAudio.Core.dll",L"TingziFloat\\NAudio.WinMM.dll",L"TingziFloat\\NAudio.Wasapi.dll",
-          L"TingziFloat\\NAudio.Midi.dll",L"TingziFloat\\NAudio.Asio.dll",L"TingziFloat\\NAudio.WinForms.dll"};
+        const wchar_t* names[]={L"README.md",L"THIRD-PARTY-NOTICES.txt",L"TingziFloat\\LICENSE",a,b,L"TingziPad.exe",L"TingziKeyboard.exe",L"TingziLearning.exe",L"TingziSetup64.exe",L"TingziSetup32.exe",L"TingziFloat\\TingziFloat.exe"};
         for(const auto* name:names)if(!copyProduct(source/name,dest/name))return 6;
         const fs::path active=fs::path(x64.old).parent_path();
         const fs::path previous=active;

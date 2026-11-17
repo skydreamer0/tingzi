@@ -23,4 +23,4 @@
 
 ## 授權
 
-聽字以 MIT 授權釋出，全文見根目錄的 `LICENSE`；送出的貢獻視為以相同授權提供。`windows/float/AudioNotes/LICENSE` 涵蓋相應的衍生元件，NAudio、codex-asr 及其他依賴各有授權。請不要加入授權與 MIT 不相容的程式碼或詞庫。
+聽字以 MIT 授權釋出，全文見根目錄的 `LICENSE`；送出的貢獻視為以相同授權提供。語音浮窗使用的 codex-asr 及其他 Rust 套件各有授權，打包時收錄在 `THIRD-PARTY-NOTICES.txt`。請不要加入授權與 MIT 不相容的程式碼或詞庫。

@@ -8,7 +8,7 @@ const mic = byId('mic'), status = byId('status'), detail = byId('detail'), level
 const micLabels = { recording: '停止錄音', working: '取消辨識', retry: '改用本機辨識' };
 
 let voice = { state: 'idle', message: '', text: '' };
-let idleText = '按麥克風開始';
+let idleText = '點圖示開始錄音';
 // What the Zhuyin input method is typing, once it has said so.
 let mode = '';
 let recordingSince = 0, clock = 0, noticeTimer = 0;
@@ -59,7 +59,7 @@ function setLayout(shape) {
 }
 
 mic.addEventListener('click', () => invoke('toggle_recording'));
-// The docked microphone has no other buttons, so a right-click opens the full bar.
+// The docked button has no others beside it, so a right-click opens the full bar.
 mic.addEventListener('contextmenu', event => { event.preventDefault(); invoke('arrange', { shape: 'bar' }); });
 byId('copy').addEventListener('click', () => invoke('copy_preview'));
 byId('copy-all').addEventListener('click', () => invoke('copy_preview'));
@@ -88,7 +88,7 @@ function applyLook(look) {
     if (value) root.style.setProperty(name, value); else root.style.removeProperty(name);
   }
   root.style.setProperty('--preview-size', look.text_size + 'px');
-  idleText = look.shortcut === '停用' ? '按麥克風開始' : `按 ${look.shortcut} 或麥克風開始`;
+  idleText = look.shortcut === '停用' ? '點圖示開始錄音' : `按 ${look.shortcut} 或點圖示開始錄音`;
   render();
 }
 

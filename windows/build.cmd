@@ -2,7 +2,7 @@
 setlocal
 pushd "%~dp0.."
 set "PRODUCT=%CD%\.build"
-if not "%~4"=="" set "PRODUCT=%~f4"
+if not "%~1"=="" set "PRODUCT=%~f1"
 set "OUTPUT=%PRODUCT%\package"
 set "VSWHERE=%ProgramFiles(x86)%\Microsoft Visual Studio\Installer\vswhere.exe"
 for /f "usebackq tokens=*" %%v in (`"%VSWHERE%" -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath`) do set "VSROOT=%%v"
@@ -19,13 +19,21 @@ copy /y "windows\tingzi.svg" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\InstallTingzi.cmd" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\VoiceShortcuts.ps1" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\RemoveTingzi.cmd" "%OUTPUT%\" >nul || exit /b 1
-if not exist "%PRODUCT%\offline" mkdir "%PRODUCT%\offline"
-dotnet publish windows\float\TingziFloat.csproj -c Release --nologo -p:DebugType=None -p:DebugSymbols=false -p:PathMap="%CD%=/_/src" --source "%PRODUCT%\offline" -p:BaseIntermediateOutputPath="%PRODUCT%/float-obj/" -p:BaseOutputPath="%PRODUCT%/float-bin/" -o "%OUTPUT%\TingziFloat" || exit /b 1
-copy /y "windows\float\AudioNotes\LICENSE" "%OUTPUT%\TingziFloat\LICENSE" >nul || exit /b 1
-copy /y "%USERPROFILE%\.nuget\packages\naudio\2.2.1\license.txt" "%OUTPUT%\TingziFloat\NAudio-LICENSE.txt" >nul || exit /b 1
-if "%~3"=="" (echo Supply the prebuilt codex-asr.exe as the third argument. & exit /b 1)
-copy /y "%~3" "%OUTPUT%\TingziFloat\codex-asr.exe" >nul || exit /b 1
-copy /y "%~2\audio-notes\vendor\codex-asr\LICENSE-MIT" "%OUTPUT%\TingziFloat\codex-asr-LICENSE.txt" >nul || exit /b 1
+rem The voice window. Source paths are remapped so the program does not carry this computer's folder names.
+set "RUSTFLAGS=--remap-path-prefix=%USERPROFILE%=/_ --remap-path-prefix=%CD%=/_/src"
+rem The app also records the folder it was built from, so it is built through a temporary drive letter.
+set "DRIVE="
+for %%d in (T S R Q P O N M) do if not defined DRIVE if not exist %%d:\ set "DRIVE=%%d"
+if not defined DRIVE exit /b 3
+subst %DRIVE%: "%CD%" || exit /b 3
+cargo build --release --locked --manifest-path %DRIVE%:\app\src-tauri\Cargo.toml --target-dir "%PRODUCT%\app-target"
+set "BUILT=%ERRORLEVEL%"
+subst %DRIVE%: /d
+if not "%BUILT%"=="0" exit /b 1
+if not exist "%OUTPUT%\TingziFloat" mkdir "%OUTPUT%\TingziFloat"
+copy /y "%PRODUCT%\app-target\release\Tingzi.exe" "%OUTPUT%\TingziFloat\TingziFloat.exe" >nul || exit /b 1
+copy /y "LICENSE" "%OUTPUT%\TingziFloat\LICENSE" >nul || exit /b 1
+cargo metadata --format-version 1 --locked --filter-platform x86_64-pc-windows-msvc --manifest-path app\src-tauri\Cargo.toml > "%PRODUCT%\cargo-metadata.json" || exit /b 1
 popd
 exit /b 0
 

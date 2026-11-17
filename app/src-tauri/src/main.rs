@@ -113,7 +113,7 @@ fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) 
     let session = app.state::<Session>();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
     session.working.store(true, Ordering::SeqCst);
-    show(app, "working", if online { "線上辨識中・點麥克風取消" } else { "本機辨識中・點麥克風取消" }, "", false);
+    show(app, "working", if online { "線上辨識中・再點一下取消" } else { "本機辨識中・再點一下取消" }, "", false);
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
@@ -145,9 +145,9 @@ fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) 
             (failed, Ok(wav)) if can_retry => {
                 *session.kept.lock().unwrap() = Some(wav);
                 let reason = failed.err().unwrap_or_else(|| "線上未回傳文字".into());
-                ("retry", format!("{reason}・點麥克風改用本機辨識"), String::new(), false)
+                ("retry", format!("{reason}・點圖示改用本機辨識"), String::new(), false)
             }
-            (Ok(_), _) => ("error", "沒有辨識到文字，點麥克風重新錄音".to_string(), String::new(), false),
+            (Ok(_), _) => ("error", "沒有辨識到文字，點圖示重新錄音".to_string(), String::new(), false),
             (Err(reason), _) => ("error", reason, String::new(), false),
         };
         if state != "retry" {
@@ -452,7 +452,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("learn-on", "啟用本機學習")?,
             &item("learn-off", "關閉本機學習")?,
             &line()?,
-            &item("dock", "收合為右側麥克風")?,
+            &item("dock", "收合到螢幕右側")?,
             &item("quit", "結束聽字")?,
         ],
     )?;
@@ -574,9 +574,10 @@ fn main() {
             *app.state::<Session>().state.lock().unwrap() = "idle";
             // Another program may already hold the shortcut; the mic button still works.
             if !app.state::<Keys>().rebind(app.handle(), &Settings::load()) {
-                show(app.handle(), "error", "錄音快捷鍵被其他程式占用，請點麥克風或到設定更換", "", false);
+                show(app.handle(), "error", "錄音快捷鍵被其他程式占用，請點圖示錄音或到設定更換", "", false);
             }
             build_tray(app)?;
+            panel::follow_upgrade();
             let handle = app.handle().clone();
             instance::listen(move |request| {
                 let app = handle.clone();

@@ -11,7 +11,7 @@ if not errorlevel 1 (
 )
 reg query "HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32" /ve /reg:32 >nul 2>&1
 if not errorlevel 1 exit /b 9
-for %%f in (THIRD-PARTY-NOTICES.txt TingziFloat\LICENSE TingziFloat\NAudio-LICENSE.txt TingziFloat\codex-asr-LICENSE.txt TingziFloat\codex-asr.exe TingziVersion.exe TingziKeyboard.exe TingziLearning.exe TingziFloat\TingziFloat.exe TingziFloat\TingziFloat.dll TingziFloat\TingziFloat.deps.json TingziFloat\TingziFloat.runtimeconfig.json TingziFloat\NAudio.dll TingziFloat\NAudio.Core.dll TingziFloat\NAudio.Asio.dll TingziFloat\NAudio.Midi.dll TingziFloat\NAudio.Wasapi.dll TingziFloat\NAudio.WinForms.dll TingziFloat\NAudio.WinMM.dll) do (
+for %%f in (THIRD-PARTY-NOTICES.txt TingziFloat\LICENSE TingziVersion.exe TingziKeyboard.exe TingziLearning.exe TingziFloat\TingziFloat.exe) do (
   if not exist "%~dp0%%f" exit /b 4
 )
 for %%f in (TingziSetup64.exe TingziSetup32.exe TingziTextService64.dll TingziTextService32.dll TingziPad.exe README.md RemoveTingzi.cmd VoiceShortcuts.ps1) do (

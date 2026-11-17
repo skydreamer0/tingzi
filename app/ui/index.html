@@ -9,7 +9,6 @@
 </head>
 <body>
   <svg class="sprite" aria-hidden="true">
-    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11C5 15 8 18 12 18C16 18 19 15 19 11M12 18V21M9 21H15"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none"/></symbol>
     <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6L18 18M18 6L6 18"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6C5 4.9 5.9 4 7 4H15"/></symbol>
@@ -23,14 +22,14 @@
   <main class="capsule" data-state="idle" data-layout="docked">
     <div class="bar" data-tauri-drag-region>
       <button id="mic" class="mic" type="button" aria-label="開始錄音" aria-pressed="false">
-        <svg class="glyph glyph-mic"><use href="#i-mic"/></svg>
+        <img class="brand-mark" src="mark.svg" alt="">
         <svg class="glyph glyph-stop"><use href="#i-stop"/></svg>
         <svg class="glyph glyph-cancel"><use href="#i-close"/></svg>
         <svg class="glyph glyph-done"><use href="#i-check"/></svg>
       </button>
       <div class="body" data-tauri-drag-region>
         <p id="detail" class="detail" data-tauri-drag-region></p>
-        <p id="status" class="status" role="status" aria-live="polite" data-tauri-drag-region>按麥克風開始</p>
+        <p id="status" class="status" role="status" aria-live="polite" data-tauri-drag-region>點圖示開始錄音</p>
         <div class="meter" aria-hidden="true"><span id="level"></span></div>
       </div>
       <div class="tools">
@@ -38,7 +37,7 @@
         <button id="edit" class="tool for-text" type="button" title="編輯辨識文字" aria-label="編輯辨識文字"><svg class="glyph"><use href="#i-edit"/></svg></button>
         <button id="discard" class="tool for-retry" type="button" title="捨棄這段錄音" aria-label="捨棄這段錄音"><svg class="glyph"><use href="#i-trash"/></svg></button>
         <button id="settings" class="tool" type="button" title="開啟設定" aria-label="開啟設定"><svg class="glyph"><use href="#i-settings"/></svg></button>
-        <button id="dock" class="tool" type="button" title="收合為右側麥克風" aria-label="收合為右側麥克風"><svg class="glyph"><use href="#i-dock"/></svg></button>
+        <button id="dock" class="tool" type="button" title="收合到螢幕右側" aria-label="收合到螢幕右側"><svg class="glyph"><use href="#i-dock"/></svg></button>
       </div>
     </div>
     <section class="editor" aria-label="辨識文字">

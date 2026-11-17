@@ -71,6 +71,14 @@ fn set_login_start(enabled: bool) -> std::io::Result<()> {
     }
 }
 
+/// An upgrade installs the program in a new folder; keeps the login entry pointing at the installed copy that is running.
+pub fn follow_upgrade() {
+    let installed = std::env::current_exe().is_ok_and(|program| program.file_name().is_some_and(|name| name == "TingziFloat.exe"));
+    if installed && starts_at_login() {
+        let _ = set_login_start(true);
+    }
+}
+
 /// The colours and sizes every window follows.
 #[derive(Clone, Serialize)]
 pub struct Look {

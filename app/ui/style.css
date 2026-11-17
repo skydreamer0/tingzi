@@ -20,13 +20,15 @@ html, body { background: transparent; }
   padding: 0 14px 0 18px;
 }
 
+/* At rest the button is the product mark; while something is happening it becomes a coloured state button. */
 .mic {
   flex: none;
   width: 52px;
   height: 52px;
+  padding: 0;
   border-radius: 50%;
   border: 0;
-  background: var(--accent);
+  background: transparent;
   color: var(--on-accent);
   display: grid;
   place-items: center;
@@ -36,10 +38,11 @@ html, body { background: transparent; }
 .mic:hover { transform: scale(1.04); }
 .mic:focus-visible, .tool:focus-visible, .actions button:focus-visible { outline: 2px solid var(--text); outline-offset: 2px; }
 .mic .glyph { grid-area: 1 / 1; display: none; }
-.mic .glyph-mic { display: block; }
+.mic .brand-mark { grid-area: 1 / 1; width: 50px; height: 50px; display: block; pointer-events: none; }
 [data-state="recording"] .mic { background: var(--danger); }
-[data-state="recording"] .mic .glyph-mic,
-[data-state="working"] .mic .glyph-mic { display: none; }
+[data-state="working"] .mic { background: var(--accent); }
+[data-state="recording"] .mic .brand-mark,
+[data-state="working"] .mic .brand-mark { display: none; }
 [data-state="recording"] .mic .glyph-stop { display: block; }
 [data-state="working"] .mic .glyph-cancel { display: block; }
 [data-state="working"] .mic { animation: breathe 1.2s ease-in-out infinite; }
@@ -144,7 +147,8 @@ html, body { background: transparent; }
 [data-layout="docked"].capsule { border-radius: 50%; align-items: center; justify-content: center; }
 [data-layout="docked"] .bar { height: auto; padding: 0; gap: 0; }
 [data-layout="docked"] .body, [data-layout="docked"] .tools { display: none; }
-[data-layout="docked"][data-state="done"] .mic .glyph-mic { display: none; }
+[data-layout="docked"][data-state="done"] .mic { background: var(--accent); }
+[data-layout="docked"][data-state="done"] .mic .brand-mark { display: none; }
 [data-layout="docked"][data-state="done"] .mic .glyph-done { display: block; }
 
 @media (prefers-reduced-motion: reduce) {
