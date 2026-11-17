@@ -100,6 +100,8 @@ pub struct Settings {
     /// What the user adds to the instructions for the refinement service, at most 500 characters.
     #[serde(deserialize_with = "lenient_note")]
     pub refine_note: String,
+    /// Whether GitHub is asked once a day for a newer version. Off means no request is made unless the user presses the button.
+    pub check_updates: bool,
 }
 
 impl Default for Settings {
@@ -131,6 +133,7 @@ impl Default for Settings {
             refine_url: DEFAULT_REFINE_URL.into(),
             refine_model: String::new(),
             refine_note: String::new(),
+            check_updates: true,
         }
     }
 }
@@ -292,6 +295,14 @@ mod tests {
         assert_eq!((odd.refine_note.as_str(), odd.record_key), ("", 84));
         let empty: Settings = serde_json::from_str(r#"{"RefineNote":null}"#).unwrap();
         assert_eq!(empty.refine_note, "");
+    }
+
+    #[test]
+    fn files_from_before_the_update_check_have_it_on() {
+        let earlier: Settings = serde_json::from_str(r#"{"RecordKey":84}"#).unwrap();
+        assert!(earlier.check_updates);
+        let off: Settings = serde_json::from_str(r#"{"CheckUpdates":false}"#).unwrap();
+        assert!(!off.check_updates);
     }
 
     #[test]

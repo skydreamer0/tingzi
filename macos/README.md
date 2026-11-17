@@ -46,6 +46,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 | AI 潤稿的金鑰 | 存在登入鑰匙圈，和自選服務的金鑰分開 |
 | 登入時啟動 | 在 `~/Library/LaunchAgents/app.tingzi.voice.plist` 寫一個啟動項目 |
 | 個人資料 | `~/Library/Application Support/Tingzi` |
+| 檢查更新 | 和 Windows 版一樣在「關於」頁檢查與提示，但還沒有 macOS 的安裝程式，所以按鈕是「開啟下載頁」 |
 | 注音頁 | 只留下自訂詞；鍵盤配置、文字範本、本機學習等注音輸入法的項目不顯示 |
 
 ## 本機 Whisper

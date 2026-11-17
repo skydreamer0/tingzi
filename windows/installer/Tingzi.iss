@@ -47,7 +47,7 @@ SetupIconFile=..\tingzi.ico
 UninstallDisplayIcon={app}\tingzi.ico
 UninstallDisplayName={#AppName}
 OutputDir={#OutputDir}
-OutputBaseFilename=聽字-Setup-{#AppVersion}-x64
+OutputBaseFilename=Tingzi-Setup-{#AppVersion}-x64
 Compression=lzma2/max
 SolidCompression=yes
 ; 安裝程式只在 {app} 放圖示與解除安裝程式；其餘檔案由 InstallTingzi.cmd 放進版本子目錄，
@@ -70,6 +70,8 @@ Source: "{#PayloadZip}"; DestName: "payload.zip"; Flags: dontcopy
 
 [Run]
 Filename: "{app}\v{#AppVersion}\TingziFloat\TingziFloat.exe"; Description: "開啟語音浮窗"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: IsFirstInstall
+; 升級時若語音浮窗原本開著（例如從設定的「關於」頁更新），安裝完成後開啟新版。
+Filename: "{app}\v{#AppVersion}\TingziFloat\TingziFloat.exe"; Flags: nowait runasoriginaluser; Check: FloatWasRunning
 
 [UninstallRun]
 ; 先關掉語音浮窗，再用既有的移除腳本取消註冊並刪除捷徑。
@@ -86,6 +88,7 @@ var
   WasInstalled: Boolean;
   DownloadPage: TDownloadWizardPage;
   DeletePersonalData: Boolean;
+  FloatWasRunning_: Boolean;
 
 function ServiceKey: String;
 begin
@@ -95,6 +98,11 @@ end;
 function IsFirstInstall: Boolean;
 begin
   Result := not WasInstalled;
+end;
+
+function FloatWasRunning: Boolean;
+begin
+  Result := FloatWasRunning_;
 end;
 
 function WebView2Installed: Boolean;
@@ -235,7 +243,17 @@ begin
   Log('InstallTingzi.cmd exit code ' + IntToStr(Code));
   LogFile(Output);
   if Code <> 0 then
+  begin
     Result := InstallFailure(Code);
+    exit;
+  end;
+  // 新版的語音浮窗和舊版用同一個單一執行個體名稱，舊版還開著時新版開不起來，所以先關掉舊版。
+  // 設定每改一次就存檔，關掉不會遺失設定。taskkill 找到並結束程式時回傳 0。
+  if WasInstalled and Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im TingziFloat.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
+  begin
+    FloatWasRunning_ := True;
+    Log('Closed the running voice window; it will be opened again after setup.');
+  end;
 end;
 
 // 個人資料夾以外，使用者可能換過的本機詞表與語音資料夾設定放在目前使用的版本子目錄裡。

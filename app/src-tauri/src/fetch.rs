@@ -374,9 +374,9 @@ fn unpack(zip: &Path, folder: &Path) -> Result<PathBuf, String> {
 
 /// How much is asked for in one request. Each request has its own time limit, so a stalled
 /// connection is noticed and the download carries on from where it stopped.
-const CHUNK: u64 = 4 * 1024 * 1024;
+pub(crate) const CHUNK: u64 = 4 * 1024 * 1024;
 
-fn client(url: &str) -> Result<reqwest::blocking::Client, String> {
+pub(crate) fn client(url: &str) -> Result<reqwest::blocking::Client, String> {
     let host = url.split('/').nth(2).unwrap_or_default();
     let mut builder = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(180));
     if let Some(proxy) = recognise::proxy_for(host) {
@@ -393,7 +393,7 @@ fn hex(bytes: &[u8]) -> String {
 /// whole file against `sha256`. A file that fails the check is removed; an interrupted one is kept.
 /// `tell` gets "download" with the bytes so far, then "verify".
 #[allow(clippy::too_many_arguments)]
-fn download(
+pub(crate) fn download(
     client: &reqwest::blocking::Client,
     url: &str,
     size: u64,

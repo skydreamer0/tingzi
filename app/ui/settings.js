@@ -94,6 +94,7 @@ function fill() {
   showRefineKey();
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
+  byId('check-updates').checked = prefs.CheckUpdates !== false;
   byId('learn-fixes').checked = prefs.LearnFixes;
   byId('use-phrases').disabled = !panel.has_word_list;
   byId('delivery').value = String(prefs.DeliveryMode ?? (prefs.AutoInsert ? 0 : 2));
@@ -154,6 +155,7 @@ function collect(engineFromPage) {
       RefineNote: byId('refine-note').value.trim(),
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
+      CheckUpdates: byId('check-updates').checked,
       LearnFixes: byId('learn-fixes').checked,
       Appearance: number('appearance'),
       SystemAccent: byId('accent').value === '1',
@@ -915,6 +917,51 @@ for (const [id, which] of [['welcome-editor', 'practice'], ['welcome-keyboard', 
   });
 }
 
+// Updates
+let update = null;
+function showUpdate(state) {
+  update = state;
+  const offered = state.offered;
+  const checked = state.checked ? new Date(state.checked * 1000).toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  byId('update-title').textContent = offered ? '有新版 ' + offered.version.replace(/^v/i, '') : '目前已是最新版';
+  byId('update-note').textContent = offered
+    ? (offered.installer ? '下載後會先核對檔案，再開啟安裝程式。安裝時語音浮窗會關閉，完成後自動開啟新版；設定、詞表、學習資料與模型都保留。' : '這個新版沒有附上這台電腦用的安裝程式，按下按鈕會開啟下載頁。')
+    : '目前版本 ' + state.current + (checked ? '，上次檢查：' + checked : '。');
+  const install = byId('update-install');
+  install.hidden = !offered;
+  install.textContent = offered?.installer ? '下載並安裝' : '開啟下載頁';
+  install.disabled = state.installing;
+  byId('update-notes-row').hidden = !offered?.notes;
+  byId('update-notes').textContent = offered?.notes ?? '';
+}
+byId('update-check').addEventListener('click', async () => {
+  const button = byId('update-check');
+  button.disabled = true;
+  try {
+    showUpdate(await invoke('update_check'));
+    say(update.offered ? '找到新版。' : '目前已是最新版。', true);
+  } catch (reason) {
+    say(String(reason));
+  }
+  button.disabled = false;
+});
+byId('update-install').addEventListener('click', async () => {
+  const button = byId('update-install');
+  button.disabled = true;
+  try {
+    say(await invoke('update_install'), true);
+  } catch (reason) {
+    say(String(reason));
+    showUpdate(await invoke('update_state'));
+  }
+  button.disabled = false;
+});
+listen('update', event => showUpdate(event.payload));
+listen('update-progress', event => {
+  const [stage, have, size] = event.payload;
+  byId('update-note').textContent = stage === 'verify' ? '正在核對下載的檔案…' : '正在下載新版… ' + Math.floor(have * 100 / Math.max(size, 1)) + '%';
+});
+
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.querySelector('dialog[open]')) invoke('close_settings');
 });
@@ -926,6 +973,7 @@ invoke('load_settings').then(async loaded => {
   wordForSystem();
   fill();
   for (const control of document.querySelectorAll('.pages select, .pages input, .pages textarea')) accepted.set(control.id, valueOf(control));
+  showUpdate(await invoke('update_state'));
   if (await invoke('take_welcome')) startWelcome();
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');
   const on = await invoke('learning_state');

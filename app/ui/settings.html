@@ -222,6 +222,17 @@
           <div class="row identity"><img src="mark.svg" alt="" width="48" height="48">
             <div class="what"><span class="name title" data-mac="聽字・語音輸入">聽字・注音與語音輸入法</span><p id="version"></p></div></div>
         </div>
+        <h2>更新</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><span class="name" id="update-title">目前已是最新版</span><p id="update-note"></p></div>
+            <div class="group"><button id="update-check" type="button" class="button">立即檢查</button><button id="update-install" type="button" class="button primary" hidden>下載並安裝</button></div></div>
+          <div class="row" id="update-notes-row" hidden>
+            <details class="what"><summary>這一版改了什麼</summary><div id="update-notes" class="release-notes"></div></details></div>
+          <div class="row">
+            <div class="what"><label for="check-updates">每天自動檢查新版</label><p>開啟時，聽字每天最多向 GitHub 查詢一次有沒有新版，只會送出目前的版本號。關閉後不會自動連線，要更新時按「立即檢查」。</p></div>
+            <input id="check-updates" type="checkbox" role="switch" class="switch"></div>
+        </div>
         <h2>開始使用</h2>
         <div class="card">
           <div class="row">

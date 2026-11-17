@@ -21,6 +21,7 @@ mod secret;
 mod settings;
 mod sys;
 mod tidy;
+mod update;
 mod words;
 
 use deliver::{Desktop, Mode, Outcome, Spot};
@@ -822,7 +823,10 @@ fn main() {
             fetch::local_state,
             fetch::local_fetch,
             fetch::local_fetch_cancel,
-            fetch::local_delete
+            fetch::local_delete,
+            update::update_state,
+            update::update_check,
+            update::update_install
         ])
         .on_window_event(|window, event| {
             // A minimised window is parked far off screen; that is not a place the user chose.
@@ -848,6 +852,7 @@ fn main() {
             build_tray(app)?;
             panel::follow_upgrade();
             panel::welcome_first_run(app.handle());
+            update::start(app.handle());
             let handle = app.handle().clone();
             instance::listen(move |request| {
                 let app = handle.clone();
