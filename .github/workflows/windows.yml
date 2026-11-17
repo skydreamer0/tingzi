@@ -1,0 +1,43 @@
+name: Windows
+
+# Builds the whole Windows release on a GitHub Windows machine: the text service and tools, the voice
+# window, the release ZIP and the single installer, then installs, upgrades and removes it on that
+# disposable machine.
+on:
+  push:
+    branches: [main]
+    paths: ['app/**', 'windows/**', '.github/workflows/windows.yml']
+  pull_request:
+    paths: ['app/**', 'windows/**', '.github/workflows/windows.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: windows-latest
+    env:
+      PYTHONIOENCODING: utf-8
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test
+        run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
+      - name: Build
+        shell: cmd
+        run: windows\build.cmd
+      - name: Package the release ZIP
+        run: python windows/package_release.py .build/package .build/release/Tingzi-windows-x64.zip --cargo-metadata .build/cargo-metadata.json
+      - name: Make sure Inno Setup is available
+        run: |
+          if (!(Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
+      - name: Build the installer
+        run: python windows/build_installer.py .build/release/Tingzi-windows-x64.zip .build/release
+      - name: Install, upgrade and remove on this machine
+        run: windows/test_installer.ps1 -Installer (Get-ChildItem .build/release/*-Setup-*-x64.exe).FullName
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tingzi-windows
+          path: .build/release/*
+          if-no-files-found: error
