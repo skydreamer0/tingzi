@@ -33,7 +33,8 @@ AI 潤稿把辨識出的文字交給一個語言模型整理，再套用使用�
 ## 服務請求
 
 - `POST {服務網址}/chat/completions`，`Authorization: Bearer <金鑰>`（有金鑰時）。
-- 內容：`{"model": <模型>, "temperature": 0, "messages": [{"role":"system","content":<系統提示>},{"role":"user","content":<文字>}]}`。
+- 內容：`{"model": <模型>, "messages": [{"role":"system","content":<系統提示>},{"role":"user","content":<文字>}]}`。不帶 `temperature`：OpenAI 現行的 GPT-6 系列在推理程度不是 `none` 時會拒絕它。
+- 網址是 `api.openai.com` 時另帶 `"reasoning_effort": "none"`，整理文字不需要推理，回得比較快。不是每個模型都接受 `none`（例如 `gpt-6-astra`），收到 400 時拿掉這一項再送一次。其他服務不帶。
 - 讀取回應的 `choices[0].message.content`。
 - 連線逾時 5 秒，整個請求逾時 20 秒。
 - 網址規則沿用 `api::Service::parse`：遠端必須 `https://`，不能帶帳號、密碼或查詢參數。

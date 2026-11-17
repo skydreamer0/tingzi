@@ -218,15 +218,31 @@ fn explain(failure: &reqwest::Error) -> Failure {
 /// Sends `text` with the instructions `system` and returns the checked answer. Blocks; call it off the UI thread,
 /// and not on an async runtime.
 fn ask(service: &Service, model: &str, key: Option<&str>, system: &str, text: &str) -> Result<String, Failure> {
+    ask_with(service, model, key, system, text, service.host == OPENAI_HOST)
+}
+
+/// OpenAI's own service, where tidying is asked for without reasoning.
+const OPENAI_HOST: &str = "api.openai.com";
+
+/// The request body. No `temperature`: OpenAI's current models refuse one unless reasoning is off, and every
+/// service has a sensible default. `quick` asks for no reasoning, which tidying does not need and which makes the
+/// answer arrive sooner; only OpenAI knows the setting, and not all of its models accept it.
+fn body(model: &str, system: &str, text: &str, quick: bool) -> serde_json::Value {
+    let mut body = serde_json::json!({
+        "model": model.trim(),
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
+    });
+    if quick {
+        body["reasoning_effort"] = serde_json::json!("none");
+    }
+    body
+}
+
+fn ask_with(service: &Service, model: &str, key: Option<&str>, system: &str, text: &str, quick: bool) -> Result<String, Failure> {
     if key.is_none() && !service.on_this_computer {
         return Err(Failure::BadKey);
     }
-    let body = serde_json::json!({
-        "model": model.trim(),
-        "temperature": 0,
-        "messages": [{"role": "system", "content": system}, {"role": "user", "content": text}],
-    });
-    let mut request = client(service)?.post(format!("{}/chat/completions", service.base)).json(&body);
+    let mut request = client(service)?.post(format!("{}/chat/completions", service.base)).json(&body(model, system, text, quick));
     if let Some(key) = key {
         request = request.bearer_auth(key);
     }
@@ -234,6 +250,8 @@ fn ask(service: &Service, model: &str, key: Option<&str>, system: &str, text: &s
     match response.status().as_u16() {
         200 => {}
         401 | 403 => return Err(Failure::BadKey),
+        // A model that cannot turn reasoning off refuses the setting; ask it once more with its own default.
+        400 if quick => return ask_with(service, model, key, system, text, false),
         status => return Err(Failure::Refused(status)),
     }
     // An answer that stops arriving in time is a timeout; one that cannot be read at all is unusable.
@@ -334,10 +352,10 @@ mod tests {
 
     #[test]
     fn turning_it_on_needs_an_address_a_model_and_a_key() {
-        assert_eq!(problem("https://api.openai.com/v1", "gpt-4o-mini", true), None);
+        assert_eq!(problem("https://api.openai.com/v1", "gpt-6-luna", true), None);
         assert_eq!(problem("http://localhost:11434/v1", "qwen2.5", false), None);
         assert_eq!(problem("https://api.openai.com/v1", " ", true).as_deref(), Some("請先填入潤稿服務的模型名稱"));
-        assert_eq!(problem("https://api.openai.com/v1", "gpt-4o-mini", false).as_deref(), Some("請先填入潤稿服務的金鑰"));
+        assert_eq!(problem("https://api.openai.com/v1", "gpt-6-luna", false).as_deref(), Some("請先填入潤稿服務的金鑰"));
         assert_eq!(problem("http://example.com/v1", "m", true).as_deref(), Some("潤稿服務的網址須以 https:// 開頭；只有本機服務可以用 http://"));
         assert_eq!(problem("不是網址", "m", true).as_deref(), Some("潤稿服務的網址格式不正確"));
         assert_eq!(problem("https://u:p@example.com/v1", "m", true).as_deref(), Some("潤稿服務的網址不能包含帳號、密碼或查詢參數"));
@@ -393,28 +411,35 @@ mod tests {
 
     /// Answers one request on this computer with `status` and `body`, and hands over what it was sent.
     fn answer(status: &'static str, body: String) -> (Service, mpsc::Receiver<Asked>) {
+        answers(vec![(status, body)])
+    }
+
+    /// Answers one request for each of `replies`, in turn, and hands over what each was sent.
+    fn answers(replies: Vec<(&'static str, String)>) -> (Service, mpsc::Receiver<Asked>) {
         let listener = TcpListener::bind("127.0.0.1:0").unwrap();
         let service = Service::parse(&format!("http://{}/v1", listener.local_addr().unwrap())).unwrap();
         let (tell, told) = mpsc::channel();
         std::thread::spawn(move || {
-            let Some(stream) = listener.incoming().flatten().next() else { return };
-            let mut reader = BufReader::new(stream.try_clone().unwrap());
-            let mut line = String::new();
-            reader.read_line(&mut line).unwrap();
-            let mut headers = Vec::new();
-            loop {
-                let mut header = String::new();
-                if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
-                    break;
+            for (status, body) in replies {
+                let Some(stream) = listener.incoming().flatten().next() else { return };
+                let mut reader = BufReader::new(stream.try_clone().unwrap());
+                let mut line = String::new();
+                reader.read_line(&mut line).unwrap();
+                let mut headers = Vec::new();
+                loop {
+                    let mut header = String::new();
+                    if reader.read_line(&mut header).unwrap_or(0) == 0 || header.trim().is_empty() {
+                        break;
+                    }
+                    headers.push(header.trim().to_string());
                 }
-                headers.push(header.trim().to_string());
+                let length = headers.iter().find_map(|header| header.to_ascii_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())).unwrap_or(0);
+                let mut sent = vec![0; length];
+                reader.read_exact(&mut sent).unwrap();
+                let mut stream = stream;
+                let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
+                let _ = tell.send(Asked { line: line.trim().to_string(), headers, body: String::from_utf8(sent).unwrap() });
             }
-            let length = headers.iter().find_map(|header| header.to_ascii_lowercase().strip_prefix("content-length:").map(|n| n.trim().parse::<usize>().unwrap())).unwrap_or(0);
-            let mut sent = vec![0; length];
-            reader.read_exact(&mut sent).unwrap();
-            let mut stream = stream;
-            let _ = write!(stream, "HTTP/1.1 {status}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}", body.len());
-            let _ = tell.send(Asked { line: line.trim().to_string(), headers, body: String::from_utf8(sent).unwrap() });
         });
         (service, told)
     }
@@ -428,7 +453,7 @@ mod tests {
     #[test]
     fn the_request_follows_the_chat_api_and_the_answer_is_taken() {
         let (service, told) = answer("200 OK", reply("「我們四點開會。」"));
-        assert_eq!(ask(&service, " gpt-4o-mini ", Some("sk-test"), "整理", SAID).as_deref(), Ok("我們四點開會。"));
+        assert_eq!(ask(&service, " gpt-6-luna ", Some("sk-test"), "整理", SAID).as_deref(), Ok("我們四點開會。"));
         let asked = told.recv().unwrap();
         assert_eq!(asked.line, "POST /v1/chat/completions HTTP/1.1");
         assert!(asked.headers.iter().any(|header| header == "authorization: Bearer sk-test"), "{:?}", asked.headers);
@@ -437,11 +462,25 @@ mod tests {
         assert_eq!(
             body,
             serde_json::json!({
-                "model": "gpt-4o-mini",
-                "temperature": 0,
+                "model": "gpt-6-luna",
                 "messages": [{"role": "system", "content": "整理"}, {"role": "user", "content": SAID}],
             })
         );
+    }
+
+    #[test]
+    fn openai_is_asked_without_reasoning_and_once_more_when_the_model_refuses_that() {
+        let (service, told) = answers(vec![("400 Bad Request", r#"{"error":{"message":"Unsupported value: 'reasoning_effort'"}}"#.to_string()), ("200 OK", reply("我們四點開會。"))]);
+        assert_eq!(ask_with(&service, "gpt-6-astra", Some("sk-test"), "整理", SAID, true).as_deref(), Ok("我們四點開會。"));
+        let first: serde_json::Value = serde_json::from_str(&told.recv().unwrap().body).unwrap();
+        assert_eq!(first["reasoning_effort"], "none");
+        assert!(first.get("temperature").is_none());
+        let second: serde_json::Value = serde_json::from_str(&told.recv().unwrap().body).unwrap();
+        assert!(second.get("reasoning_effort").is_none());
+        // Other services are never sent the setting, and a refusal from them is not retried.
+        let (service, told) = answer("400 Bad Request", "{}".to_string());
+        assert_eq!(ask(&service, "qwen2.5", None, "整理", SAID), Err(Failure::Refused(400)));
+        assert!(serde_json::from_str::<serde_json::Value>(&told.recv().unwrap().body).unwrap().get("reasoning_effort").is_none());
     }
 
     #[test]

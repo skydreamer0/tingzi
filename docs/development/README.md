@@ -13,11 +13,13 @@
 | `app/src-tauri/` | 語音浮窗與設定頁的 Rust 後端（Tauri 2）：錄音、辨識（內建 codex-asr 與本機 Whisper）、貼入規則、設定、系統匣與單一執行個體。各檔案的職責見[遷移規格](../specs/app-migration.md)的架構表；測試寫在各模組裡，以 `cargo test` 執行。 |
 | `app/src-tauri/src/sys/` | 向作業系統要求的每一件事，一個系統一個檔：`win.rs`（Win32、登錄檔、認證管理員）與 `mac.rs`（AppKit、Quartz 按鍵事件、鑰匙圈）。兩個檔提供同一組函式，其他模組只呼叫 `sys::`，不直接使用系統 API。 |
 | `macos/build.sh`、`notices.py`、`README.md` | macOS 版的建置腳本（組出 `Tingzi.app` 與 ZIP）、第三方聲明產生器與使用說明。macOS 版只有語音浮窗，沒有注音輸入法。 |
+| `.github/workflows/windows.yml` | 在 GitHub 的 Windows 電腦上執行 `cargo test`、`windows/build.cmd`、打包 ZIP 與安裝程式，再在那台用完即丟的電腦上以 `windows/test_installer.ps1` 安裝、升級與移除一次，並存成工作流程的產物。 |
 | `.github/workflows/macos.yml` | 在 GitHub 的 Mac 上執行 `cargo test` 與 `macos/build.sh`，並把 ZIP 存成工作流程的產物。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`）的網頁介面，只顯示狀態與收集選擇。 |
 | `windows/engine_test.cpp`、`learning_test.cpp` | 自有引擎與學習測試原始碼。 |
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
+| `windows/build_installer.py`、`windows/installer/` | 由發行 ZIP 做出單一安裝程式（Inno Setup 6）。`ChineseTraditional.isl` 是 Inno Setup 官方儲存庫 `is-6_4_3` 標籤的繁體中文翻譯，原樣收錄。 |
 | `windows/licenses/` | 標準授權全文，打包時附給沒有自帶授權檔的 Rust 相依套件；macOS 的建置也使用這一份。 |
 | `windows/standalone-data/pairs.txt`、`windows/tools/build_pairs.py` | 詞語搭配統計與產生它的腳本。腳本讀詞庫和一份語料（維基百科分卷或純文字檔），輸出常一起出現的詞對；語料本身不放進專案。授權見 `pairs-NOTICE.txt`。 |
 | `assets/icons/` | 介面圖示集的 SVG 原稿；規範見[圖示集說明](../../assets/icons/README.md)。 |
@@ -66,6 +68,14 @@ bash macos/build.sh
 windows\build.cmd
 python windows/package_release.py .build/package .build/Tingzi-0.7.0-windows-x64.zip --cargo-metadata .build/cargo-metadata.json
 ```
+
+再由 ZIP 做出單一安裝程式，需要 [Inno Setup](https://jrsoftware.org/isinfo.php) 6.3 以上：
+
+```powershell
+python windows/build_installer.py .build/Tingzi-0.7.0-windows-x64.zip .build/installer
+```
+
+它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `聽字-Setup-<版本>-x64.exe` 與它的 `.sha256`。版號取自 ZIP 的清單，不必另外修改。安裝程式原封不動帶著 ZIP，在開始複製檔案前解開到暫存資料夾並執行 `InstallTingzi.cmd /quiet`（失敗時停止安裝、不登記應用程式清單，腳本的輸出寫進安裝記錄），所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
 
 `windows/package_release.py` 的介面如下：
 
