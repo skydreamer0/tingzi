@@ -76,7 +76,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 - **Spoken-language cleanup**: removes leading fillers such as 嗯 and 呃 and stuttered repeats, and adds Chinese punctuation, without rewriting the sentence.
 - **Custom words and replacement rules**: names and terms you add are spelled correctly first. For words that are always misheard, or English capitalization, add rules of the form "what was heard → what to write".
 - **Learns from your fixes**: correct a dictated word once with Zhuyin, and later dictations with the same sound will use that word.
-- **AI refinement (optional, off by default)**: sends the recognized text to an OpenAI-compatible service you configure, to tidy self-corrections, filler words and punctuation. If the service fails, the original text is inserted.
+- **AI refinement (optional, off by default)**: sends the recognized text to an OpenAI-compatible service you configure, to tidy self-corrections, filler words and punctuation. The bar says whether each dictation was refined, history keeps the text from before refinement, and if the service fails, the original text is inserted.
 - **History**: the last 50 results are kept only on your computer and can be recovered from the bar. **Alt+Shift+Z** pastes the previous one again.
 - **Per-app settings**: choose Traditional or Simplified output, cleanup, refinement, and what happens after recognition, for each program.
 

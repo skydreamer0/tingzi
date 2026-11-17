@@ -75,7 +75,7 @@ python windows/package_release.py .build/package .build/Tingzi-0.7.0-windows-x64
 python windows/build_installer.py .build/Tingzi-0.7.0-windows-x64.zip .build/installer
 ```
 
-它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `聽字-Setup-<版本>-x64.exe` 與它的 `.sha256`。版號取自 ZIP 的清單，不必另外修改。安裝程式原封不動帶著 ZIP，在開始複製檔案前解開到暫存資料夾並執行 `InstallTingzi.cmd /quiet`（失敗時停止安裝、不登記應用程式清單，腳本的輸出寫進安裝記錄），所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
+它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `Tingzi-Setup-<版本>-x64.exe` 與它的 `.sha256`。發行時兩個檔都要上傳到 GitHub Releases，檔名不要改：設定頁的「下載並安裝」靠 `Tingzi-Setup-` 開頭、`-x64.exe` 結尾找安裝程式，並用同名加 `.sha256` 的檔核對；少了 `.sha256` 就只開下載頁。升級時安裝程式會先關掉開著的語音浮窗（新舊版用同一個單一執行個體名稱），安裝完成後開啟新版。版號取自 ZIP 的清單，不必另外修改。安裝程式原封不動帶著 ZIP，在開始複製檔案前解開到暫存資料夾並執行 `InstallTingzi.cmd /quiet`（失敗時停止安裝、不登記應用程式清單，腳本的輸出寫進安裝記錄），所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
 
 `windows/package_release.py` 的介面如下：
 

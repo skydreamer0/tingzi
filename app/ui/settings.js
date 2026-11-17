@@ -13,6 +13,8 @@ let missingMicrophone = null;
 function say(text, fine = false) {
   status.textContent = text;
   status.classList.toggle('fine', fine);
+  // The first-run steps cover the footer, so they show the same message.
+  if (byId('welcome').open) byId('welcome-status').textContent = text;
 }
 
 function applyLook(look) {
@@ -92,6 +94,7 @@ function fill() {
   showRefineKey();
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
+  byId('check-updates').checked = prefs.CheckUpdates !== false;
   byId('learn-fixes').checked = prefs.LearnFixes;
   byId('use-phrases').disabled = !panel.has_word_list;
   byId('delivery').value = String(prefs.DeliveryMode ?? (prefs.AutoInsert ? 0 : 2));
@@ -152,6 +155,7 @@ function collect(engineFromPage) {
       RefineNote: byId('refine-note').value.trim(),
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
+      CheckUpdates: byId('check-updates').checked,
       LearnFixes: byId('learn-fixes').checked,
       Appearance: number('appearance'),
       SystemAccent: byId('accent').value === '1',
@@ -231,10 +235,12 @@ function showLocal() {
     const get = document.createElement('button');
     get.type = 'button';
     get.className = 'button';
-    get.textContent = model.installed ? '已下載' : '下載';
-    get.disabled = model.installed || Boolean(local.busy);
+    // A downloaded model can be deleted from here; one the user placed elsewhere is only marked as there.
+    const removable = model.installed && model.removable;
+    get.textContent = removable ? '刪除' : model.installed ? '已下載' : '下載';
+    get.disabled = (model.installed && !removable) || Boolean(local.busy);
     get.setAttribute('aria-label', `${get.textContent} ${model.title}`);
-    get.addEventListener('click', () => fetchItem(model.id));
+    get.addEventListener('click', () => removable ? deleteModel(model) : fetchItem(model.id));
     row.append(what, get);
     byId('api-url-row').before(row);
   }
@@ -244,6 +250,16 @@ async function readLocal() {
   local = await invoke('local_state');
   showLocal();
   showEngine();
+}
+async function deleteModel(model) {
+  try {
+    if (!await invoke('local_delete', { file: model.file })) return;
+    panel = await invoke('load_settings');
+    await readLocal();
+    say(`已刪除「${model.title}」。`, true);
+  } catch (reason) {
+    say(String(reason));
+  }
 }
 async function fetchItem(id) {
   try {
@@ -813,6 +829,139 @@ byId('voice-learned-remove').addEventListener('click', async () => {
   voiceLearnedStatus.textContent = `已刪除「${word}」，不會再學這個詞。`;
 });
 
+// First-run steps. They borrow the microphone and recognition cards from the 語音 page, so every choice is
+// stored the same way as on that page, and put them back when the steps close.
+const welcome = byId('welcome'), welcomeBody = byId('welcome-body');
+const borrowed = [];
+let welcomeAt = 0;
+
+function borrow(card) {
+  const marker = document.createComment('');
+  card.before(marker);
+  borrowed.push({ card, marker });
+  welcomeBody.append(card);
+}
+function giveBack() {
+  for (const { card, marker } of borrowed.splice(0)) marker.replaceWith(card);
+}
+
+const shortcutName = () => panel.look.shortcut || '錄音快捷鍵';
+const welcomeSteps = [
+  {
+    title: '選擇麥克風',
+    intro: () => '選你要用的麥克風，按「測試」後說幾個字，音量條有跟著動就可以了。',
+    show: () => borrow(byId('mic-card')),
+  },
+  {
+    title: '選擇辨識方式',
+    intro: () => '「本機 Whisper」在這台電腦辨識，錄音不會離開電腦，不需要帳號；第一次要下載模型，不確定就選 Whisper small。'
+      + '「Codex 線上辨識」把錄音經第三方元件送到 ChatGPT，需要這台電腦上有 Codex 登入。'
+      + '「自選線上服務」把錄音送到你填的服務，需要該服務的金鑰。',
+    show: () => borrow(byId('engine-card')),
+  },
+  {
+    title: '練習一句',
+    intro: () => onMac() ? '在文字編輯裡說一句話，看看文字怎麼插入。' : '在記事本裡說一句話，再用注音改一個字。',
+    show: () => {
+      byId('welcome-shortcut').textContent = shortcutName();
+      byId('welcome-keyboard').hidden = onMac() || !panel.has_keyboard;
+      byId('welcome-practice').hidden = false;
+    },
+  },
+  {
+    title: '可以開始用了',
+    intro: () => `在任何程式裡按 ${shortcutName()} 開始錄音，再按一次停止，文字會插入游標所在的地方。`
+      + (onMac() ? '選單列的聽字圖示也可以開始錄音和打開設定。' : '螢幕右側邊緣的聽字圖示也可以點一下錄音；系統匣圖示的選單可以找回浮窗和打開設定。')
+      + '之後想重來，可以在設定的「關於」頁按「首次設定」。',
+    show: () => {},
+  },
+];
+
+function showWelcomeStep() {
+  giveBack();
+  byId('welcome-practice').hidden = true;
+  byId('welcome-status').textContent = '';
+  const step = welcomeSteps[welcomeAt];
+  const last = welcomeAt === welcomeSteps.length - 1;
+  byId('welcome-step').textContent = last ? '' : `第 ${welcomeAt + 1} 步，共 ${welcomeSteps.length - 1} 步・每一步都可以略過`;
+  byId('welcome-title').textContent = step.title;
+  byId('welcome-intro').textContent = step.intro();
+  step.show();
+  byId('welcome-back').hidden = welcomeAt === 0;
+  byId('welcome-skip').hidden = last;
+  byId('welcome-next').textContent = last ? '完成' : '下一步';
+}
+async function moveWelcome(by) {
+  // A microphone test left running would keep the microphone open after its step.
+  await stopTest();
+  welcomeAt += by;
+  if (welcomeAt >= welcomeSteps.length) return welcome.close();
+  showWelcomeStep();
+}
+function startWelcome() {
+  welcomeAt = 0;
+  showWelcomeStep();
+  welcome.showModal();
+}
+welcome.addEventListener('close', () => {
+  stopTest();
+  giveBack();
+});
+byId('welcome-next').addEventListener('click', () => moveWelcome(1));
+byId('welcome-skip').addEventListener('click', () => moveWelcome(1));
+byId('welcome-back').addEventListener('click', () => moveWelcome(-1));
+byId('open-welcome').addEventListener('click', startWelcome);
+for (const [id, which] of [['welcome-editor', 'practice'], ['welcome-keyboard', 'keyboard']]) {
+  byId(id).addEventListener('click', async () => {
+    if (!await invoke('open_target', { which })) say('無法開啟，請確認完整套件已安裝。');
+  });
+}
+
+// Updates
+let update = null;
+function showUpdate(state) {
+  update = state;
+  const offered = state.offered;
+  const checked = state.checked ? new Date(state.checked * 1000).toLocaleString('zh-TW', { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  byId('update-title').textContent = offered ? '有新版 ' + offered.version.replace(/^v/i, '') : '目前已是最新版';
+  byId('update-note').textContent = offered
+    ? (offered.installer ? '下載後會先核對檔案，再開啟安裝程式。安裝時語音浮窗會關閉，完成後自動開啟新版；設定、詞表、學習資料與模型都保留。' : '這個新版沒有附上這台電腦用的安裝程式，按下按鈕會開啟下載頁。')
+    : '目前版本 ' + state.current + (checked ? '，上次檢查：' + checked : '。');
+  const install = byId('update-install');
+  install.hidden = !offered;
+  install.textContent = offered?.installer ? '下載並安裝' : '開啟下載頁';
+  install.disabled = state.installing;
+  byId('update-notes-row').hidden = !offered?.notes;
+  byId('update-notes').textContent = offered?.notes ?? '';
+}
+byId('update-check').addEventListener('click', async () => {
+  const button = byId('update-check');
+  button.disabled = true;
+  try {
+    showUpdate(await invoke('update_check'));
+    say(update.offered ? '找到新版。' : '目前已是最新版。', true);
+  } catch (reason) {
+    say(String(reason));
+  }
+  button.disabled = false;
+});
+byId('update-install').addEventListener('click', async () => {
+  const button = byId('update-install');
+  button.disabled = true;
+  try {
+    say(await invoke('update_install'), true);
+  } catch (reason) {
+    say(String(reason));
+    showUpdate(await invoke('update_state'));
+  }
+  button.disabled = false;
+});
+listen('update', event => showUpdate(event.payload));
+listen('update-progress', event => {
+  const [stage, have, size] = event.payload;
+  byId('update-note').textContent = stage === 'verify' ? '正在核對下載的檔案…' : '正在下載新版… ' + Math.floor(have * 100 / Math.max(size, 1)) + '%';
+});
+
 document.addEventListener('keydown', event => {
   if (event.key === 'Escape' && !document.querySelector('dialog[open]')) invoke('close_settings');
 });
@@ -824,6 +973,8 @@ invoke('load_settings').then(async loaded => {
   wordForSystem();
   fill();
   for (const control of document.querySelectorAll('.pages select, .pages input, .pages textarea')) accepted.set(control.id, valueOf(control));
+  showUpdate(await invoke('update_state'));
+  if (await invoke('take_welcome')) startWelcome();
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');
   const on = await invoke('learning_state');
   learning.checked = on === true;

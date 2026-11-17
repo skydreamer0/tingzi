@@ -145,6 +145,8 @@ pub struct ModelRow {
     file: &'static str,
     size: String,
     installed: bool,
+    /// Whether the file is in the app's own folder, so the page may offer to delete it.
+    removable: bool,
 }
 
 /// What the settings page shows about the local recogniser.
@@ -175,7 +177,8 @@ pub fn local_state(fetching: State<'_, Fetching>) -> LocalState {
             .iter()
             .filter_map(|item| match item.place {
                 Place::Model(file) => {
-                    Some(ModelRow { id: item.id, title: item.title, note: item.note, file, size: human(item.size), installed: files.iter().any(|name| name == file) })
+                    let removable = own_model(file).is_some();
+                    Some(ModelRow { id: item.id, title: item.title, note: item.note, file, size: human(item.size), installed: files.iter().any(|name| name == file), removable })
                 }
                 Place::Program(_) => None,
             })
@@ -255,6 +258,47 @@ pub fn local_fetch(app: AppHandle, fetching: State<'_, Fetching>, id: String) ->
     Ok(true)
 }
 
+/// A model file the app downloaded into its own folder. Models the user placed elsewhere are theirs to remove.
+fn own_model(file: &str) -> Option<std::path::PathBuf> {
+    let path = recognise::own_root().join("downloads").join(file);
+    (recognise::is_model_name(file) && path.is_file()).then_some(path)
+}
+
+/// The model to use instead once `removed` is gone: the saved choice when it stays, else the first one left.
+fn next_model(saved: Option<&str>, removed: &str, left: &[String]) -> Option<String> {
+    saved.filter(|name| *name != removed && left.iter().any(|kept| kept.as_str() == *name)).or_else(|| left.first().map(String::as_str)).map(str::to_string)
+}
+
+/// Asks, then deletes a model the app downloaded. When it was the one in use, another model on this computer
+/// takes its place; with none left, local recognition needs a new download. Ok(false) means the user said no.
+#[tauri::command(async)]
+pub fn local_delete(app: AppHandle, fetching: State<'_, Fetching>, file: String) -> Result<bool, String> {
+    let path = own_model(&file).ok_or("這個模型不在聽字的資料夾裡，請到它所在的資料夾自己刪除。")?;
+    if fetching.0.lock().unwrap().is_some() {
+        return Err("下載進行中，請等它完成再刪除。".into());
+    }
+    let prefs = Settings::load();
+    let in_use = recognise::local_parts(prefs.local_model.as_deref(), false).is_some_and(|parts| parts.model == path);
+    let left: Vec<String> = recognise::local_models().into_iter().filter(|name| *name != file).collect();
+    let title = MODELS.iter().find(|item| matches!(item.place, Place::Model(name) if name == file)).map_or(file.as_str(), |item| item.title);
+    let size = std::fs::metadata(&path).map(|meta| human(meta.len())).unwrap_or_default();
+    let mut question = format!("要刪除「{title}」嗎？會釋放 {size} 的空間。");
+    if in_use {
+        question += &match left.first() {
+            Some(other) => format!("\n\n這是目前使用的模型，刪除後改用 {other}。"),
+            None => "\n\n這是目前使用的模型，也是這台電腦上唯一的模型。刪除後要再下載一個，本機辨識才能使用。".to_string(),
+        };
+    }
+    if !crate::sys::confirm(crate::sys::owner(app.get_webview_window("settings")), &question) {
+        return Ok(false);
+    }
+    std::fs::remove_file(&path).map_err(|_| "無法刪除這個模型，可能正在辨識中，請稍後再試。".to_string())?;
+    if in_use || prefs.local_model.as_deref() == Some(file.as_str()) {
+        let _ = Settings { local_model: next_model(prefs.local_model.as_deref(), &file, &left), ..prefs }.store();
+    }
+    Ok(true)
+}
+
 /// Stops the download in progress. What has arrived is kept, so asking again carries on from there.
 #[tauri::command]
 pub fn local_fetch_cancel(fetching: State<'_, Fetching>) {
@@ -330,9 +374,9 @@ fn unpack(zip: &Path, folder: &Path) -> Result<PathBuf, String> {
 
 /// How much is asked for in one request. Each request has its own time limit, so a stalled
 /// connection is noticed and the download carries on from where it stopped.
-const CHUNK: u64 = 4 * 1024 * 1024;
+pub(crate) const CHUNK: u64 = 4 * 1024 * 1024;
 
-fn client(url: &str) -> Result<reqwest::blocking::Client, String> {
+pub(crate) fn client(url: &str) -> Result<reqwest::blocking::Client, String> {
     let host = url.split('/').nth(2).unwrap_or_default();
     let mut builder = reqwest::blocking::Client::builder().connect_timeout(Duration::from_secs(15)).timeout(Duration::from_secs(180));
     if let Some(proxy) = recognise::proxy_for(host) {
@@ -349,7 +393,7 @@ fn hex(bytes: &[u8]) -> String {
 /// whole file against `sha256`. A file that fails the check is removed; an interrupted one is kept.
 /// `tell` gets "download" with the bytes so far, then "verify".
 #[allow(clippy::too_many_arguments)]
-fn download(
+pub(crate) fn download(
     client: &reqwest::blocking::Client,
     url: &str,
     size: u64,
@@ -595,5 +639,14 @@ mod tests {
         let folder = part.with_file_name("unpacked");
         let program = unpack(&part, &folder).unwrap();
         assert!(program.is_file());
+    }
+
+    #[test]
+    fn deleting_a_model_moves_to_one_that_is_left() {
+        let left = vec!["ggml-base.bin".to_string(), "ggml-small.bin".to_string()];
+        assert_eq!(next_model(Some("ggml-small.bin"), "ggml-turbo.bin", &left).as_deref(), Some("ggml-small.bin"));
+        assert_eq!(next_model(Some("ggml-small.bin"), "ggml-small.bin", &left).as_deref(), Some("ggml-base.bin"));
+        assert_eq!(next_model(None, "ggml-small.bin", &left).as_deref(), Some("ggml-base.bin"));
+        assert_eq!(next_model(Some("ggml-small.bin"), "ggml-small.bin", &[]), None);
     }
 }

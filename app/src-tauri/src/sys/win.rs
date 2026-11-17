@@ -44,6 +44,8 @@ use winreg::RegKey;
 pub const SYSTEM: &str = "Windows";
 /// What the settings page is told, so it can word itself for this system.
 pub const PLATFORM: &str = "windows";
+/// How the installer for this system is named on the Releases page: its start and end. None when there is none yet, so the page is opened instead.
+pub const UPDATE_INSTALLER: Option<(&str, &str)> = Some(("Tingzi-Setup-", "-x64.exe"));
 /// Where the service key is kept, as the user knows it.
 pub const KEY_STORE: &str = "Windows 認證管理員";
 /// The modifier pairs a shortcut may use, as the user reads them: Ctrl+Alt, Alt+Shift, Ctrl+Shift.
