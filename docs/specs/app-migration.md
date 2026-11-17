@@ -26,7 +26,7 @@
 | `app/src-tauri/src/codex.rs` | 判斷鍵盤是否在 Codex 桌面版的訊息框，供 Ctrl＋Alt＋V 使用。 |
 | `app/src-tauri/src/layout.rs` | 浮窗的三種形狀（收合、橫條、編輯）與位置記憶。 |
 | `app/src-tauri/src/learn.rs` | 從改字學詞：比對最近的辨識紀錄與注音新學到的詞，同音不同字就記成之後口述要套用的詞。 |
-| `app/src-tauri/src/update.rs` | 檢查更新：每天至多一次向 GitHub Releases 查最新版（設定可關閉，關閉後只在使用者按「立即檢查」時連線）；使用者同意後下載安裝程式，核對同一頁的 `.sha256` 後執行。macOS 還沒有安裝程式，改開下載頁。 |
+| `app/src-tauri/src/update.rs` | 自動更新：啟動後與之後每小時看一次是否已滿一天，滿了就向 GitHub Releases 查最新版（設定可關閉，關閉後只在使用者按「立即檢查」時連線）。有新版就在背景下載安裝程式、核對同一頁的 `.sha256`，不在錄音或辨識時以對話框詢問；同意後以 `/SILENT` 執行安裝程式。每次啟動最多問一次。macOS 還沒有安裝程式，改為提示到下載頁。 |
 | `app/src-tauri/src/refine.rs` | AI 潤稿：組成提示、把辨識出的文字送到使用者填的 OpenAI 格式服務、檢查回應；失敗時沿用原文。 |
 | `app/src-tauri/src/panel.rs` | 設定視窗的讀取與儲存、麥克風測試、學習資料與自訂詞的管理。 |
 | `app/src-tauri/src/settings.rs` | 偏好檔 `voice-settings.json`，格式與現有浮窗相同。 |

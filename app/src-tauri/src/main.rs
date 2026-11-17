@@ -326,6 +326,12 @@ fn toggle(app: &AppHandle) {
     }
 }
 
+/// Whether a recording is running or a dictation is being recognised, so nothing should interrupt the user.
+pub fn busy(app: &AppHandle) -> bool {
+    let session = app.state::<Session>();
+    session.recorder.lock().unwrap().is_some() || session.working.load(Ordering::SeqCst)
+}
+
 /// The recording shortcut going down or coming up.
 /// With hold-to-talk, holding records and releasing sends; a tap shorter than a third of a second
 /// latches instead, so the next press stops, as it does without hold-to-talk.
