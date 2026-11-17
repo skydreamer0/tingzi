@@ -96,7 +96,8 @@ def package(source, destination, metadata_path):
             assert archive.read(name) == data
     result = dict(zip=destination.name, sha256=digest(destination.read_bytes()), entries=len(entries), bytes=destination.stat().st_size)
     destination.with_suffix('.manifest.json').write_text(json.dumps(manifest, ensure_ascii=False, indent=2), encoding='utf-8')
-    destination.with_suffix('.sha256').write_text(result['sha256'] + '  ' + destination.name + '\n', encoding='ascii')
+    # Written as bytes so the line ending is the same on every system and checksum tools accept the file.
+    destination.with_suffix('.sha256').write_bytes((result['sha256'] + '  ' + destination.name + '\n').encode('ascii'))
     print(json.dumps(result, ensure_ascii=False))
 
 if __name__ == '__main__':
