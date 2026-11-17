@@ -281,6 +281,25 @@ pub fn learned_words() -> Option<Vec<Learned>> {
     }
 }
 
+/// The words the Zhuyin input method learned, for learning from the user's fixes.
+/// None when its learning cannot be read.
+pub fn typed_words() -> Option<Vec<crate::learn::Typed>> {
+    let words = learned_words()?;
+    Some(words.into_iter().map(|word| crate::learn::Typed { reading: word.reading, text: word.text, hits: word.hits }).collect())
+}
+
+/// The words learned from fixes to dictations, newest last.
+#[tauri::command(async)]
+pub fn voice_learned() -> Vec<Entry> {
+    crate::learn::learned()
+}
+
+/// Takes one of them off the list; it is not learned again. False when it could not be removed.
+#[tauri::command(async)]
+pub fn forget_voice_learned(reading: String, word: String) -> bool {
+    crate::learn::forget(&reading, &word)
+}
+
 /// Removes one learned word. False when the tool is missing or did not remove it.
 #[tauri::command(async)]
 pub fn forget_learned_word(reading: String, text: String) -> bool {
@@ -310,7 +329,9 @@ pub fn learning_data(app: AppHandle, action: String) -> Option<bool> {
             if !dialogs::confirm(owner, "會刪除所有記住的改字習慣，無法復原。要繼續嗎？") {
                 return None;
             }
-            learning_tool(&["clear".as_ref(), "--confirm".as_ref()])
+            // What dictation learned from those habits goes with them.
+            let cleared = crate::learn::clear();
+            learning_tool(&["clear".as_ref(), "--confirm".as_ref()]).map(|(done, said)| (done && cleared, said))
         }
         _ => None,
     };

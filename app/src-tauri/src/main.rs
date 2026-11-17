@@ -11,6 +11,7 @@ mod fetch;
 mod history;
 mod instance;
 mod layout;
+mod learn;
 mod panel;
 mod paths;
 mod recognise;
@@ -132,6 +133,7 @@ fn polish(heard: &str, prefs: &Settings) -> String {
     let traditional = deliver::convert_script(heard.trim(), false);
     let tidied = if prefs.tidy { tidy::tidy(&traditional) } else { traditional };
     let corrected = if prefs.use_phrases { words::apply(&tidied) } else { tidied };
+    let corrected = if prefs.learn_fixes { learn::apply(&corrected) } else { corrected };
     let replaced = if prefs.use_replacements { replace::apply(&corrected) } else { corrected };
     deliver::convert_script(&replaced, prefs.simplified)
 }
@@ -186,7 +188,10 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 if prefs.keep_history {
                     history::add(&text, inserted);
                 }
-                ("done", message.to_string(), text, expand)
+                // Words learned from the user's fixes since the last dictation are mentioned once.
+                let learned = learn::take_fresh();
+                let message = if learned.is_empty() { message.to_string() } else { format!("{message}・已學會「{}」", learned.join("、")) };
+                ("done", message, text, expand)
             }
             (failed, Ok(wav)) if can_retry => {
                 *session.kept.lock().unwrap() = Some(wav);
@@ -231,9 +236,15 @@ fn toggle(app: &AppHandle) {
         Ok(recorder) => {
             *session.recorder.lock().unwrap() = Some(recorder);
             let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
-            // The connection to an online service is opened while the user speaks.
+            // While the user speaks: the connection to an online service is opened, and words typed
+            // to fix earlier dictations are picked up, which needs those dictations to have been kept.
             let ahead = prefs.clone();
-            std::thread::spawn(move || recognise::warm(ahead.engine(), &ahead));
+            std::thread::spawn(move || {
+                recognise::warm(ahead.engine(), &ahead);
+                if ahead.learn_fixes && ahead.keep_history {
+                    learn::catch_up(panel::typed_words());
+                }
+            });
             show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
             stop_at_limit(app.clone(), run);
         }
@@ -722,6 +733,8 @@ fn main() {
             panel::learned_words,
             panel::forget_learned_word,
             panel::open_target,
+            panel::voice_learned,
+            panel::forget_voice_learned,
             fetch::local_state,
             fetch::local_fetch,
             fetch::local_fetch_cancel

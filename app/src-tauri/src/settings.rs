@@ -76,6 +76,8 @@ pub struct Settings {
     pub tidy: bool,
     /// Whether recent dictations are kept on this computer.
     pub keep_history: bool,
+    /// Whether a word typed with Zhuyin to fix a dictation is used to correct later dictations.
+    pub learn_fixes: bool,
 }
 
 impl Default for Settings {
@@ -102,6 +104,7 @@ impl Default for Settings {
             hold_to_talk: false,
             tidy: true,
             keep_history: true,
+            learn_fixes: true,
         }
     }
 }

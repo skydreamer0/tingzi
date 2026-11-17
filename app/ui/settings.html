@@ -108,6 +108,9 @@
           <div class="row">
             <div class="what"><label for="use-phrases">套用自訂詞</label><p data-mac="把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「自訂詞」頁管理。">把同音的字換成你的自訂詞，例如人名和專有名詞。自訂詞在「注音」頁管理。</p></div>
             <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
+          <div class="row" data-windows>
+            <div class="what"><label for="learn-fixes">從改字學詞</label><p>口述之後用注音把聽錯的詞逐字選對，之後的口述會自動寫成這個詞。需要開著「注音」頁的本機學習和「隱私」頁的辨識紀錄。</p></div>
+            <div class="group"><button id="show-voice-learned" type="button" class="button" aria-label="查看從改字學會的詞">查看</button><input id="learn-fixes" type="checkbox" role="switch" class="switch"></div></div>
           <div class="row">
             <div class="what"><label for="use-replacements">套用取代規則</label><p>把常聽錯的字換成你要的寫法，例如把「github」換成「GitHub」。</p></div>
             <div class="group"><button id="manage-replacements" type="button" class="button" aria-label="管理取代規則">管理</button><input id="use-replacements" type="checkbox" role="switch" class="switch"></div></div>
@@ -274,6 +277,17 @@
       <button id="add-app-rule" type="button" class="button primary">加入或更新</button>
       <button id="app-rules-remove" type="button" class="button">刪除選取</button>
       <button id="app-rules-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="voice-learned" aria-labelledby="voice-learned-title">
+    <h1 id="voice-learned-title">從改字學會的詞</h1>
+    <p class="note">口述寫錯、你用注音改對的詞。之後的口述遇到同音的字會換成這些詞。刪掉的詞不會再學。</p>
+    <ul id="voice-learned-list" class="list" role="listbox" tabindex="0" aria-label="從改字學會的詞"></ul>
+    <p id="voice-learned-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="voice-learned-remove" type="button" class="button">刪除選取</button>
+      <button id="voice-learned-close" type="button" class="button">關閉</button>
     </div>
   </dialog>
 

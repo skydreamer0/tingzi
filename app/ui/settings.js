@@ -87,6 +87,7 @@ function fill() {
   byId('tidy').checked = prefs.Tidy;
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
+  byId('learn-fixes').checked = prefs.LearnFixes;
   byId('use-phrases').disabled = !panel.has_word_list;
   byId('delivery').value = String(prefs.DeliveryMode ?? (prefs.AutoInsert ? 0 : 2));
   byId('modifiers').value = String(prefs.Modifiers);
@@ -142,6 +143,7 @@ function collect(engineFromPage) {
       Tidy: byId('tidy').checked,
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
+      LearnFixes: byId('learn-fixes').checked,
       Appearance: number('appearance'),
       SystemAccent: byId('accent').value === '1',
       DeliveryMode: number('delivery'),
@@ -698,6 +700,41 @@ byId('learned-remove').addEventListener('click', async () => {
   if (!await invoke('forget_learned_word', { reading, text })) return void (learnedStatus.textContent = `無法刪除「${text}」。`);
   await readLearned();
   learnedStatus.textContent = `已刪除「${text}」。`;
+});
+
+// Words dictation learned from the user's fixes.
+const voiceLearnedDialog = byId('voice-learned'), voiceLearnedList = byId('voice-learned-list'), voiceLearnedStatus = byId('voice-learned-status');
+let voiceLearned = [], voiceLearnedPick = -1;
+
+function refillVoiceLearned() {
+  const labels = voiceLearned.map(entry => `${entry.word}　${entry.reading.replaceAll('-', ' ')}`);
+  fillList(voiceLearnedList, labels, voiceLearnedPick, index => {
+    voiceLearnedPick = index;
+    refillVoiceLearned();
+  });
+}
+
+async function readVoiceLearned() {
+  voiceLearned = await invoke('voice_learned');
+  voiceLearnedPick = -1;
+  const empty = '還沒有從改字學會任何詞';
+  voiceLearnedList.dataset.empty = empty;
+  voiceLearnedStatus.textContent = voiceLearned.length ? `共 ${voiceLearned.length} 個詞。` : empty;
+  byId('voice-learned-remove').disabled = voiceLearned.length === 0;
+  refillVoiceLearned();
+}
+
+byId('show-voice-learned').addEventListener('click', async () => {
+  voiceLearnedDialog.showModal();
+  await readVoiceLearned();
+});
+byId('voice-learned-close').addEventListener('click', () => voiceLearnedDialog.close());
+byId('voice-learned-remove').addEventListener('click', async () => {
+  if (voiceLearnedPick < 0) return void (voiceLearnedStatus.textContent = '請先在清單選一項。');
+  const { reading, word } = voiceLearned[voiceLearnedPick];
+  if (!await invoke('forget_voice_learned', { reading, word })) return void (voiceLearnedStatus.textContent = `無法刪除「${word}」。`);
+  await readVoiceLearned();
+  voiceLearnedStatus.textContent = `已刪除「${word}」，不會再學這個詞。`;
 });
 
 document.addEventListener('keydown', event => {
