@@ -1,4 +1,4 @@
-"""Build 聽字-Setup-<version>-x64.exe from a release ZIP made by package_release.py.
+"""Build Tingzi-Setup-<version>-x64.exe from a release ZIP made by package_release.py.
 
 The installer carries the ZIP unchanged, unpacks it and runs InstallTingzi.cmd from it, so the
 registration and upgrade rules stay in one place. Needs Inno Setup 6.3 or later (ISCC.exe).
@@ -55,7 +55,7 @@ def build(release, output, compiler):
         # Checked here so a damaged or hand-edited ZIP never becomes an installer.
         version = unpack(release, payload)
         output.mkdir(parents=True, exist_ok=True)
-        target = output / ('聽字-Setup-' + version + '-x64.exe')
+        target = output / ('Tingzi-Setup-' + version + '-x64.exe')
         if target.exists():
             raise SystemExit('Destination already exists; remove it or choose another folder: ' + str(target))
         subprocess.run([str(compiler), '/Qp', '/DAppVersion=' + version, '/DPayloadZip=' + str(release.resolve()), '/DOutputDir=' + str(output.resolve()), str(SCRIPT.resolve())], check=True)
@@ -67,7 +67,7 @@ def build(release, output, compiler):
     print(json.dumps(dict(installer=target.name, version=version, sha256=sha, bytes=target.stat().st_size), ensure_ascii=False))
 
 if __name__ == '__main__':
-    # The installer's name is Chinese; a Windows console may not default to UTF-8.
+    # The output can include Chinese; a Windows console may not default to UTF-8.
     sys.stdout.reconfigure(encoding='utf-8')
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('release', type=Path, help='release ZIP from package_release.py')

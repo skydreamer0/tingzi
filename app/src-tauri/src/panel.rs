@@ -10,6 +10,7 @@ use crate::{audio, paths};
 use std::ffi::OsStr;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 use std::time::Duration;
 use tauri::{AppHandle, Emitter, Manager, State, WebviewUrl, WebviewWindowBuilder};
@@ -223,6 +224,39 @@ pub fn open(app: &AppHandle) {
             .center()
             .build();
     });
+}
+
+/// Set when the settings window should open on the first-run steps; the page takes it once.
+static WELCOME: AtomicBool = AtomicBool::new(false);
+
+/// The file that says the first-run steps were offered, so they open by themselves only once.
+fn welcomed_file() -> std::path::PathBuf {
+    paths::data().join("welcomed")
+}
+
+/// Whether this start should offer the first-run steps: nothing was ever set up on this computer.
+/// Someone upgrading has saved choices, so they are not asked again.
+fn first_run(saved: bool, welcomed: bool) -> bool {
+    !saved && !welcomed
+}
+
+/// On a computer where Tingzi was never set up, opens the settings window on the first-run steps.
+pub fn welcome_first_run(app: &AppHandle) {
+    if !first_run(Settings::saved(), welcomed_file().exists()) {
+        return;
+    }
+    // Marked before showing, so closing the window, or a crash, does not bring the steps back at every start.
+    if std::fs::create_dir_all(paths::data()).and_then(|_| std::fs::write(welcomed_file(), b"")).is_err() {
+        return;
+    }
+    WELCOME.store(true, Ordering::SeqCst);
+    open(app);
+}
+
+/// Whether the settings page should start with the first-run steps. True at most once per request.
+#[tauri::command]
+pub fn take_welcome() -> bool {
+    WELCOME.swap(false, Ordering::SeqCst)
 }
 
 #[tauri::command]
@@ -462,13 +496,34 @@ pub fn open_target(which: String) -> bool {
         "home" => dialogs::open("https://github.com/skydreamer0/tingzi"),
         "issues" => dialogs::open("https://github.com/skydreamer0/tingzi/issues"),
         "folder" => std::fs::create_dir_all(paths::data()).is_ok() && dialogs::open(&paths::data().to_string_lossy()),
+        "practice" => crate::sys::quiet(&mut practice_editor()).spawn().is_ok(),
         _ => false,
+    }
+}
+
+/// A plain text editor that comes with the system, for practising the first dictation in a real program.
+fn practice_editor() -> Command {
+    if cfg!(target_os = "macos") {
+        let mut open = Command::new("open");
+        open.args(["-a", "TextEdit"]);
+        open
+    } else {
+        Command::new("notepad.exe")
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_first_run_steps_are_only_for_a_new_computer() {
+        assert!(first_run(false, false));
+        // Someone upgrading already has saved choices.
+        assert!(!first_run(true, false));
+        assert!(!first_run(false, true));
+        assert!(!first_run(true, true));
+    }
 
     #[test]
     fn accent_text_stays_readable() {

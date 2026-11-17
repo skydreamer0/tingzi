@@ -30,6 +30,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 2. 第一次錄音時，macOS 會詢問是否允許使用**麥克風**。
 3. 第一次要把文字貼回其他程式時，macOS 會要求**輔助使用**權限（系統設定 > 隱私權與安全性 > 輔助使用）。允許之前，文字只會複製到剪貼簿並留在浮窗，自己按 Command＋V 貼上。
 4. 重新建置後簽章會改變，macOS 可能再問一次這兩項權限。
+5. 第一次在這台 Mac 開啟時，設定視窗會帶你選麥克風、選辨識方式，並在文字編輯裡練習一句。每一步都可以略過，之後可以在「關於」頁按「首次設定」重來。
 
 ## 和 Windows 版不同的地方
 
@@ -45,6 +46,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 | AI 潤稿的金鑰 | 存在登入鑰匙圈，和自選服務的金鑰分開 |
 | 登入時啟動 | 在 `~/Library/LaunchAgents/app.tingzi.voice.plist` 寫一個啟動項目 |
 | 個人資料 | `~/Library/Application Support/Tingzi` |
+| 檢查更新 | 和 Windows 版一樣在「關於」頁檢查與提示，但還沒有 macOS 的安裝程式，所以按鈕是「開啟下載頁」 |
 | 注音頁 | 只留下自訂詞；鍵盤配置、文字範本、本機學習等注音輸入法的項目不顯示 |
 
 ## 本機 Whisper
