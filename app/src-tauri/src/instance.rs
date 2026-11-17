@@ -19,15 +19,20 @@ pub enum Request {
     /// The Zhuyin input method switched between Chinese and English.
     Chinese,
     English,
+    /// Letters and digits switched between full-width and half-width.
+    FullWidth,
+    HalfWidth,
 }
 
-const SIGNALS: [(&str, fn() -> Request); 6] = [
+const SIGNALS: [(&str, fn() -> Request); 8] = [
     ("TingziFloatShow020", || Request::Show),
     ("TingziVoiceSettings", || Request::Settings),
     ("TingziEditPreview", || Request::Edit),
     ("TingziOpenWav", || Request::OpenWav(waiting_file())),
     ("TingziChinese", || Request::Chinese),
     ("TingziEnglish", || Request::English),
+    ("TingziFullWidth", || Request::FullWidth),
+    ("TingziHalfWidth", || Request::HalfWidth),
 ];
 
 /// A development build started with TINGZI_RECORD_KEY uses its own names, so it can run beside the installed app.

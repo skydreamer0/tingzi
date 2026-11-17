@@ -81,7 +81,14 @@ class CompositionLine {
             ExtTextOutW(dc,x,y,ETO_OPAQUE,&highlight,runs.active.data(),UINT(runs.active.size()),nullptr);
         }
         SetTextColor(dc,colors.text);
-        TextOutW(dc,x+active,y,runs.after.data(),int(runs.after.size()));
+        // With nothing being typed, a bar marks where the caret sits inside the sentence.
+        int gap=0;
+        if(!active && !runs.after.empty()){
+            RECT bar{x,y,x+2,y+tm.tmHeight};
+            SetDCBrushColor(dc,colors.text);FillRect(dc,&bar,(HBRUSH)GetStockObject(DC_BRUSH));
+            gap=4;
+        }
+        TextOutW(dc,x+active+gap,y,runs.after.data(),int(runs.after.size()));
         SelectObject(dc,old);EndPaint(hwnd,&ps);
     }
 public:

@@ -94,7 +94,7 @@ int wmain(int argc,wchar_t** argv) {
     expect(input.press(VK_RETURN)==L"你好，你好！","sentence with punctuation commits whole");
     expect(input.press(VK_OEM_4)==L"「" && input.press(shiftKey|'6')==L"……","brackets and ellipsis");
     input.press(VK_OEM_3);
-    expect(input.selecting() && input.listTitle()==L"符號" && input.choices().size()>20,"backtick opens the symbol list");
+    expect(input.selecting() && input.listTitle().rfind(L"符號・常用",0)==0 && input.choices().size()>20,"backtick opens the symbol list");
     expect(input.press('2')==L"。" && !input.active(),"symbol from the list commits when idle");
     enter("SU3");input.press(VK_OEM_3);input.press('1');
     expect(input.press(VK_RETURN)==L"你，","symbol from the list joins the sentence");
@@ -129,6 +129,54 @@ int wmain(int argc,wchar_t** argv) {
     expect(input.press(shiftKey|VK_RETURN)==L"你好" && input.addedWord() && input.addedWord()->reading==L"ㄋㄧˇ-ㄏㄠˇ" && input.addedWord()->text==L"你好","Shift+Enter commits and remembers the word");
     enter("SU3");
     expect(input.press(VK_RETURN)==L"你" && !input.addedWord(),"plain Enter remembers nothing");
+
+    // The caret: move inside the sentence, change one character, type and delete in the middle.
+    auto pick=[&](const Text& wanted,size_t count){
+        auto list=input.choices();
+        size_t at=0;while(at<list.size() && !(list[at].text==wanted && list[at].count==count))++at;
+        if(at>=list.size())return false;
+        while(input.currentPage()<at/9)input.press(VK_NEXT);
+        input.press('1'+at%9);return true;
+    };
+    input.clear();
+    enter("SU3CL3A87");
+    input.press(VK_LEFT);
+    runs=input.displayRuns();
+    expect(runs.before==L"你好" && runs.active.empty() && runs.after==L"嗎" && input.caretOffset()==2 && input.caretInside(),"Left moves the caret inside the sentence");
+    input.press(VK_DOWN);
+    options=input.choices();
+    auto other=std::find_if(options.begin(),options.end(),[](const Choice& c){return c.count==1 && c.text!=L"好";});
+    expect(input.selecting() && other!=options.end(),"Down chooses the character left of the caret");
+    Text swapped=other->text;
+    expect(pick(swapped,1) && input.preview()==L"你"+swapped+L"嗎","changing a middle character keeps its neighbours");
+    input.press(VK_DOWN);
+    options=input.choices();
+    expect(options.front().text==swapped && std::all_of(options.begin(),options.end(),[](const Choice& c){return c.count==1;}),"a settled character can be chosen again");
+    expect(pick(L"好",1) && input.preview()==L"你好嗎","and changed back");
+    input.press(VK_RIGHT);
+    expect(!input.caretInside() && input.caretOffset()==3,"Right past the last character returns to the end");
+    input.press(VK_HOME);
+    expect(input.caretOffset()==0 && input.displayRuns().after==L"你好嗎","Home goes to the start");
+    input.clear();
+    enter("SU3A87");input.press(VK_LEFT);enter("CL3");
+    expect(input.preview()==L"你好嗎" && input.caretOffset()==2,"typing at the caret inserts a syllable");
+    enter("C");
+    runs=input.displayRuns();
+    expect(runs.before==L"你好" && runs.active==L"ㄏ" && runs.after==L"嗎" && input.preview()==L"你好ㄏ嗎","the reading being typed shows at the caret");
+    input.press(VK_BACK);input.press(VK_BACK);
+    expect(input.preview()==L"你嗎" && input.caretOffset()==1,"Backspace removes the syllable before the caret");
+    input.press(VK_DELETE);
+    expect(input.preview()==L"你" && !input.caretInside(),"Delete removes the syllable after the caret");
+    input.clear();
+    enter("SU3CL3A87");input.press(VK_END);
+    options=input.choices();
+    expect(input.selecting() && options.front().text==L"嗎","End chooses the last character");
+    other=std::find_if(options.begin(),options.end(),[](const Choice& c){return c.count==1 && c.text!=L"嗎";});
+    swapped=other==options.end()?Text():other->text;
+    expect(!swapped.empty() && pick(swapped,1) && input.preview()==L"你好"+swapped,"and leaves the words before it alone");
+    expect(input.press(VK_RETURN)==L"你好"+swapped,"the edited sentence commits whole");
+    input.press(VK_OEM_3);input.press(VK_TAB);
+    expect(input.listTitle().rfind(L"符號・括號",0)==0 && input.press('1')==L"「","Tab in the symbol list moves to the next group");
 
     {
         wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);

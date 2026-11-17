@@ -9,8 +9,6 @@
 </head>
 <body>
   <svg class="sprite" aria-hidden="true">
-    <symbol id="i-stop" viewBox="0 0 24 24"><rect x="7" y="7" width="10" height="10" rx="2.5" fill="currentColor" stroke="none"/></symbol>
-    <symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6L18 18M18 6L6 18"/></symbol>
     <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6C5 4.9 5.9 4 7 4H15"/></symbol>
     <symbol id="i-edit" viewBox="0 0 24 24"><path d="M4 20L8 19L19 8L16 5L5 16Z"/><path d="M14 7L17 10"/></symbol>
     <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7H19M9 7V4H15V7M7 7L8 20H16L17 7M10 11V16M14 11V16"/></symbol>
@@ -22,10 +20,22 @@
   <main class="capsule" data-state="idle" data-layout="docked">
     <div class="bar" data-tauri-drag-region>
       <button id="mic" class="mic" type="button" aria-label="開始錄音" aria-pressed="false">
-        <img class="brand-mark" src="mark.svg" alt="">
-        <svg class="glyph glyph-stop"><use href="#i-stop"/></svg>
-        <svg class="glyph glyph-cancel"><use href="#i-close"/></svg>
-        <svg class="glyph glyph-done"><use href="#i-check"/></svg>
+        <!-- The mark inline (same shapes as mark.svg) so each part can show the state. -->
+        <svg class="key" viewBox="0 0 64 64" aria-hidden="true" focusable="false">
+          <rect class="key-base" x="2" y="6" width="60" height="53" rx="13"/>
+          <g class="key-face">
+            <rect class="key-top" x="3.75" y="7.75" width="56.5" height="46" rx="11"/>
+            <g class="key-ink">
+              <path class="key-bar b4" stroke-width="4" d="M46 15v29"/>
+              <path stroke-width="3" d="M17 21h29"/>
+              <path stroke-width="4" d="M12 38h34"/>
+              <path class="key-bar b3" stroke-width="3.5" d="M36 21v17"/>
+              <path class="key-bar b2" stroke-width="3.5" d="M27 21v17"/>
+              <path class="key-bar b1" stroke-width="4" d="M18 17l-2 25"/>
+            </g>
+          </g>
+        </svg>
+        <span class="done-badge"><svg class="glyph"><use href="#i-check"/></svg></span>
       </button>
       <div class="body" data-tauri-drag-region>
         <p id="detail" class="detail" data-tauri-drag-region></p>

@@ -56,6 +56,23 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     }
     std::unique_ptr<Input> input;
     bool chinese=true, shiftPending=false;
+    // Letters, digits and the space bar come out full-width while this is on; Shift+Space switches it.
+    bool fullWidth=false;
+    static bool otherModifier(){
+        return ((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN))&0x8000)!=0;
+    }
+    bool widthSwitch(ITfContext* c,WPARAM k) const {
+        return k==VK_SPACE && (GetKeyState(VK_SHIFT)&0x8000) && !otherModifier() && !losingFocus && input && c && !input->active();
+    }
+    // The key as one full-width character for the engine to commit, or 0 when it is not a printable key.
+    WPARAM literal(ITfContext* c,WPARAM k,LPARAM flags) const {
+        if(!fullWidth || losingFocus || !input || !c || input->active() || otherModifier())return 0;
+        BYTE state[256];wchar_t typed[4];
+        // Flag 4 asks Windows to translate without disturbing dead-key state.
+        if(!GetKeyboardState(state) || ToUnicode(UINT(k),UINT((flags>>16)&0xff),state,typed,4,4)!=1)return 0;
+        if(typed[0]==L' ')return literalKey|0x3000;
+        return typed[0]>0x20 && typed[0]<0x7f?literalKey|WPARAM(typed[0]+0xfee0):0;
+    }
     static WPARAM withShift(WPARAM k){return (GetKeyState(VK_SHIFT)&0x8000)?(k|shiftKey):k;}
     static bool shift(WPARAM k){return k==VK_SHIFT || k==VK_LSHIFT || k==VK_RSHIFT;}
     static bool shortcut(){
@@ -64,8 +81,10 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     bool canSwitch() const {return input && !input->active() && !shortcut();}
     void indicateMode(){
 #ifndef TINGZI_STANDALONE
-        auto event=OpenEventW(EVENT_MODIFY_STATE,FALSE,chinese?L"Local\\TingziChinese":L"Local\\TingziEnglish");
-        if(event){SetEvent(event);CloseHandle(event);}
+        for(auto name:{chinese?L"Local\\TingziChinese":L"Local\\TingziEnglish",fullWidth?L"Local\\TingziFullWidth":L"Local\\TingziHalfWidth"}){
+            auto event=OpenEventW(EVENT_MODIFY_STATE,FALSE,name);
+            if(event){SetEvent(event);CloseHandle(event);}
+        }
 #endif
     }
     void startFloat(){
@@ -263,10 +282,10 @@ public:
     STDMETHODIMP OnUninitDocumentMgr(ITfDocumentMgr*) override {return S_OK;}
     STDMETHODIMP OnPushContext(ITfContext* c) override {if(composingIn && c!=composingIn.Get())endLater();return S_OK;}
     STDMETHODIMP OnPopContext(ITfContext* c) override {if(c==composingIn.Get())endLater();return S_OK;}
-    STDMETHODIMP OnTestKeyDown(ITfContext* c,WPARAM k,LPARAM,BOOL* eat) override {
+    STDMETHODIMP OnTestKeyDown(ITfContext* c,WPARAM k,LPARAM flags,BOOL* eat) override {
         if(!eat)return E_POINTER;
         if(!shift(k))shiftPending=false;
-        *eat=shift(k)?canSwitch():wants(c,k);return S_OK;
+        *eat=shift(k)?canSwitch():(widthSwitch(c,k) || wants(c,k) || literal(c,k,flags));return S_OK;
     }
     STDMETHODIMP OnKeyDown(ITfContext* c,WPARAM k,LPARAM flags,BOOL* eat) override {
         if(!eat)return E_POINTER;
@@ -275,8 +294,10 @@ public:
             *eat=canSwitch();return S_OK;
         }
         shiftPending=false;
-        *eat=FALSE;if(!wants(c,k))return S_OK;
-        auto session=new KeyEdit(this,c,withShift(k));HRESULT result=E_FAIL;
+        if(widthSwitch(c,k)){fullWidth=!fullWidth;indicateMode();*eat=TRUE;return S_OK;}
+        const WPARAM typed=wants(c,k)?withShift(k):literal(c,k,flags);
+        *eat=FALSE;if(!typed)return S_OK;
+        auto session=new KeyEdit(this,c,typed);HRESULT result=E_FAIL;
         HRESULT hr=c->RequestEditSession(client,session,TF_ES_SYNC|TF_ES_READWRITE,&result);
         session->Release();*eat=SUCCEEDED(hr)&&result==S_OK;return S_OK;
     }
@@ -349,8 +370,11 @@ public:
         Text text=next.active()?next.preview():commit;
         hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr))return hr;
         ComPtr<ITfRange> caret;
-        if(SUCCEEDED(range->Clone(&caret)) && SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_END))){
-            TF_SELECTION s{caret.Get(),{TF_AE_NONE,FALSE}};c->SetSelection(ec,1,&s);
+        if(SUCCEEDED(range->Clone(&caret))){
+            // The application's own caret follows the one inside the sentence.
+            LONG moved=0;
+            if(next.active() && next.caretInside() && SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_START)))caret->ShiftEnd(ec,LONG(next.caretOffset()),&moved,nullptr);
+            if(SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_END))){TF_SELECTION s{caret.Get(),{TF_AE_NONE,FALSE}};c->SetSelection(ec,1,&s);}
         }
         input=std::make_unique<Input>(std::move(next));
         if(input->active()){present(ec,c,range.Get(),true);return S_OK;}

@@ -12,6 +12,36 @@ let idleText = '點圖示開始錄音';
 // What the Zhuyin input method is typing, once it has said so.
 let mode = '';
 let recordingSince = 0, clock = 0, noticeTimer = 0;
+const key = mic.querySelector('.key');
+const still = matchMedia('(prefers-reduced-motion: reduce)');
+// Latest microphone level (square-rooted) and what the bars currently show.
+let heard = 0, shown = 0, frame = 0, tapTimer = 0;
+
+// Fast attack, slower release, so the bars fall back instead of flickering.
+function follow() {
+  shown = Math.max(heard, shown * 0.85);
+  key.style.setProperty('--level', shown.toFixed(3));
+  frame = requestAnimationFrame(follow);
+}
+
+function startBars() {
+  heard = shown = 0;
+  if (!still.matches && !frame) frame = requestAnimationFrame(follow);
+}
+
+function stopBars() {
+  cancelAnimationFrame(frame);
+  frame = 0;
+  key.style.removeProperty('--level');
+}
+
+// The keycap dips once, as if the key had been pressed.
+function tap() {
+  if (still.matches) return;
+  clearTimeout(tapTimer);
+  mic.classList.add('tap');
+  tapTimer = setTimeout(() => mic.classList.remove('tap'), 140);
+}
 
 function elapsed() {
   const seconds = Math.floor((Date.now() - recordingSince) / 1000);
@@ -34,11 +64,16 @@ function render() {
 }
 
 function receive(next) {
-  if (next.state === 'recording' && voice.state !== 'recording') {
+  const was = voice.state;
+  if (next.state === 'recording' && was !== 'recording') {
     recordingSince = Date.now();
     clock = setInterval(render, 500);
+    startBars();
+    tap();
   } else if (next.state !== 'recording') {
     clearInterval(clock);
+    if (was === 'recording') { stopBars(); tap(); }
+    else if (next.state === 'done' && was !== 'done') tap();
   }
   voice = next;
   editor.value = next.text;
@@ -77,7 +112,10 @@ listen('layout', event => setLayout(event.payload));
 listen('look', event => applyLook(event.payload));
 listen('mode', event => { mode = event.payload; render(); });
 // Square root keeps quiet speech visible on the meter.
-listen('level', event => { level.style.width = Math.round(Math.sqrt(event.payload) * 100) + '%'; });
+listen('level', event => {
+  heard = Math.sqrt(Math.min(1, Math.max(0, Number(event.payload) || 0)));
+  level.style.width = Math.round(heard * 100) + '%';
+});
 
 function applyLook(look) {
   const root = document.documentElement;

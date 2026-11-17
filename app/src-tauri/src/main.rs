@@ -50,6 +50,21 @@ struct Session {
     draft_shortcut: AtomicBool,
     /// Whether the Zhuyin input method is typing Chinese or English, once it has said so.
     mode: Mutex<&'static str>,
+    /// Whether the input method is typing full-width letters and digits.
+    full_width: AtomicBool,
+}
+
+impl Session {
+    /// The input method's state as the window shows it, or empty before it has said anything.
+    fn mode_label(&self) -> String {
+        let mode = *self.mode.lock().unwrap();
+        match (mode.is_empty(), self.full_width.load(Ordering::SeqCst)) {
+            (true, false) => String::new(),
+            (true, true) => "全形".into(),
+            (false, false) => mode.into(),
+            (false, true) => format!("{mode}・全形"),
+        }
+    }
 }
 
 fn draft_keys() -> Shortcut {
@@ -305,10 +320,14 @@ fn serve(app: &AppHandle, request: Request) {
         Request::Settings => panel::open(app),
         Request::Edit => edit(app),
         Request::OpenWav(file) => import(app, file),
-        Request::Chinese | Request::English => {
-            let mode = if request == Request::Chinese { "中文" } else { "英數" };
-            *app.state::<Session>().mode.lock().unwrap() = mode;
-            let _ = app.emit("mode", mode);
+        Request::Chinese | Request::English | Request::FullWidth | Request::HalfWidth => {
+            let session = app.state::<Session>();
+            match request {
+                Request::Chinese => *session.mode.lock().unwrap() = "中文",
+                Request::English => *session.mode.lock().unwrap() = "英數",
+                _ => session.full_width.store(request == Request::FullWidth, Ordering::SeqCst),
+            }
+            let _ = app.emit("mode", session.mode_label());
         }
     }
 }
@@ -356,7 +375,7 @@ struct Facts {
     state: &'static str,
     message: String,
     text: String,
-    mode: &'static str,
+    mode: String,
 }
 
 #[tauri::command]
@@ -366,7 +385,7 @@ fn facts(app: AppHandle, keys: State<'_, Keys>, session: State<'_, Session>) -> 
         look: panel::look(&Settings::load(), keys.label()),
         layout: layout::current(&app),
         state: if state.is_empty() { "idle" } else { state },
-        mode: *session.mode.lock().unwrap(),
+        mode: session.mode_label(),
         message: session.message.lock().unwrap().clone(),
         text: session.preview.lock().unwrap().clone(),
     }
