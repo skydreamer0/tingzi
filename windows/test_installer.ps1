@@ -18,12 +18,27 @@ function Report {
 
 function Check($condition, $message) { if (!$condition) { Report; throw "FAILED: $message" } else { Write-Host "ok: $message" } }
 
+function Run($name) {
+    (Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs "$name.log") + '"') -Wait -PassThru).ExitCode
+}
 function Install($name) {
-    $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs "$name.log") + '"') -Wait -PassThru
-    Check ($process.ExitCode -eq 0) "$name exits with 0 (got $($process.ExitCode))"
+    $code = Run $name
+    Check ($code -eq 0) "$name exits with 0 (got $code)"
 }
 
-Install 'install'
+# GitHub's Windows runners run as a service, where the text services framework cannot read back a
+# profile it has just registered, so InstallTingzi.cmd fails there with code 6 whatever installs it.
+# On such a machine the installer must still stop cleanly: exit code 7, nothing registered, no entry in
+# the apps list. The full install, upgrade and removal is then checked on a real Windows computer.
+$code = Run 'install'
+if ($code -eq 7 -and (Select-String -Path (Join-Path $logs 'install.log') -Pattern 'GetProfile: 0x80004005' -Quiet)) {
+    Check (!(Test-Path $uninstallKey)) 'a failed registration leaves no apps list entry'
+    Check (!(Test-Path $serviceKey)) 'a failed registration leaves no text service registered'
+    Check (!(Test-Path "$root\unins000.exe")) 'a failed registration leaves no uninstaller'
+    Write-Host '::warning::This machine cannot register the text service (TSF GetProfile fails), so only the installer''s refusal was checked. Install, upgrade and removal still need a check on a real Windows computer.'
+    exit 0
+}
+Check ($code -eq 0) "install exits with 0 (got $code)"
 $entry = Get-ItemProperty $uninstallKey
 Check ($entry.DisplayName -eq '聽字・注音與語音輸入法') 'the apps list shows the product name'
 Check ($entry.DisplayVersion -match '^\d+\.\d+\.\d+$') "the apps list shows version $($entry.DisplayVersion)"
