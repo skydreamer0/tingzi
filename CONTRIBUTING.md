@@ -19,7 +19,7 @@
 1. 在 Issue 說明問題、預期行為、驗收方式與不包含的範圍。較大的行為或結構變更先提出規格供討論。
 2. 執行適合該變更的檢查，記錄 commit、指令、結果與未驗證項目。不要用編譯成功代替互動驗收。
 3. 執行 `git diff --check` 與 `git status --short`，檢查新增檔案與個人資料。
-4. 透過 [GitHub Pull Requests](https://github.com/skydreamer0/tingzi/pulls) 提交變更，連結對應 Issue。說明使用者可觀察的影響與驗證結果，以及升級、移除或回復受到的影響。
+4. 透過 [GitHub Pull Requests](https://github.com/skydreamer0/tingzi/pulls) 提交變更，依 [PR 範本](.github/pull_request_template.md) 填寫說明並連結對應 Issue：使用者可觀察的影響、驗證結果與尚未驗證的項目，以及升級、移除或回復受到的影響。
 5. 使用者看得到的改變，在 [`CHANGELOG.md`](CHANGELOG.md) 的「尚未發行」底下加一項：放進新增、變更、修正、移除等分類，以「功能區：」開頭，寫成完整的句子，句末附 PR 或 Issue 編號。只改文件、測試或建置流程時不用加。
 
 ## 發行說明
