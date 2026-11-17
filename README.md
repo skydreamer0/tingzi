@@ -14,6 +14,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 [![最新版本](https://img.shields.io/github/v/release/skydreamer0/tingzi?label=%E6%9C%80%E6%96%B0%E7%89%88%E6%9C%AC)](https://github.com/skydreamer0/tingzi/releases/latest)
 [![平台](https://img.shields.io/badge/%E5%B9%B3%E5%8F%B0-Windows%2010%20%2F%2011%20x64-0078D4)](#下載與安裝)
 [![授權](https://img.shields.io/github/license/skydreamer0/tingzi?label=%E6%8E%88%E6%AC%8A)](LICENSE)
+[![Windows 建置](https://github.com/skydreamer0/tingzi/actions/workflows/windows.yml/badge.svg)](https://github.com/skydreamer0/tingzi/actions/workflows/windows.yml)
 [![macOS 建置](https://github.com/skydreamer0/tingzi/actions/workflows/macos.yml/badge.svg)](https://github.com/skydreamer0/tingzi/actions/workflows/macos.yml)
 
 [下載](https://github.com/skydreamer0/tingzi/releases/latest) ·
@@ -26,20 +27,20 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ![聽字的三個步驟：點聽字圖示說話、文字插入游標、用注音改同音字](docs/images/how-it-works.svg)
 
-把游標放在記事本、瀏覽器或任何文字欄位，點一下螢幕邊緣的聽字圖示說話，說完文字就插入游標位置。語音辨識難免寫錯同音字，這時切到聽字內建的注音輸入法，在原地打注音改字就好，不用換工具，也不用另外安裝其他輸入法。
+把游標放在記事本、瀏覽器或任何文字欄位，點一下螢幕邊緣的聽字圖示說話，說完文字就插入游標位置。語音辨識難免寫錯同音字，這時切到聽字內建的注音輸入法，在原處打注音改字，不必切換到其他工具或另外安裝輸入法。
 
 ## 為什麼用聽字
 
 - **語音和注音在同一個工具裡**：大段文字用說的，同音字用注音改。改過一次的詞，下次口述會自動寫對。
-- **錄音去哪裡由你決定**：可以完全在自己的電腦辨識（本機 Whisper，含針對台灣華語的 Breeze ASR 25），也可以用自己選的線上服務。
+- **自行決定錄音的去向**：可以完全在自己的電腦辨識（本機 Whisper，含針對台灣華語的 Breeze ASR 25），也可以用自己選的線上服務。
 - **針對繁體中文**：自動補上中文標點、去掉「嗯、呃」和口吃重複；注音支援大千與倚天鍵盤，長句會依前後文選字。
-- **自由軟體**：以 MIT 授權釋出，內建的注音詞庫來自 McBopomofo 的公開詞庫。
+- **開放原始碼**：程式以 MIT 授權釋出，內建的注音詞庫來自 McBopomofo 的公開詞庫。
 
 ## 下載與安裝
 
 | 平台 | 狀態 | 取得方式 |
 | --- | --- | --- |
-| Windows 10／11（x64） | 預覽版 0.7.7 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
+| Windows 10／11（x64） | 預覽版 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
 | macOS | 準備中，尚未發行 | 只有語音輸入，沒有注音；目前只能[自行建置](macos/README.md) |
 
 **Windows 安裝步驟**
@@ -62,11 +63,16 @@ Traditional Chinese voice and Zhuyin input for Windows.
 1. 點一下記事本正文，把游標放在要插字的地方。
 2. 點螢幕邊緣的聽字圖示，或按 **Ctrl＋Alt＋R** 開始說話；再按一次停止。
 3. 文字插入游標位置，同時複製到剪貼簿。
-4. 有同音字寫錯時，按 **Win＋空白鍵** 切到「聽字・注音與語音輸入法」，刪掉寫錯的字，在原處打注音，按 **↓** 選字，按 **Enter** 送出。
+4. 有同音字寫錯時，按 **Windows＋空白鍵** 切到「聽字・注音與語音輸入法」，刪掉寫錯的字，在原處打注音，按 **↓** 選字，按 **Enter** 送出。
 
-想按著講、放開就送出，可以在設定的「一般」頁改成「按住說話，放開送出」。
+若想按住快捷鍵說話、放開時送出，可以在設定的「一般」頁改成「按住說話，放開送出」。錄音快捷鍵也在同一頁更換。
 
 ## 功能
+
+### 首次設定與更新
+
+- **首次設定**：第一次開啟時，設定視窗會依序帶你選麥克風並測試收音、選辨識方式，並在記事本口述一句、用注音改一個字。每一步都可以略過，之後可在「關於」頁重新開始。
+- **自動更新（Windows）**：每天最多檢查一次新版，找到時在背景下載並核對安裝程式，詢問後才安裝；設定與資料都會保留。可以在「關於」頁關閉，改成手動檢查。
 
 ### 語音輸入
 
@@ -78,6 +84,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 - **自訂詞與取代規則**：人名、專有名詞優先寫對；固定聽錯的詞或英文大小寫，可以用「聽到的字 → 要換成的字」修正。
 - **從改字學詞**：口述寫錯的詞用注音改對一次，之後同音的口述就會自動寫成這個詞。
 - **AI 潤稿（選用，預設關閉）**：把辨識出的文字交給你自己設定的 OpenAI 格式服務，整理改口、贅詞與標點；浮條會註明每一句有沒有潤稿，紀錄裡可以取回潤稿前的文字，服務出錯時照常插入原文。
+- **錄音快捷鍵**：預設 **Ctrl＋Alt＋R**，可以在設定頁直接按下想用的組合來更換，也能用 F1 到 F24 單鍵。
 - **辨識紀錄**：最近 50 則只存在自己的電腦，可以從浮窗取回；**Alt＋Shift＋Z** 把上一則再貼一次。
 - **依程式設定**：替個別程式指定繁體或簡體、是否整理口語、是否潤稿，以及辨識完成後怎麼處理。
 
@@ -94,8 +101,8 @@ Traditional Chinese voice and Zhuyin input for Windows.
 ### 其他
 
 - **繁體／簡體輸出**：語音結果和注音送出的字都照設定轉換；浮條與系統匣也能把剪貼簿文字簡繁互轉。
-- **跟著系統外觀**：深色、淺色模式與 Windows 強調色。
-- **設定改了就套用**：「一般」、「語音」、「注音」、「隱私」、「關於」五頁，不需要另外儲存。
+- **依系統外觀**：深色、淺色模式與 Windows 強調色。
+- **設定即時套用**：「一般」、「語音」、「注音」、「隱私」、「關於」五頁，變更後立即生效，不需要另外儲存。
 
 ## 辨識方式與隱私
 
@@ -103,11 +110,16 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 | 辨識方式 | 錄音送到哪裡 | 需要什麼 |
 | --- | --- | --- |
-| 本機 Whisper | 留在自己的電腦 | 在設定頁一鍵下載模型與 whisper.cpp；下載前列出來源、大小與授權。有 NVIDIA 顯示卡可以另外下載加速元件 |
+| 本機 Whisper | 留在自己的電腦 | 在設定頁一鍵下載模型與 whisper.cpp；下載前列出來源、大小與授權，不用的模型可以刪除。有 NVIDIA 顯示卡可以另外下載加速元件 |
 | 自選線上服務 | 你填的 OpenAI 格式轉寫服務（例如 OpenAI、Groq），會一併送出自訂詞 | 自備金鑰，費用依該服務計算；網址是 `localhost` 時錄音留在自己的電腦 |
-| Codex 線上辨識 | ChatGPT | 這台電腦上有效的 Codex 登入 |
+| Codex 線上辨識（非官方） | ChatGPT | 這台電腦上有效的 Codex 登入 |
+
+> [!WARNING]
+> 「Codex 線上辨識」透過第三方的非官方元件 [codex-asr](https://crates.io/crates/codex-asr)，沿用這台電腦上 Codex 的 ChatGPT 登入來辨識錄音。這不是 OpenAI 提供或支援的功能，OpenAI 調整服務時可能隨時無法使用。需要穩定運作時，請改用本機 Whisper 或自選線上服務。
 
 開啟 AI 潤稿時，送出的是辨識出的**文字**（不是錄音），連同自訂詞和你寫的補充說明；沒開啟時不會送出。金鑰存在 Windows 認證管理員，不寫進設定檔。辨識紀錄、從改字學到的詞和本機學習資料都只存在自己的電腦，可以在「隱私」頁清除。
+
+「關於」頁的自動更新開啟時，聽字每天最多向 GitHub 查詢一次有沒有新版，只送出目前的版本號；關閉後不會自動連線。
 
 ## 文件
 
@@ -121,7 +133,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 參與開發
 
-歡迎回報問題與提交修改。回報時請附上聽字版本、Windows 版本、操作步驟，以及預期與實際結果；語音內容和私人詞庫請用自製範例代替。流程見[貢獻指南](CONTRIBUTING.md)。
+歡迎回報問題與提交修改。回報時請附上聽字版本、Windows 版本、操作步驟，以及預期與實際結果；語音內容和私人詞庫請用自製範例代替。流程見[貢獻指南](CONTRIBUTING.md)。資安問題請不要公開回報，改依[資安政策](SECURITY.md)私下通知。
 
 聽字由兩部分組成：`windows/` 是 C++ 寫的 Windows 文字服務（注音輸入法），`app/` 是 Rust（Tauri 2）寫的語音浮窗與設定頁。在 Windows 安裝 Rust 與 Visual Studio C++ 工具後，可以先跑浮窗的測試：
 
@@ -139,7 +151,14 @@ cargo test
 - [Breeze ASR 25](https://huggingface.co/MediaTek-Research/Breeze-ASR-25)（聯發科創新基地）：針對台灣華語與中英夾雜的辨識模型
 - [codex-asr](https://crates.io/crates/codex-asr)：Codex 線上辨識
 - [Tauri](https://tauri.app/)：語音浮窗與設定頁
+- [中文維基百科](https://zh.wikipedia.org/)：整句選字使用的詞語搭配統計（`pairs.txt`）由維基百科的文章統計而來
 
 ## 授權
 
-聽字以 [MIT 授權](LICENSE)釋出。內建的第三方元件依各自條款，安裝包隨附 `THIRD-PARTY-NOTICES.txt`。套件不含任何其他廠商的輸入法程式或詞庫。
+聽字的程式以 [MIT 授權](LICENSE)釋出。以下內容依各自的授權：
+
+- 注音字詞資料取自 McBopomofo，MIT 授權。
+- 詞語搭配統計 `windows/standalone-data/pairs.txt` 由中文維基百科統計而來，依 [CC BY-SA 4.0](https://creativecommons.org/licenses/by-sa/4.0/deed.zh-hant) 授權，說明見同目錄的 `pairs-NOTICE.txt`。
+- 其他第三方元件的授權列在安裝包隨附的 `THIRD-PARTY-NOTICES.txt`。
+
+除了上述 McBopomofo 的詞庫，聽字不含其他輸入法的程式或詞庫。聽字是獨立專案，與 OpenAI、Microsoft、Apple 沒有關聯。
