@@ -185,3 +185,11 @@ dialog::backdrop { background: rgb(10 12 30 / 0.45); }
 @media (prefers-reduced-motion: reduce) {
   .switch, .switch::after, #mic-level { transition: none; }
 }
+
+/* First-run steps: the microphone and recognition cards are moved in here while it is open. */
+#welcome { width: min(700px, calc(100vw - 48px)); }
+#welcome-body { overflow-y: auto; min-height: 0; }
+#welcome-body .card { margin: 0; }
+#welcome .step { margin: 0 4px 4px; font-size: var(--font-sm); color: var(--muted); }
+.practice ol { margin: 0 0 12px; padding-left: 24px; line-height: 1.7; }
+.practice kbd { padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font: inherit; }

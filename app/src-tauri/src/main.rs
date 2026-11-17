@@ -789,6 +789,7 @@ fn main() {
             arrange,
             facts,
             panel::open_settings,
+            panel::take_welcome,
             panel::close_settings,
             panel::load_settings,
             panel::save_settings,
@@ -845,6 +846,7 @@ fn main() {
             let _ = app.global_shortcut().register(last_keys());
             build_tray(app)?;
             panel::follow_upgrade();
+            panel::welcome_first_run(app.handle());
             let handle = app.handle().clone();
             instance::listen(move |request| {
                 let app = handle.clone();

@@ -150,6 +150,11 @@ impl Settings {
         crate::paths::data().join("voice-settings.json")
     }
 
+    /// Whether choices have ever been saved on this computer, by this version or an earlier one.
+    pub fn saved() -> bool {
+        Self::file().exists()
+    }
+
     pub fn load() -> Self {
         std::fs::read_to_string(Self::file())
             .ok()
