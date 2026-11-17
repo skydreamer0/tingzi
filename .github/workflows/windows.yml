@@ -33,13 +33,6 @@ jobs:
           if (!(Test-Path "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe")) { choco install innosetup -y --no-progress }
       - name: Build the installer
         run: python windows/build_installer.py .build/release/Tingzi-windows-x64.zip .build/release
-      - name: Add Chinese (Taiwan) to this machine's languages
-        # The input method registers for zh-TW; the runner image only has English.
-        run: |
-          $languages = Get-WinUserLanguageList
-          $languages.Add('zh-TW')
-          Set-WinUserLanguageList $languages -Force
-          Get-WinUserLanguageList | Format-Table LanguageTag, InputMethodTips
       - name: Install, upgrade and remove on this machine
         run: windows/test_installer.ps1 -Installer (Get-ChildItem .build/release/*-Setup-*-x64.exe).FullName
       - uses: actions/upload-artifact@v4
