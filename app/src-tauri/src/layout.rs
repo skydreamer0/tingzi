@@ -219,6 +219,7 @@ fn place(app: &AppHandle, layout: Layout) {
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
     let _ = window.show();
+    crate::sys::keep_on_top(&window);
     let _ = app.emit("side", Side { left, above });
     let _ = app.emit("layout", layout);
 }
@@ -324,10 +325,14 @@ pub fn parked(to: PhysicalPosition<i32>) -> bool {
     to.x <= -30000 || to.y <= -30000
 }
 
-/// Writes the position to disk a little after the window stops moving.
+/// Writes the position to disk a little after the window stops moving,
+/// and keeps the window above other windows if another program has pushed it down.
 pub fn keep(app: AppHandle) {
     std::thread::spawn(move || loop {
         std::thread::sleep(Duration::from_secs(2));
+        if let Some(window) = app.get_webview_window("capsule") {
+            crate::sys::keep_on_top(&window);
+        }
         let pending = app.state::<Mutex<Place>>().lock().ok().and_then(|mut place| std::mem::take(&mut place.unsaved).then_some(place.saved));
         if let Some(saved) = pending {
             let _ = std::fs::create_dir_all(crate::paths::data());

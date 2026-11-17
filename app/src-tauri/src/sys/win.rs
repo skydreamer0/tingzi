@@ -34,7 +34,8 @@ use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
     EnumWindows, GetClassNameW, GetForegroundWindow, GetGUIThreadInfo, GetWindowLongW, GetWindowThreadProcessId, IsWindow,
     IsWindowVisible, MessageBoxW, SendMessageTimeoutW, SetForegroundWindow, GUITHREADINFO, GWL_STYLE, IDOK, MB_DEFBUTTON2,
-    MB_ICONQUESTION, MB_OKCANCEL, MB_TOPMOST, SMTO_ABORTIFHUNG, SW_SHOWNORMAL,
+    MB_ICONQUESTION, MB_OKCANCEL, MB_TOPMOST, SMTO_ABORTIFHUNG, SW_SHOWNORMAL, SetWindowPos, GWL_EXSTYLE, HWND_TOPMOST,
+    SWP_ASYNCWINDOWPOS, SWP_NOACTIVATE, SWP_NOMOVE, SWP_NOOWNERZORDER, SWP_NOSIZE, WS_EX_TOPMOST,
 };
 use winreg::enums::HKEY_CURRENT_USER;
 use winreg::RegKey;
@@ -338,6 +339,22 @@ pub fn open(target: &str) -> bool {
 /// The window a dialog should belong to, as a plain number; 0 when there is none.
 pub fn owner(window: Option<tauri::WebviewWindow>) -> isize {
     window.and_then(|window| window.hwnd().ok()).map_or(0, |handle| handle.0 as isize)
+}
+
+/// Puts the window back above ordinary windows when something has taken that away, and says whether it had to.
+/// The window is created always on top, but other programs, such as window managers, can clear the flag,
+/// and asking Tauri again does nothing because it still believes the flag is set.
+pub fn keep_on_top(window: &tauri::WebviewWindow) -> bool {
+    let Ok(hwnd) = window.hwnd() else { return false };
+    let hwnd = handle(hwnd.0 as isize);
+    // SAFETY: the handle belongs to a window of this program; both calls only read or reorder it.
+    unsafe {
+        if !IsWindowVisible(hwnd).as_bool() || GetWindowLongW(hwnd, GWL_EXSTYLE) as u32 & WS_EX_TOPMOST.0 != 0 {
+            return false;
+        }
+        // Asynchronous, so a busy window thread never holds up the caller.
+        SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER | SWP_ASYNCWINDOWPOS).is_ok()
+    }
 }
 
 // ---- One running copy
