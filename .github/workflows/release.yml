@@ -2,7 +2,9 @@ name: Release
 
 # Pushing a tag such as v0.8.0 builds the Windows installer the same way the Windows workflow does and
 # attaches only the installer and its .sha256 to a draft release for that tag. A draft is visible to the
-# maintainers only; it reaches users when a maintainer edits the notes and presses "Publish release".
+# maintainers only. Its notes come from .github/release-notes.md with the version's section of CHANGELOG.md;
+# it reaches users when a maintainer fills in the rest of the notes and presses "Publish release".
+# Running again for a tag that already has a release replaces the files and leaves the notes alone.
 on:
   push:
     tags: ['v*']
@@ -26,6 +28,8 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.tag || github.ref }}
+          # The whole history, so the previous tag can be found for the notes.
+          fetch-depth: 0
       - name: Test
         run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
       - name: Build
@@ -50,7 +54,11 @@ jobs:
           if ($LASTEXITCODE -eq 0) {
             gh release upload $env:TAG @files --clobber
           } else {
-            gh release create $env:TAG @files --draft --verify-tag --title "聽字 $version" --notes "下載 Tingzi-Setup-$version-x64.exe，雙擊安裝。已安裝舊版的話會直接升級，設定、自訂詞與學習資料都保留。"
+            $previous = git describe --tags --abbrev=0 --match 'v*' "$env:TAG^"
+            if ($LASTEXITCODE -ne 0) { throw "Could not find the tag before $env:TAG." }
+            python windows/release_notes.py $version $previous "$($installer.FullName).sha256" .build/release-notes.md
+            if ($LASTEXITCODE -ne 0) { throw 'Could not write the release notes.' }
+            gh release create $env:TAG @files --draft --verify-tag --title "聽字 $version" --notes-file .build/release-notes.md
           }
           if ($LASTEXITCODE -ne 0) { throw 'Could not attach the installer to the release.' }
       - uses: actions/upload-artifact@v4

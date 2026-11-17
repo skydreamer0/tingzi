@@ -79,7 +79,7 @@ python windows/build_installer.py .build/Tingzi-0.7.0-windows-x64.zip .build/ins
 
 它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `Tingzi-Setup-<版本>-x64.exe` 與它的 `.sha256`。發行時兩個檔都要上傳到 GitHub Releases，檔名不要改：設定頁的「下載並安裝」靠 `Tingzi-Setup-` 開頭、`-x64.exe` 結尾找安裝程式，並用同名加 `.sha256` 的檔核對；少了 `.sha256` 就只開下載頁。升級時安裝程式會先關掉開著的語音浮窗（新舊版用同一個單一執行個體名稱），安裝完成後開啟新版。版號取自 ZIP 的清單，不必另外修改。安裝程式原封不動帶著 ZIP，在開始複製檔案前解開到暫存資料夾並執行 `InstallTingzi.cmd /quiet`（失敗時停止安裝、不登記應用程式清單，腳本的輸出寫進安裝記錄），所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
 
-發行新版時，改好版號（見下方）並合併進 main 後，推送 `v<版本>` 標籤。`.github/workflows/release.yml` 會在 GitHub 的 Windows 電腦上建置、檢查安裝程式，再把 `Tingzi-Setup-<版本>-x64.exe` 和 `.sha256` 附到該標籤的**草稿** release。標籤和建置出來的版號不一致時會停下來。草稿只有維護者看得到；寫好更新說明、按「Publish release」後使用者才看得到，設定頁的檢查更新也是從那時起才會找到它。也可以在 Actions 頁手動執行這個工作流程，指定已存在的標籤。
+發行新版時，改好版號（見下方）並合併進 main 後，推送 `v<版本>` 標籤。`.github/workflows/release.yml` 會在 GitHub 的 Windows 電腦上建置、檢查安裝程式，再把 `Tingzi-Setup-<版本>-x64.exe` 和 `.sha256` 附到該標籤的**草稿** release。標籤和建置出來的版號不一致時會停下來。草稿的說明由 `windows/release_notes.py` 依 [`.github/release-notes.md`](../../.github/release-notes.md) 產生，自動填入版號、前一個標籤、安裝程式的 SHA-256，以及 `CHANGELOG.md` 裡該版的段落；所以推送標籤前，`CHANGELOG.md` 的「尚未發行」要先改成該版號，否則工作流程會停下來。`{{SUMMARY}}`、`{{UPGRADE_NOTES}}` 與 `{{KNOWN_ISSUES}}` 留給維護者在草稿裡填寫（規則見 `CONTRIBUTING.md` 的「發行說明」）。同一個標籤再執行一次只會換掉檔案，不會覆蓋已經改過的說明。草稿只有維護者看得到；寫好更新說明、按「Publish release」後使用者才看得到，設定頁的檢查更新也是從那時起才會找到它。也可以在 Actions 頁手動執行這個工作流程，指定已存在的標籤。
 
 同一版重新安裝時，`upgrade.cpp` 遇到內容不同的程式檔，會先把舊檔改名（加上 `.replaced-<數字>`；執行中的程式和已載入的 DLL 也可以改名），再放入新檔；舊檔在沒有程式使用時刪除，或排到下次開機刪除。
 
