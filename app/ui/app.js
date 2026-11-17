@@ -54,8 +54,10 @@ function render() {
   // With a result, the text is the main line and what happened to it sits above in small type.
   // The open editor already shows the text, so the bar then says only what happened.
   const textInBar = state === 'done' && capsule.dataset.layout !== 'editor';
-  status.textContent = textInBar ? text : state === 'recording' ? elapsed() : message || idleText;
-  status.title = textInBar ? text : '';
+  // The pill is short while dictating, so "click again to cancel" moves to the tooltip.
+  const said = state === 'working' ? message.split('・')[0] : message;
+  status.textContent = textInBar ? text : state === 'recording' ? elapsed() : said || idleText;
+  status.title = textInBar ? text : state === 'recording' || state === 'working' ? message : '';
   detail.textContent = textInBar ? message : state === 'idle' && mode ? `注音輸入法：${mode}` : '';
   mic.setAttribute('aria-pressed', String(state === 'recording'));
   mic.setAttribute('aria-label', micLabels[state] || '開始錄音');
@@ -75,8 +77,11 @@ function receive(next) {
     if (was === 'recording') { stopBars(); tap(); }
     else if (next.state === 'done' && was !== 'done') tap();
   }
-  // A new dictation stops a fold that was under way.
-  if (next.state === 'recording' || next.state === 'working') capsule.classList.remove('closing');
+  // A new dictation stops a fold that was under way, and one the page was about to start.
+  if (next.state === 'recording' || next.state === 'working') {
+    round++;
+    capsule.classList.remove('closing', 'card-closing');
+  }
   voice = next;
   editor.value = next.text;
   render();
@@ -110,26 +115,75 @@ function setSide(side) {
   capsule.dataset.above = String(side.above);
 }
 
-// The pill's growth and fold; closing() resolves once the fold has played, so the window can shrink after it.
-const motion = { open: 0 };
-function closing() {
-  if (still.matches || capsule.dataset.layout === 'docked') return Promise.resolve();
-  capsule.classList.remove('opening');
-  capsule.classList.add('closing');
-  return new Promise(done => setTimeout(done, 200));
+// Everything folds back the way it came: the card into the pill, then the pill into the keycap.
+// The window only shrinks once the fold has played, so these times match style.css and layout.rs.
+const CARD_MS = 140, PILL_MS = 200;
+const wait = ms => new Promise(done => setTimeout(done, ms));
+const timers = { grow: 0, card: 0 };
+// Counts the put-aways asked for; a newer one, a new dictation or typing makes an older one stand down.
+let round = 0;
+
+// Plays the fold from the current shape towards `to`; resolves when the window may shrink.
+async function fold(to) {
+  const from = capsule.dataset.layout;
+  if (still.matches || from === to || from === 'docked') return;
+  capsule.classList.remove('opening', 'card-opening');
+  if (from === 'editor') {
+    capsule.classList.add('card-closing');
+    await wait(CARD_MS);
+  }
+  if (to === 'docked') {
+    capsule.style.setProperty('--shown', '72px');
+    capsule.classList.add('closing');
+    await wait(PILL_MS);
+  }
 }
+
+// Folds the window back to `to`, after `delay` so a confirmation such as "copied" can be read.
+async function putAway(to, delay = 0) {
+  const mine = ++round;
+  if (delay) await wait(delay);
+  if (mine !== round || capsule.dataset.layout === to) return;
+  await fold(to);
+  if (mine === round) invoke('arrange', { shape: to });
+}
+
+// Back to the keycap or the pill, whichever the user had before the dictation opened the window.
+async function goHome(delay = 0) {
+  putAway(await invoke('home'), delay);
+}
+
+// The window has already grown when this runs, so the pill is clipped back to its old width and opens from there.
+let width = innerWidth;
+addEventListener('resize', () => {
+  const from = width;
+  width = innerWidth;
+  if (innerWidth <= from || still.matches) return;
+  capsule.classList.remove('closing', 'card-closing', 'opening');
+  capsule.style.setProperty('--shown', `${from}px`);
+  void capsule.offsetWidth;
+  capsule.classList.add('opening');
+  clearTimeout(timers.grow);
+  timers.grow = setTimeout(() => capsule.classList.remove('opening'), PILL_MS + 60);
+});
 
 function setLayout(shape) {
   const was = capsule.dataset.layout;
-  capsule.classList.remove('closing');
-  if (was === 'docked' && shape !== 'docked' && !still.matches) {
-    capsule.classList.add('opening');
-    clearTimeout(motion.open);
-    motion.open = setTimeout(() => capsule.classList.remove('opening'), 260);
+  capsule.classList.remove('closing', 'card-closing');
+  // The card unrolls out of the pill, downwards or upwards, as it folds back in.
+  if (shape === 'editor' && was !== 'editor' && !still.matches) {
+    capsule.classList.add('card-opening');
+    clearTimeout(timers.card);
+    timers.card = setTimeout(() => capsule.classList.remove('card-opening'), PILL_MS + 60);
   }
   capsule.dataset.layout = shape;
   render();
   if (shape === 'editor') { loadRecent(); editor.focus(); }
+}
+
+// Copying is usually the last thing done with the text, so the window then folds back by itself.
+async function copyAndPutAway() {
+  if (await invoke('copy_preview')) goHome(700);
 }
 
 // Dragging the button moves the window; a press that stays put is a click.
@@ -154,22 +208,22 @@ mic.addEventListener('click', event => {
 });
 // The docked button has no others beside it, so a right-click opens the full bar.
 mic.addEventListener('contextmenu', event => { event.preventDefault(); invoke('arrange', { shape: 'bar' }); });
-byId('copy').addEventListener('click', () => invoke('copy_preview'));
-byId('copy-all').addEventListener('click', () => invoke('copy_preview'));
-byId('edit').addEventListener('click', () => invoke('arrange', { shape: 'editor' }));
-byId('collapse').addEventListener('click', () => invoke('arrange', { shape: 'bar' }));
-byId('dock').addEventListener('click', () => closing().then(() => invoke('arrange', { shape: 'docked' })));
+byId('copy').addEventListener('click', copyAndPutAway);
+byId('copy-all').addEventListener('click', copyAndPutAway);
+byId('edit').addEventListener('click', () => { round++; invoke('arrange', { shape: 'editor' }); });
+byId('collapse').addEventListener('click', () => goHome());
+byId('dock').addEventListener('click', () => putAway('docked'));
 byId('discard').addEventListener('click', () => invoke('discard_result'));
 byId('convert').addEventListener('click', () => invoke('convert_clipboard_script'));
 byId('settings').addEventListener('click', () => invoke('open_settings'));
-editor.addEventListener('input', () => { voice.text = editor.value; invoke('set_preview', { text: editor.value }); });
-document.addEventListener('keydown', event => { if (event.key === 'Escape' && capsule.dataset.layout === 'editor') invoke('arrange', { shape: 'bar' }); });
+editor.addEventListener('input', () => { round++; voice.text = editor.value; invoke('set_preview', { text: editor.value }); });
+document.addEventListener('keydown', event => { if (event.key === 'Escape' && capsule.dataset.layout === 'editor') goHome(); });
 
 listen('voice', event => receive(event.payload));
 listen('notice', event => notice(event.payload));
 listen('layout', event => setLayout(event.payload));
 listen('side', event => setSide(event.payload));
-listen('closing', () => closing());
+listen('closing', () => fold('docked'));
 listen('look', event => applyLook(event.payload));
 listen('mode', event => { mode = event.payload; render(); });
 // Square root keeps quiet speech visible on the meter.

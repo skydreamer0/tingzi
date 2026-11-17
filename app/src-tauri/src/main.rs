@@ -110,14 +110,15 @@ fn announce(app: &AppHandle, state: &'static str, message: impl Into<String>, te
 /// `expand` opens the editor so text that was not inserted is in front of the user.
 fn show(app: &AppHandle, state: &'static str, message: impl Into<String>, text: impl Into<String>, expand: bool) {
     announce(app, state, message, text);
+    layout::shorten(app, matches!(state, "recording" | "working"));
     let now = layout::current(app);
     match state {
-        "done" if expand => layout::arrange(app, Layout::Editor),
+        "done" if expand => layout::reshape(app, Layout::Editor),
         // A dictation started from the keycap opens the pill for as long as it runs.
         "recording" | "working" if now != Layout::Editor => layout::open_for_work(app),
         // A problem keeps the pill open until the user deals with it.
-        "error" | "retry" if now != Layout::Editor => layout::arrange(app, Layout::Bar),
-        _ if now == Layout::Editor => layout::arrange(app, Layout::Bar),
+        "error" | "retry" if now != Layout::Editor => layout::reshape(app, Layout::Bar),
+        _ if now == Layout::Editor => layout::reshape(app, Layout::Bar),
         _ => {}
     }
     if matches!(state, "done" | "idle") && !expand {
@@ -535,6 +536,12 @@ fn arrange(app: AppHandle, shape: Layout) {
     layout::arrange(&app, shape);
 }
 
+/// The shape the window returns to once the text is copied or put away.
+#[tauri::command]
+fn home(app: AppHandle) -> Layout {
+    layout::home(&app)
+}
+
 /// What the window needs to draw itself when it loads.
 #[derive(Serialize)]
 struct Facts {
@@ -787,6 +794,7 @@ fn main() {
             history_clear,
             convert_clipboard_script,
             arrange,
+            home,
             facts,
             panel::open_settings,
             panel::close_settings,

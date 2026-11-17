@@ -3,6 +3,7 @@
 //! The keycap is the anchor. Docked, the window is only the keycap, against the left or right edge.
 //! Opened, a pill grows from the keycap towards the middle of the screen, and the editor hangs
 //! below the pill, or above it when there is no room below, so the keycap never moves.
+//! While a dictation is recorded or recognised the pill is short, since it only shows a clock.
 
 use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
@@ -25,10 +26,11 @@ pub enum Layout {
 const ROW: f64 = 72.0;
 
 impl Layout {
-    /// Width and height in logical pixels.
-    fn size(self) -> (f64, f64) {
+    /// Width and height in logical pixels; `short` is the pill during a dictation.
+    fn size(self, short: bool) -> (f64, f64) {
         match self {
             Layout::Docked => (ROW, ROW),
+            Layout::Bar if short => (240.0, ROW),
             Layout::Bar => (460.0, ROW),
             Layout::Editor => (460.0, 280.0),
         }
@@ -49,8 +51,10 @@ pub struct Place {
     pub layout: Layout,
     saved: Saved,
     unsaved: bool,
-    /// Whether the pill opened by itself for a dictation, and so closes by itself afterwards.
-    opened_for_work: bool,
+    /// The shape the user last chose, docked or the pill; the window returns to it after a dictation.
+    home: Layout,
+    /// Whether a dictation is being recorded or recognised, which shortens the pill.
+    short: bool,
     /// Whether the editor last opened above the keycap's row.
     above: bool,
 }
@@ -102,7 +106,7 @@ pub fn start() -> Mutex<Place> {
     let mut saved: Saved = std::fs::read_to_string(file()).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
     // Earlier versions could save the parked position of a minimised window.
     saved.dock_y = saved.dock_y.filter(|y| *y > -30000);
-    Mutex::new(Place { layout: Layout::Docked, saved, unsaved: false, opened_for_work: false, above: false })
+    Mutex::new(Place { layout: Layout::Docked, saved, unsaved: false, home: Layout::Docked, short: false, above: false })
 }
 
 pub fn current(app: &AppHandle) -> Layout {
@@ -114,11 +118,42 @@ pub fn side(app: &AppHandle) -> Side {
     app.state::<Mutex<Place>>().lock().map(|place| Side { left: place.saved.dock_left, above: place.above }).unwrap_or(Side { left: false, above: false })
 }
 
-/// Gives the window the shape `layout` and moves it to that shape's place.
-/// The user chose this shape, so it stays until they or an error change it.
-pub fn arrange(app: &AppHandle, layout: Layout) {
-    place(app, layout, false);
+/// The shape the window goes back to once a dictation and its text are dealt with.
+pub fn home(app: &AppHandle) -> Layout {
+    app.state::<Mutex<Place>>().lock().map(|place| place.home).unwrap_or(Layout::Docked)
 }
+
+/// Gives the window the shape `layout` and moves it to that shape's place.
+/// The user chose this shape, so the keycap or the pill becomes where the window returns to.
+pub fn arrange(app: &AppHandle, layout: Layout) {
+    if layout != Layout::Editor {
+        if let Ok(mut place) = app.state::<Mutex<Place>>().lock() {
+            place.home = layout;
+        }
+    }
+    place(app, layout);
+}
+
+/// Gives the window a shape for what is happening, without changing where it returns to.
+pub fn reshape(app: &AppHandle, layout: Layout) {
+    place(app, layout);
+}
+
+/// Shortens the pill while a dictation is recorded or recognised, and lengthens it again for the result.
+pub fn shorten(app: &AppHandle, short: bool) {
+    let refit = app.state::<Mutex<Place>>().lock().map(|mut place| std::mem::replace(&mut place.short, short) != short && place.layout == Layout::Bar).unwrap_or(false);
+    if refit {
+        place(app, Layout::Bar);
+    }
+}
+
+/// Whether the pill is open only for a dictation from the keycap, and so folds back by itself.
+fn borrowed(app: &AppHandle) -> bool {
+    app.state::<Mutex<Place>>().lock().map(|place| place.layout == Layout::Bar && place.home == Layout::Docked).unwrap_or(false)
+}
+
+/// How long the page takes to fold the pill into the keycap; app.js plays it in the same time.
+const FOLD_MS: u64 = 200;
 
 /// Counts the folds asked for; a newer dictation or fold makes an older one stand down.
 static ROUND: AtomicU64 = AtomicU64::new(0);
@@ -128,57 +163,61 @@ static ROUND: AtomicU64 = AtomicU64::new(0);
 pub fn open_for_work(app: &AppHandle) {
     ROUND.fetch_add(1, Ordering::SeqCst);
     if current(app) == Layout::Docked {
-        place(app, Layout::Bar, true);
+        place(app, Layout::Bar);
     }
 }
 
 /// Folds a pill that opened by itself back into the keycap, after the result has been seen.
 pub fn close_soon(app: &AppHandle) {
-    let opened = app.state::<Mutex<Place>>().lock().map(|place| place.opened_for_work && place.layout == Layout::Bar).unwrap_or(false);
-    if !opened {
+    if !borrowed(app) {
         return;
     }
     let round = ROUND.fetch_add(1, Ordering::SeqCst) + 1;
     let app = app.clone();
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_millis(2600));
-        let still = |app: &AppHandle| app.state::<Mutex<Place>>().lock().map(|place| place.opened_for_work && place.layout == Layout::Bar).unwrap_or(false);
-        if !still(&app) || ROUND.load(Ordering::SeqCst) != round {
+        if !borrowed(&app) || ROUND.load(Ordering::SeqCst) != round {
             return;
         }
         // The page folds the pill into the keycap, then the window shrinks behind it.
         let _ = app.emit("closing", ());
-        std::thread::sleep(Duration::from_millis(200));
+        std::thread::sleep(Duration::from_millis(FOLD_MS));
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || {
-            let still = handle.state::<Mutex<Place>>().lock().map(|place| place.opened_for_work && place.layout == Layout::Bar).unwrap_or(false);
-            if still && ROUND.load(Ordering::SeqCst) == round {
-                place(&handle, Layout::Docked, false);
+            if borrowed(&handle) && ROUND.load(Ordering::SeqCst) == round {
+                place(&handle, Layout::Docked);
             }
         });
     });
 }
 
-fn place(app: &AppHandle, layout: Layout, for_work: bool) {
+fn place(app: &AppHandle, layout: Layout) {
     let Some(window) = app.get_webview_window("capsule") else { return };
     let monitor = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else { return };
     let scale = monitor.scale_factor();
-    let (width, height) = layout.size();
-    let size = ((width * scale).round() as i32, (height * scale).round() as i32);
-    let ((x, y), above, left) = {
+    let ((width, height), (x, y), above, left) = {
         let state = app.state::<Mutex<Place>>();
         let mut place = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         place.layout = layout;
-        place.opened_for_work = for_work;
+        let (width, height) = layout.size(place.short);
+        let size = ((width * scale).round() as i32, (height * scale).round() as i32);
         let (at, above) = corner(layout, size, Area::of(&monitor), scale, &place.saved);
         place.above = above;
-        (at, above, place.saved.dock_left)
+        ((width, height), at, above, place.saved.dock_left)
     };
+    let size = ((width * scale).round() as i32, (height * scale).round() as i32);
+    let now = window.outer_position().ok().zip(window.outer_size().ok()).map(|(at, size)| ((at.x, at.y), (size.width as i32, size.height as i32)));
     // Show-desktop and similar commands can minimise the window; bring it back first.
     let _ = window.unminimize();
-    let _ = window.set_size(LogicalSize::new(width, height));
-    let _ = window.set_position(PhysicalPosition::new(x, y));
+    // Size and place are two steps, so the frame between them should show nothing rather than a keycap out of place.
+    if move_first(now, (x, y), size) {
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+        let _ = window.set_size(LogicalSize::new(width, height));
+    } else {
+        let _ = window.set_size(LogicalSize::new(width, height));
+        let _ = window.set_position(PhysicalPosition::new(x, y));
+    }
     let _ = window.show();
     let _ = app.emit("side", Side { left, above });
     let _ = app.emit("layout", layout);
@@ -268,6 +307,13 @@ fn snap(app: &AppHandle) {
     }
 }
 
+/// Whether to move the window before resizing it. Resizing keeps the top-left corner, so a window
+/// against the right edge that shrinks would first show its far end, where the keycap is not.
+/// Moving it first slides that end off screen for the moment instead.
+fn move_first(now: Option<((i32, i32), (i32, i32))>, to: (i32, i32), size: (i32, i32)) -> bool {
+    now.is_some_and(|(at, was)| at.0 != to.0 && (size.0 < was.0 || size.1 < was.1))
+}
+
 /// Whether a window centred at `x` is closer to the left edge of `area` than the right.
 fn nearer_left(x: i32, area: Area) -> bool {
     x - area.left < area.right - x
@@ -328,6 +374,28 @@ mod tests {
         assert_eq!(corner(Layout::Bar, (460, 72), SCREEN, 1.0, &left), ((0, 300), false));
         // Scaled, the keycap's row keeps its place.
         assert_eq!(corner(Layout::Bar, (690, 108), SCREEN, 1.5, &right), ((1230, 300), false));
+    }
+
+    #[test]
+    fn the_pill_is_short_while_dictating() {
+        assert_eq!(Layout::Bar.size(true), (240.0, ROW));
+        assert_eq!(Layout::Bar.size(false), (460.0, ROW));
+        // The other shapes keep their size.
+        assert_eq!(Layout::Editor.size(true), Layout::Editor.size(false));
+        let right = Saved { dock_y: Some(300), dock_left: false };
+        assert_eq!(corner(Layout::Bar, (240, 72), SCREEN, 1.0, &right), ((1680, 300), false));
+    }
+
+    #[test]
+    fn a_shrinking_window_on_the_right_moves_before_it_resizes() {
+        // Folding into the keycap on the right: the window moves to the edge first.
+        assert!(move_first(Some(((1460, 300), (460, 72))), (1848, 300), (72, 72)));
+        // On the left the corner stays put, and growing always resizes first.
+        assert!(!move_first(Some(((0, 300), (460, 72))), (0, 300), (72, 72)));
+        assert!(!move_first(Some(((1848, 300), (72, 72))), (1460, 300), (460, 72)));
+        // The editor above the row shrinking back to the pill keeps its left edge, so it resizes first.
+        assert!(!move_first(Some(((1460, 92), (460, 280))), (1460, 300), (460, 72)));
+        assert!(!move_first(None, (0, 0), (72, 72)));
     }
 
     #[test]
