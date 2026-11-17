@@ -58,7 +58,7 @@ bash macos/build.sh
 
 ## 改版號
 
-版號寫在好幾個地方，要一起改：`app/src-tauri/Cargo.toml`、`Cargo.lock` 裡 `tingzi-app` 那一筆、`app/src-tauri/tauri.conf.json`、`windows/package_release.py` 的 `VERSION`、`windows/upgrade.cpp`（升級時認得的舊版目錄清單與新版目錄），以及 `README.md`、`README.en.md`、`windows/README.md`、`docs/development/README.md` 裡提到版本的文字。改完用 `git grep -n "<舊版號>"` 確認沒有遺漏。
+版號寫在好幾個地方，要一起改：`app/src-tauri/Cargo.toml`、`Cargo.lock` 裡 `tingzi-app` 那一筆、`app/src-tauri/tauri.conf.json`、`windows/package_release.py` 的 `VERSION`、`windows/upgrade.cpp`（升級時認得的舊版目錄清單與新版目錄），以及 `README.md`、`README.en.md`、`windows/README.md`、`docs/development/README.md` 裡提到版本的文字。`CHANGELOG.md` 的「尚未發行」同時改成新版號與日期，並更新文末的比較連結。改完用 `git grep -n "<舊版號>"` 確認沒有遺漏。
 
 ## 文件
 
@@ -67,6 +67,7 @@ bash macos/build.sh
 - 只寫已經做好的功能。還在 PR 或規劃中的事，要寫明是「準備中」並連到 issue 或規格。
 - 寫給一般使用者看的文字，用介面上實際的按鈕與頁面名稱，用完整的句子，避免技術術語。
 - 行為改變時，同一個 PR 裡更新受影響的使用手冊與 README。
+- 使用者看得到的改變，同一個 PR 裡在 `CHANGELOG.md` 的「尚未發行」加一項。發行說明依 `.github/release-notes.md` 的範本寫，規則見 `CONTRIBUTING.md` 的「發行說明」。
 
 ## 第三方服務、模型與版本
 
