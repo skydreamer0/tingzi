@@ -233,10 +233,12 @@ function showLocal() {
     const get = document.createElement('button');
     get.type = 'button';
     get.className = 'button';
-    get.textContent = model.installed ? '已下載' : '下載';
-    get.disabled = model.installed || Boolean(local.busy);
+    // A downloaded model can be deleted from here; one the user placed elsewhere is only marked as there.
+    const removable = model.installed && model.removable;
+    get.textContent = removable ? '刪除' : model.installed ? '已下載' : '下載';
+    get.disabled = (model.installed && !removable) || Boolean(local.busy);
     get.setAttribute('aria-label', `${get.textContent} ${model.title}`);
-    get.addEventListener('click', () => fetchItem(model.id));
+    get.addEventListener('click', () => removable ? deleteModel(model) : fetchItem(model.id));
     row.append(what, get);
     byId('api-url-row').before(row);
   }
@@ -246,6 +248,16 @@ async function readLocal() {
   local = await invoke('local_state');
   showLocal();
   showEngine();
+}
+async function deleteModel(model) {
+  try {
+    if (!await invoke('local_delete', { file: model.file })) return;
+    panel = await invoke('load_settings');
+    await readLocal();
+    say(`已刪除「${model.title}」。`, true);
+  } catch (reason) {
+    say(String(reason));
+  }
 }
 async function fetchItem(id) {
   try {

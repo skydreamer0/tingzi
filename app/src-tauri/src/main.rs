@@ -821,7 +821,8 @@ fn main() {
             panel::forget_voice_learned,
             fetch::local_state,
             fetch::local_fetch,
-            fetch::local_fetch_cancel
+            fetch::local_fetch_cancel,
+            fetch::local_delete
         ])
         .on_window_event(|window, event| {
             // A minimised window is parked far off screen; that is not a place the user chose.
