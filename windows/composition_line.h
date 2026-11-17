@@ -1,5 +1,6 @@
 #pragma once
 #include "engine.h"
+#include "palette.h"
 
 namespace tingzi {
 #ifdef TINGZI_STANDALONE
@@ -7,21 +8,35 @@ inline constexpr wchar_t appearanceKey[]=L"Software\\TingziStandaloneRC\\Appeara
 #else
 inline constexpr wchar_t appearanceKey[]=L"Software\\Tingzi\\Appearance";
 #endif
-struct Palette { COLORREF back, text, frame, active, activeText; };
 // Follows the choice saved by the settings window, then Windows; high contrast always wins.
 inline Palette palette() {
     HIGHCONTRASTW hc{sizeof(hc)};
     if(SystemParametersInfoW(SPI_GETHIGHCONTRAST,sizeof(hc),&hc,0) && (hc.dwFlags&HCF_HIGHCONTRASTON))
-        return {GetSysColor(COLOR_WINDOW),GetSysColor(COLOR_WINDOWTEXT),GetSysColor(COLOR_WINDOWFRAME),GetSysColor(COLOR_HIGHLIGHT),GetSysColor(COLOR_HIGHLIGHTTEXT)};
+        return {GetSysColor(COLOR_WINDOW),GetSysColor(COLOR_WINDOWTEXT),GetSysColor(COLOR_WINDOWTEXT),GetSysColor(COLOR_WINDOWFRAME),GetSysColor(COLOR_HIGHLIGHT),GetSysColor(COLOR_HIGHLIGHTTEXT)};
     DWORD choice=0, light=1, bytes=sizeof(DWORD);
     RegGetValueW(HKEY_CURRENT_USER,appearanceKey,L"Theme",RRF_RT_REG_DWORD,nullptr,&choice,&bytes);
     bytes=sizeof(DWORD);
     RegGetValueW(HKEY_CURRENT_USER,L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",L"AppsUseLightTheme",RRF_RT_REG_DWORD,nullptr,&light,&bytes);
     const bool dark=choice==2 || (choice!=1 && light==0);
-    return dark ? Palette{RGB(32,35,50),RGB(232,235,255),RGB(74,79,112),RGB(174,182,255),RGB(24,27,60)}
-                : Palette{RGB(255,255,255),RGB(31,36,85),RGB(190,196,228),RGB(48,56,151),RGB(255,255,255)};
+    return dark ? darkPalette : lightPalette;
 }
 inline void fill(HDC dc,const RECT& r,COLORREF color){SetDCBrushColor(dc,color);FillRect(dc,&r,(HBRUSH)GetStockObject(DC_BRUSH));}
+// A soft rounded block, for the chosen candidate and the syllables being typed.
+inline void chip(HDC dc,const RECT& r,COLORREF color,int radius){
+    auto brush=SelectObject(dc,GetStockObject(DC_BRUSH));auto pen=SelectObject(dc,GetStockObject(NULL_PEN));
+    SetDCBrushColor(dc,color);RoundRect(dc,r.left,r.top,r.right+1,r.bottom+1,radius*2,radius*2);
+    SelectObject(dc,pen);SelectObject(dc,brush);
+}
+// Asks Windows 11 to round the window and draw its edge in `edge`. Returns false on Windows 10,
+// where the window keeps square corners and draws its own edge.
+inline bool roundWindow(HWND window,COLORREF edge){
+    using Set=HRESULT(WINAPI*)(HWND,DWORD,LPCVOID,DWORD);
+    static const auto set=reinterpret_cast<Set>(reinterpret_cast<void*>(GetProcAddress(LoadLibraryW(L"dwmapi.dll"),"DwmSetWindowAttribute")));
+    constexpr DWORD cornerPreference=33, borderColor=34, round=2;
+    if(!set || FAILED(set(window,cornerPreference,&round,sizeof(round))))return false;
+    set(window,borderColor,&edge,sizeof(edge));
+    return true;
+}
 inline int displaySize(const wchar_t* name, int fallback, std::initializer_list<DWORD> allowed) {
     DWORD size=0, bytes=sizeof(size);
     if(RegGetValueW(HKEY_CURRENT_USER,appearanceKey,name,RRF_RT_REG_DWORD,nullptr,&size,&bytes)==ERROR_SUCCESS &&
@@ -38,6 +53,7 @@ class CompositionLine {
     HFONT font=nullptr;
     Input::DisplayRuns runs;
     int fontHeight=0,padding=0;
+    bool rounded=false;
 
     static LRESULT CALLBACK proc(HWND hwnd,UINT msg,WPARAM wp,LPARAM lp){
         if(msg==WM_NCCREATE){
@@ -63,7 +79,7 @@ class CompositionLine {
         RECT r{};GetClientRect(hwnd,&r);
         const Palette colors=palette();
         fill(dc,r,colors.back);
-        SetDCBrushColor(dc,colors.frame);FrameRect(dc,&r,(HBRUSH)GetStockObject(DC_BRUSH));
+        if(!rounded){SetDCBrushColor(dc,colors.frame);FrameRect(dc,&r,(HBRUSH)GetStockObject(DC_BRUSH));}
         auto old=SelectObject(dc,font);
         int before=width(dc,runs.before), active=width(dc,runs.active);
         RECT clip{padding,2,(std::max)(LONG(padding),r.right-padding),r.bottom-2};
@@ -75,10 +91,11 @@ class CompositionLine {
         TextOutW(dc,x,y,runs.before.data(),int(runs.before.size()));
         x+=before;
         if(active){
-            RECT highlight{x,2,x+active,r.bottom-2};
-            SetBkColor(dc,colors.active);
+            const int inset=(std::max)(2,padding/3);
+            RECT highlight{x-inset,inset,x+active+inset,r.bottom-inset};
+            chip(dc,highlight,colors.active,chipRadius);
             SetTextColor(dc,colors.activeText);
-            ExtTextOutW(dc,x,y,ETO_OPAQUE,&highlight,runs.active.data(),UINT(runs.active.size()),nullptr);
+            TextOutW(dc,x,y,runs.active.data(),int(runs.active.size()));
         }
         SetTextColor(dc,colors.text);
         // With nothing being typed, a bar marks where the caret sits inside the sentence.
@@ -112,6 +129,8 @@ public:
                 className,L"聽字 輸入行",WS_POPUP,0,0,0,0,GetAncestor(parent,GA_ROOT),nullptr,module,this);
             if(!window){UnregisterClassW(className,module);return caret;}
         }
+        // Again on every showing, so the edge follows a change between light and dark.
+        rounded=roundWindow(window,palette().frame);
         UINT dpi=GetDpiForWindow(parent);if(!dpi)dpi=96;
         const int height=MulDiv(dip,dpi,96);
         bool changed=height!=fontHeight;

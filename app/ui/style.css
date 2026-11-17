@@ -1,33 +1,47 @@
 /* The voice window. Colours and shared pieces come from theme.css. */
 html, body { background: transparent; }
 
-/* The window is transparent; the capsule draws its own rounded edge. */
+/* The window is transparent. The keycap is the anchor: a pill grows from it towards the middle
+   of the screen, and the editor is a card beside the pill. data-side and data-above say which way. */
 .capsule {
+  --pill: var(--tint);
+  --pill-edge: color-mix(in srgb, var(--accent) 30%, var(--surface));
   height: 100%;
   display: flex;
   flex-direction: column;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: 18px;
-  overflow: hidden;
+  gap: 8px;
 }
+.capsule[data-above="true"] { flex-direction: column-reverse; }
 .bar {
+  position: relative;
+  isolation: isolate;
   flex: none;
-  height: 90px;
+  height: 72px;
   display: flex;
   align-items: center;
-  gap: 14px;
-  padding: 0 14px 0 18px;
+  gap: 10px;
+  padding: 0 18px 0 2px;
+}
+[data-side="right"] .bar { flex-direction: row-reverse; padding: 0 2px 0 18px; }
+/* The pill sits a little inside the keycap's row, so the keycap stands proud of it. */
+.bar::before {
+  content: "";
+  position: absolute;
+  inset: 6px 0;
+  z-index: -1;
+  border: 1px solid var(--pill-edge);
+  border-radius: var(--radius-pill);
+  background: var(--pill);
 }
 
 /* The button is the product mark, a keycap; the mark itself shows the state. */
 .mic {
   position: relative;
   flex: none;
-  width: 52px;
-  height: 52px;
+  width: 68px;
+  height: 68px;
   padding: 0;
-  border-radius: 50%;
+  border-radius: var(--radius-lg);
   border: 0;
   background: transparent;
   display: grid;
@@ -38,12 +52,12 @@ html, body { background: transparent; }
 
 /* Fixed brand colours work on both themes; kept as variables so states can recolour the base. */
 .key {
-  --key-ink: #303897;
-  --key-top: #E4E8FF;
+  --key-ink: var(--keycap-ink);
+  --key-top: var(--keycap-face);
   --key-base: var(--key-ink);
   grid-area: 1 / 1;
-  width: 50px;
-  height: 50px;
+  width: 64px;
+  height: 64px;
   display: block;
   pointer-events: none;
 }
@@ -62,7 +76,7 @@ html, body { background: transparent; }
 .key-bar.b2 { transform-origin: 27px 38px; --k: 1.5; --max: 1.55; }
 .key-bar.b3 { transform-origin: 36px 38px; --k: 1.2; --max: 1.55; }
 .key-bar.b4 { transform-origin: 46px 38px; --k: 0.7; --max: 1.18; }
-[data-state="recording"] .key { --key-base: var(--danger); }
+[data-state="recording"] .key { --key-base: var(--recording); }
 /* app.js sets --level (0..1, already smoothed) every frame while recording. */
 [data-state="recording"] .key-bar {
   transform: scaleY(min(var(--max), calc(0.35 + var(--level, 0) * var(--k))));
@@ -77,7 +91,7 @@ html, body { background: transparent; }
   50% { transform: scaleY(1.15); }
 }
 /* Something went wrong: tint the base, no motion. */
-[data-state="error"] .key, [data-state="retry"] .key { --key-base: color-mix(in srgb, var(--danger) 60%, var(--key-ink)); }
+[data-state="error"] .key, [data-state="retry"] .key { --key-base: color-mix(in srgb, var(--recording) 60%, var(--key-ink)); }
 
 /* Docked has no text line, so a finished result shows as a brief check on the button's corner. */
 .done-badge {
@@ -107,7 +121,7 @@ html, body { background: transparent; }
 .body { flex: 1; min-width: 0; }
 .detail {
   margin: 0;
-  font-size: 12px;
+  font-size: var(--font-xs);
   color: var(--muted);
   white-space: nowrap;
   overflow: hidden;
@@ -125,14 +139,14 @@ html, body { background: transparent; }
   color: var(--danger);
   white-space: normal;
   display: -webkit-box;
-  -webkit-line-clamp: 3;
+  -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
-  font-size: 14px;
+  font-size: var(--font-sm);
 }
 .meter {
   height: 4px;
   margin-top: 8px;
-  border-radius: 2px;
+  border-radius: var(--radius-pill);
   background: var(--border);
   overflow: hidden;
   display: none;
@@ -146,12 +160,15 @@ html, body { background: transparent; }
   transition: width 60ms linear;
 }
 
+/* Tools wait until the pointer is on the pill; a result's own tools show straight away. */
 .tools { flex: none; display: flex; gap: 2px; }
+.tools .tool { display: none; }
+.bar:hover .tool:not(.for-text, .for-retry), .bar:focus-within .tool:not(.for-text, .for-retry) { display: grid; }
 .tool {
   width: 36px;
-  height: 36px;
+  height: var(--size-control);
   border: 0;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: transparent;
   color: var(--muted);
   display: grid;
@@ -160,11 +177,11 @@ html, body { background: transparent; }
 }
 .tool:hover { background: var(--input); color: var(--text); }
 .tool .glyph { width: 20px; height: 20px; }
-.for-text, .for-retry { display: none; }
-[data-state="done"] .for-text { display: grid; }
-[data-state="retry"] .for-retry { display: grid; }
+.tools .for-text, .tools .for-retry { display: none; }
+[data-state="done"] .tools .for-text { display: grid; }
+[data-state="retry"] .tools .for-retry { display: grid; }
 /* Converting the clipboard mid-dictation could disturb the paste, so the button steps aside. */
-[data-state="recording"] #convert, [data-state="working"] #convert { display: none; }
+[data-state="recording"] .tools #convert, [data-state="working"] .tools #convert { display: none; }
 
 .editor {
   flex: 1;
@@ -172,7 +189,11 @@ html, body { background: transparent; }
   display: none;
   flex-direction: column;
   gap: 10px;
-  padding: 0 14px 14px;
+  margin: 0 2px;
+  padding: 12px;
+  border: 1px solid var(--pill-edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
 }
 [data-layout="editor"] .editor { display: flex; }
 [data-layout="editor"] #edit { display: none; }
@@ -182,45 +203,59 @@ html, body { background: transparent; }
   resize: none;
   padding: 10px 12px;
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: var(--radius-md);
   background: var(--input);
   color: var(--text);
   font: var(--preview-size)/1.45 "Microsoft JhengHei UI", "Segoe UI", sans-serif;
   user-select: text;
 }
-#text:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+#text:focus { outline: 2px solid var(--accent-text); outline-offset: -1px; }
 .actions { flex: none; display: flex; align-items: center; gap: 8px; }
-.hint { flex: 1; min-width: 0; font-size: 12px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hint { flex: 1; min-width: 0; font-size: var(--font-xs); color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 #history {
   flex: none;
   width: 150px;
-  height: 34px;
+  height: var(--size-control);
   padding: 0 8px;
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   background: var(--input);
   color: var(--text);
 }
 .actions button {
-  height: 34px;
+  height: var(--size-control);
   padding: 0 16px;
-  border-radius: 10px;
+  border-radius: var(--radius-md);
   cursor: pointer;
 }
 .primary { border: 0; background: var(--accent); color: var(--on-accent); font-weight: 600; }
 .plain { border: 1px solid var(--border); background: transparent; }
 .plain:hover { background: var(--input); }
 
-/* Docked: only the round microphone, at the edge of the screen. */
-[data-layout="docked"].capsule { border-radius: 50%; align-items: center; justify-content: center; }
-[data-layout="docked"] .bar { height: auto; padding: 0; gap: 0; }
+/* Docked: the keycap alone, with no pill and no disc, at the edge of the screen. */
+[data-layout="docked"] .bar { padding: 0 2px; gap: 0; }
+[data-layout="docked"] .bar::before { display: none; }
+/* Without a pill, the badge needs its own edge against whatever is behind the window. */
+[data-layout="docked"] .done-badge { right: 2px; bottom: 4px; box-shadow: 0 0 0 2px var(--keycap-face); }
 [data-layout="docked"] .body, [data-layout="docked"] .tools { display: none; }
+[data-side="right"] .body { text-align: right; }
+
+/* The pill grows out of the keycap and folds back into it. The window takes its full size first,
+   so the growth is a clip that starts at the keycap's square on its edge of the screen. */
+.capsule { --keycap-only: inset(0 calc(100% - 72px) 0 0 round var(--radius-lg)); --whole: inset(0 0 0 0 round var(--radius-lg)); }
+.capsule[data-side="right"] { --keycap-only: inset(0 0 0 calc(100% - 72px) round var(--radius-lg)); }
+.capsule.opening .bar { animation: pill-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
+.capsule.closing .bar { animation: pill-close var(--motion-base) ease-in forwards; }
+.capsule.closing .editor { opacity: 0; transition: opacity var(--motion-fast) ease-in; }
+@keyframes pill-open { from { clip-path: var(--keycap-only); } to { clip-path: var(--whole); } }
+@keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--keycap-only); } }
 
 /* Reduced motion: no travel, no wave, static bars; colour still tells the state. */
 @media (prefers-reduced-motion: reduce) {
   #level, .key-face, .key-bar { transition: none; }
   .mic:hover .key-face, .mic:active .key-face, .mic.tap .key-face { transform: none; }
   [data-state] .key-bar { transform: none; animation: none; }
+  .capsule.opening .bar, .capsule.closing .bar { animation: none; }
   [data-layout="docked"][data-state="done"] .done-badge { animation-name: badge-fade; }
 }
 @keyframes badge-fade {

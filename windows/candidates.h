@@ -7,6 +7,7 @@ class CandidateWindow {
     WNDPROC original=nullptr;
     HFONT font=nullptr;
     int cellW=100,cellH=34,columns=3,rows=1,header=26;
+    bool rounded=false;
     size_t page=0, selected=0,total=0;
     bool learning=false;
     Text caption;
@@ -40,14 +41,15 @@ class CandidateWindow {
         PAINTSTRUCT ps;HDC dc=BeginPaint(window,&ps);
         RECT bounds;GetClientRect(window,&bounds);
         const Palette colors=palette(); fill(dc,bounds,colors.back); SetBkMode(dc,TRANSPARENT);
+        if(!rounded){SetDCBrushColor(dc,colors.frame);FrameRect(dc,&bounds,(HBRUSH)GetStockObject(DC_BRUSH));}
         auto previous=SelectObject(dc,font);
-        RECT top={8,0,bounds.right-6,header};SetTextColor(dc,colors.text);
+        RECT top={10,0,bounds.right-8,header};SetTextColor(dc,colors.muted);
         DrawTextW(dc,title().c_str(),-1,&top,DT_SINGLELINE|DT_VCENTER|DT_NOPREFIX|DT_END_ELLIPSIS);
         for(int i=0;i<int(labels.size());++i){
             bool active=page*9+i==selected;
             RECT r={i%columns*cellW,header+i/columns*cellH,(i%columns+1)*cellW,header+(i/columns+1)*cellH};
-            if(active)fill(dc,r,colors.active);
-            SetTextColor(dc,active?colors.activeText:colors.text);r.left+=7;
+            if(active){RECT soft{r.left+4,r.top+2,r.right-4,r.bottom-2};chip(dc,soft,colors.active,chipRadius);}
+            SetTextColor(dc,active?colors.activeText:colors.text);r.left+=12;
             Text text=std::to_wstring(i+1)+L"  "+labels[i];
             DrawTextW(dc,text.c_str(),-1,&r,DT_NOPREFIX|DT_SINGLELINE|DT_VCENTER|DT_END_ELLIPSIS);
         }
@@ -62,12 +64,13 @@ public:
         labels.clear();
         for(size_t i=page*9;i<list.size() && i<page*9+9;++i)labels.push_back(list[i].text);
         if(!window){
-            window=CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,L"STATIC",L"聽字 候選",WS_POPUP|WS_BORDER,
+            window=CreateWindowExW(WS_EX_NOACTIVATE|WS_EX_TOOLWINDOW|WS_EX_TOPMOST,L"STATIC",L"聽字 候選",WS_POPUP,
                 0,0,1,1,parent,nullptr,module,nullptr);
             if(!window)return;
             SetWindowLongPtrW(window,GWLP_USERDATA,(LONG_PTR)this);
             original=reinterpret_cast<WNDPROC>(SetWindowLongPtrW(window,GWLP_WNDPROC,(LONG_PTR)proc));
         }
+        rounded=roundWindow(window,palette().frame);
         SetPropW(window,L"TingziLearningStatus",(HANDLE)(ULONG_PTR)learningStatus);
         UINT dpi=GetDpiForWindow(parent?parent:window);if(!dpi)dpi=96;
         if(font)DeleteObject(font);

@@ -120,6 +120,10 @@ pub struct Panel {
     /// False when another program holds the recording shortcut.
     shortcut_bound: bool,
     local_ready: bool,
+    /// The Whisper model files found on this computer.
+    local_models: Vec<String>,
+    /// Whether a key for the user's own service is stored; the key itself never reaches the page.
+    api_key_set: bool,
     version: &'static str,
     has_keyboard: bool,
     has_learning: bool,
@@ -136,7 +140,9 @@ pub fn load_settings(app: AppHandle) -> Panel {
         startup: starts_at_login(),
         microphones: audio::microphones(),
         shortcut_bound: keys.bound(),
-        local_ready: recognise::local_parts().is_some(),
+        local_ready: recognise::local_parts(prefs.local_model.as_deref()).is_some(),
+        local_models: recognise::local_models(),
+        api_key_set: crate::secret::exists(),
         version: env!("CARGO_PKG_VERSION"),
         has_keyboard: paths::tool("TingziKeyboard.exe").is_some(),
         has_learning: paths::tool("TingziLearning.exe").is_some(),
@@ -154,6 +160,12 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     }
     if !zhuyin.valid() {
         return Err("設定內容不完整，請重新選擇。".into());
+    }
+    // The page stores a newly typed key before saving, so it is counted here.
+    if prefs.engine() == crate::settings::Engine::Api {
+        if let Some(problem) = crate::api::problem(&prefs.api_url, &prefs.api_model, crate::secret::exists()) {
+            return Err(problem);
+        }
     }
     let before = Settings::load();
     // The earlier voice window finds a microphone by its device id; keep it only while the name still matches.
@@ -173,6 +185,17 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     }
     let _ = app.emit("look", look(&prefs, keys.label()));
     Ok(())
+}
+
+/// Stores the key for the user's own transcription service in Windows Credential Manager.
+#[tauri::command]
+pub fn set_api_key(key: String) -> Result<(), String> {
+    crate::secret::write(&key)
+}
+
+#[tauri::command]
+pub fn clear_api_key() {
+    crate::secret::clear();
 }
 
 pub fn open(app: &AppHandle) {

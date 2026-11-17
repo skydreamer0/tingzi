@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>聽字・注音與語音輸入法 · 設定</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="settings.css">
 </head>
@@ -52,7 +53,19 @@
         <h2>辨識</h2>
         <div class="row"><svg class="glyph"><use href="#i-settings"/></svg>
           <div class="what"><label for="engine">辨識方式</label><p id="engine-note"></p></div>
-          <select id="engine" class="wide"><option value="0">本機 Whisper</option><option value="1">Codex 線上辨識</option></select></div>
+          <select id="engine" class="wide"><option value="local">本機 Whisper</option><option value="api">自選線上服務（自備金鑰）</option><option value="codex">Codex 線上辨識</option></select></div>
+        <div class="row" id="local-model-row"><svg class="glyph"><use href="#i-audio"/></svg>
+          <div class="what"><label for="local-model">本機模型</label><p>較大的模型比較準，但只用 CPU 時每句要等比較久。</p></div>
+          <select id="local-model" class="wide"></select></div>
+        <div class="row" id="api-url-row"><svg class="glyph"><use href="#i-link"/></svg>
+          <div class="what"><label for="api-url">服務網址</label><p>支援 OpenAI 格式的轉寫服務，例如 OpenAI、Groq，或在自己電腦上跑的 Whisper 服務（http://localhost）。</p></div>
+          <input id="api-url" type="text" class="wide" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></div>
+        <div class="row" id="api-model-row"><svg class="glyph"><use href="#i-settings"/></svg>
+          <div class="what"><label for="api-model">模型名稱</label><p>依服務填寫，例如 OpenAI 的 whisper-1。你的自訂詞會一起送出，幫服務認出人名與專有名詞。</p></div>
+          <input id="api-model" type="text" class="wide" maxlength="120" autocomplete="off" spellcheck="false" placeholder="whisper-1"></div>
+        <div class="row" id="api-key-row"><svg class="glyph"><use href="#i-info"/></svg>
+          <div class="what"><label for="api-key">金鑰</label><p id="api-key-note"></p></div>
+          <div class="group"><input id="api-key" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="貼上新的金鑰"><button id="api-key-clear" type="button" class="button" aria-label="刪除已存的金鑰">刪除</button></div></div>
         <div class="row"><svg class="glyph"><use href="#i-convert"/></svg>
           <div class="what"><label for="script">輸出文字</label><p>同時套用到語音結果與注音送出的字，逐字轉換。</p></div>
           <select id="script" class="wide"><option value="0">繁體中文</option><option value="1">簡體中文</option></select></div>

@@ -62,9 +62,15 @@ function fill() {
     microphone.append(option(missingMicrophone, missingMicrophone + '（未連接）'));
   }
   microphone.value = prefs.MicrophoneName || '';
-  byId('engine').value = prefs.Online ? '1' : '0';
-  byId('engine-note').textContent = (panel.local_ready ? '本機 Whisper 與模型已就緒。' : '本機 Whisper 或模型尚未就緒，請先完成本機語音模型安裝。')
-    + '選用線上辨識時，錄音會經第三方的 codex-asr 傳到 ChatGPT。';
+  byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
+  const models = panel.local_models;
+  byId('local-model').replaceChildren(...(models.length ? models : ['ggml-base.bin']).map(name => option(name, name)));
+  byId('local-model').value = prefs.LocalModel && models.includes(prefs.LocalModel) ? prefs.LocalModel : (models.includes('ggml-base.bin') ? 'ggml-base.bin' : models[0] || 'ggml-base.bin');
+  byId('local-model').disabled = models.length === 0;
+  byId('api-url').value = prefs.ApiUrl;
+  byId('api-model').value = prefs.ApiModel;
+  showKey();
+  showEngine();
   byId('script').value = prefs.Simplified ? '1' : '0';
   byId('use-phrases').checked = prefs.UsePhrases;
   byId('use-replacements').checked = prefs.UseReplacements;
@@ -104,7 +110,11 @@ function collect() {
   return {
     prefs: {
       ...panel.prefs,
-      Online: byId('engine').value === '1',
+      Engine: byId('engine').value,
+      Online: byId('engine').value === 'codex',
+      LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
+      ApiUrl: byId('api-url').value.trim(),
+      ApiModel: byId('api-model').value.trim(),
       Modifiers: number('modifiers'),
       RecordKey: number('record-key'),
       TextSize: number('text-size'),
@@ -125,8 +135,41 @@ function collect() {
   };
 }
 
+// Recognition engine
+const engineNotes = {
+  local: () => panel.local_ready ? '在這台電腦辨識，錄音不會離開電腦。' : '本機 Whisper 或模型尚未就緒，請先完成本機語音模型安裝。',
+  api: () => '錄音會傳到你填的服務，費用依該服務計算；網址是 localhost 時錄音留在這台電腦。',
+  codex: () => '錄音會經第三方的 codex-asr 傳到 ChatGPT，需要這台電腦上有效的 Codex 登入。',
+};
+function showEngine() {
+  const engine = byId('engine').value;
+  byId('engine-note').textContent = engineNotes[engine]();
+  byId('local-model-row').hidden = engine !== 'local';
+  for (const id of ['api-url-row', 'api-model-row', 'api-key-row']) byId(id).hidden = engine !== 'api';
+}
+function showKey() {
+  byId('api-key').value = '';
+  byId('api-key-note').textContent = panel.api_key_set
+    ? '已存一把金鑰，存在 Windows 認證管理員。要換新的就貼上；留空會沿用。'
+    : '尚未存金鑰。金鑰存在 Windows 認證管理員，不會寫進設定檔；服務在 localhost 時可以不填。';
+  byId('api-key-clear').disabled = !panel.api_key_set;
+}
+byId('engine').addEventListener('change', showEngine);
+byId('api-key-clear').addEventListener('click', async () => {
+  await invoke('clear_api_key');
+  panel.api_key_set = false;
+  showKey();
+  say('已刪除金鑰。', true);
+});
+
 byId('save').addEventListener('click', async () => {
   try {
+    const key = byId('api-key').value.trim();
+    if (key) {
+      await invoke('set_api_key', { key });
+      panel.api_key_set = true;
+      showKey();
+    }
     await invoke('save_settings', collect());
     invoke('close_settings');
   } catch (reason) {

@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>聽字</title>
+  <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="theme.css">
   <link rel="stylesheet" href="style.css">
 </head>
@@ -18,7 +19,7 @@
     <symbol id="i-convert" viewBox="0 0 24 24"><path d="M4 8H17M14 5L17 8L14 11M20 16H7M10 13L7 16L10 19"/></symbol>
   </svg>
 
-  <main class="capsule" data-state="idle" data-layout="docked">
+  <main class="capsule" data-state="idle" data-layout="docked" data-side="right" data-above="false">
     <div class="bar" data-tauri-drag-region>
       <button id="mic" class="mic" type="button" aria-label="開始錄音" aria-pressed="false">
         <!-- The mark inline (same shapes as mark.svg) so each part can show the state. -->
@@ -49,7 +50,7 @@
         <button id="discard" class="tool for-retry" type="button" title="捨棄這段錄音" aria-label="捨棄這段錄音"><svg class="glyph"><use href="#i-trash"/></svg></button>
         <button id="convert" class="tool" type="button" title="剪貼簿文字簡繁互轉" aria-label="剪貼簿文字簡繁互轉"><svg class="glyph"><use href="#i-convert"/></svg></button>
         <button id="settings" class="tool" type="button" title="開啟設定" aria-label="開啟設定"><svg class="glyph"><use href="#i-settings"/></svg></button>
-        <button id="dock" class="tool" type="button" title="收合到螢幕右側" aria-label="收合到螢幕右側"><svg class="glyph"><use href="#i-dock"/></svg></button>
+        <button id="dock" class="tool" type="button" title="收合成圖示" aria-label="收合成圖示"><svg class="glyph"><use href="#i-dock"/></svg></button>
       </div>
     </div>
     <section class="editor" aria-label="辨識文字">

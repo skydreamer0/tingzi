@@ -1,0 +1,61 @@
+/* Written by assets/design/build_tokens.py from assets/design/tokens.json; edit that file instead. */
+:root {
+  color-scheme: light;
+  --back: #f3f5fc;
+  --surface: #ffffff;
+  --input: #f5f6fd;
+  --text: #1f2455;
+  --muted: #545a80;
+  --border: #bec4e4;
+  --accent: #303897;
+  --on-accent: #ffffff;
+  --danger: #b0281e;
+  --tint: color-mix(in srgb, var(--accent) 13%, var(--surface));
+  --accent-text: color-mix(in srgb, #ffffff 0%, var(--accent));
+  --keycap-ink: #303897;
+  --keycap-face: #e4e8ff;
+  --recording: #d63a37;
+  --radius-sm: 6px;
+  --radius-md: 10px;
+  --radius-lg: 16px;
+  --radius-pill: 999px;
+  --font-xs: 12px;
+  --font-sm: 13px;
+  --font-md: 15px;
+  --font-lg: 18px;
+  --font-xl: 22px;
+  --size-control: 36px;
+  --motion-fast: 140ms;
+  --motion-base: 200ms;
+  --preview-size: 20px;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --back: #181a26;
+    --surface: #202332;
+    --input: #2c3044;
+    --text: #e8ebff;
+    --muted: #a6accd;
+    --border: #4a4f70;
+    --accent: #4b55c8;
+    --on-accent: #ffffff;
+    --danger: #ff8c82;
+    --tint: color-mix(in srgb, var(--accent) 30%, var(--surface));
+    --accent-text: color-mix(in srgb, #ffffff 60%, var(--accent));
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --back: #181a26;
+  --surface: #202332;
+  --input: #2c3044;
+  --text: #e8ebff;
+  --muted: #a6accd;
+  --border: #4a4f70;
+  --accent: #4b55c8;
+  --on-accent: #ffffff;
+  --danger: #ff8c82;
+  --tint: color-mix(in srgb, var(--accent) 30%, var(--surface));
+  --accent-text: color-mix(in srgb, #ffffff 60%, var(--accent));
+}

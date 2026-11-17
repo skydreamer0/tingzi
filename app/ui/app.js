@@ -75,6 +75,8 @@ function receive(next) {
     if (was === 'recording') { stopBars(); tap(); }
     else if (next.state === 'done' && was !== 'done') tap();
   }
+  // A new dictation stops a fold that was under way.
+  if (next.state === 'recording' || next.state === 'working') capsule.classList.remove('closing');
   voice = next;
   editor.value = next.text;
   render();
@@ -102,20 +104,61 @@ recent.addEventListener('change', () => {
   recent.value = '';
 });
 
+// Which edge the keycap is on, and whether the editor card opens above the pill.
+function setSide(side) {
+  capsule.dataset.side = side.left ? 'left' : 'right';
+  capsule.dataset.above = String(side.above);
+}
+
+// The pill's growth and fold; closing() resolves once the fold has played, so the window can shrink after it.
+const motion = { open: 0 };
+function closing() {
+  if (still.matches || capsule.dataset.layout === 'docked') return Promise.resolve();
+  capsule.classList.remove('opening');
+  capsule.classList.add('closing');
+  return new Promise(done => setTimeout(done, 200));
+}
+
 function setLayout(shape) {
+  const was = capsule.dataset.layout;
+  capsule.classList.remove('closing');
+  if (was === 'docked' && shape !== 'docked' && !still.matches) {
+    capsule.classList.add('opening');
+    clearTimeout(motion.open);
+    motion.open = setTimeout(() => capsule.classList.remove('opening'), 260);
+  }
   capsule.dataset.layout = shape;
   render();
   if (shape === 'editor') { loadRecent(); editor.focus(); }
 }
 
-mic.addEventListener('click', () => invoke('toggle_recording'));
+// Dragging the button moves the window; a press that stays put is a click.
+const appWindow = window.__TAURI__.window.getCurrentWindow();
+let pressAt = null, dragged = false;
+mic.addEventListener('pointerdown', event => {
+  if (event.button !== 0) return;
+  pressAt = { x: event.screenX, y: event.screenY };
+  dragged = false;
+});
+mic.addEventListener('pointermove', event => {
+  if (!pressAt || dragged || !(event.buttons & 1)) return;
+  if (Math.hypot(event.screenX - pressAt.x, event.screenY - pressAt.y) < 5) return;
+  dragged = true;
+  pressAt = null;
+  appWindow.startDragging();
+});
+mic.addEventListener('pointerup', () => { pressAt = null; });
+mic.addEventListener('click', event => {
+  if (dragged) { dragged = false; event.preventDefault(); return; }
+  invoke('toggle_recording');
+});
 // The docked button has no others beside it, so a right-click opens the full bar.
 mic.addEventListener('contextmenu', event => { event.preventDefault(); invoke('arrange', { shape: 'bar' }); });
 byId('copy').addEventListener('click', () => invoke('copy_preview'));
 byId('copy-all').addEventListener('click', () => invoke('copy_preview'));
 byId('edit').addEventListener('click', () => invoke('arrange', { shape: 'editor' }));
 byId('collapse').addEventListener('click', () => invoke('arrange', { shape: 'bar' }));
-byId('dock').addEventListener('click', () => invoke('arrange', { shape: 'docked' }));
+byId('dock').addEventListener('click', () => closing().then(() => invoke('arrange', { shape: 'docked' })));
 byId('discard').addEventListener('click', () => invoke('discard_result'));
 byId('convert').addEventListener('click', () => invoke('convert_clipboard_script'));
 byId('settings').addEventListener('click', () => invoke('open_settings'));
@@ -125,6 +168,8 @@ document.addEventListener('keydown', event => { if (event.key === 'Escape' && ca
 listen('voice', event => receive(event.payload));
 listen('notice', event => notice(event.payload));
 listen('layout', event => setLayout(event.payload));
+listen('side', event => setSide(event.payload));
+listen('closing', () => closing());
 listen('look', event => applyLook(event.payload));
 listen('mode', event => { mode = event.payload; render(); });
 // Square root keeps quiet speech visible on the meter.
@@ -149,6 +194,7 @@ function applyLook(look) {
 invoke('facts').then(facts => {
   mode = facts.mode;
   applyLook(facts);
+  setSide(facts.side);
   setLayout(facts.layout);
   receive({ state: facts.state, message: facts.message, text: facts.text });
 });

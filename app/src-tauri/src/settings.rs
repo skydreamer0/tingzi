@@ -1,14 +1,45 @@
 //! The user's preferences, in the same file the earlier voice window used, so an upgrade keeps them.
 
 use crate::deliver::Mode;
-use serde::{Deserialize, Serialize};
+use serde::{Deserialize, Deserializer, Serialize};
 use std::path::PathBuf;
+
+/// Where recordings are recognised.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Engine {
+    /// The Whisper program on this computer; nothing is uploaded.
+    Local,
+    /// Codex's built-in recogniser, through the user's Codex login.
+    Codex,
+    /// A transcription service that speaks the OpenAI API, with the user's own key.
+    Api,
+}
+
+/// An engine this version does not know, from a newer version's file, is read as unset
+/// so the rest of the user's choices still load.
+fn lenient_engine<'de, D: Deserializer<'de>>(source: D) -> Result<Option<Engine>, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(source)?;
+    Ok(value.and_then(|value| serde_json::from_value(value).ok()))
+}
+
+pub const DEFAULT_API_URL: &str = "https://api.openai.com/v1";
+pub const DEFAULT_API_MODEL: &str = "whisper-1";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "PascalCase")]
 pub struct Settings {
-    /// True sends recordings to Codex; false uses the recogniser on this computer.
+    /// What earlier versions read: true sends recordings to Codex. Kept in step with `engine`
+    /// so going back to an earlier version never sends audio to a service the user did not pick.
     pub online: bool,
+    /// Where recordings are recognised; None in files from before there was a choice of three.
+    #[serde(deserialize_with = "lenient_engine")]
+    pub engine: Option<Engine>,
+    /// The service's address, up to and including the version, such as `https://api.openai.com/v1`.
+    pub api_url: String,
+    pub api_model: String,
+    /// The Whisper model file chosen on this computer; None uses the one installed first.
+    pub local_model: Option<String>,
     /// 3 is Ctrl+Alt, 5 is Alt+Shift, 6 is Ctrl+Shift.
     pub modifiers: u32,
     /// A Windows virtual key from A to Z, or 0 when the shortcut is off.
@@ -40,6 +71,10 @@ impl Default for Settings {
     fn default() -> Self {
         Self {
             online: false,
+            engine: None,
+            api_url: DEFAULT_API_URL.into(),
+            api_model: DEFAULT_API_MODEL.into(),
+            local_model: None,
             modifiers: 3,
             record_key: u32::from(b'R'),
             text_size: 20,
@@ -60,6 +95,16 @@ impl Default for Settings {
 }
 
 impl Settings {
+    /// The engine in use, reading files from before the choice of three by their `Online` flag.
+    pub fn engine(&self) -> Engine {
+        self.engine.unwrap_or(if self.online { Engine::Codex } else { Engine::Local })
+    }
+
+    /// The choices as written: the engine named, and `Online` only for Codex.
+    fn as_saved(&self) -> Self {
+        Self { online: self.engine() == Engine::Codex, engine: Some(self.engine()), ..self.clone() }
+    }
+
     fn file() -> PathBuf {
         crate::paths::data().join("voice-settings.json")
     }
@@ -97,7 +142,7 @@ impl Settings {
             std::fs::create_dir_all(folder)?;
         }
         let draft = file.with_extension(format!("{}.tmp", std::process::id()));
-        std::fs::write(&draft, serde_json::to_string(self)?)?;
+        std::fs::write(&draft, serde_json::to_string(&self.as_saved())?)?;
         std::fs::rename(&draft, &file).inspect_err(|_| {
             let _ = std::fs::remove_file(&draft);
         })?;
@@ -146,6 +191,29 @@ mod tests {
         assert_eq!(saved.gesture(), "Ctrl+Shift+T");
         assert_eq!(saved.problem(), None);
         assert!(saved.use_phrases);
+        assert_eq!(saved.engine(), Engine::Codex);
+    }
+
+    #[test]
+    fn the_engine_follows_older_files_and_survives_newer_ones() {
+        let local: Settings = serde_json::from_str(r#"{"Online":false,"RecordKey":84}"#).unwrap();
+        assert_eq!(local.engine(), Engine::Local);
+        let chosen: Settings = serde_json::from_str(r#"{"Online":false,"Engine":"api","ApiModel":"m"}"#).unwrap();
+        assert_eq!((chosen.engine(), chosen.api_model.as_str()), (Engine::Api, "m"));
+        // An engine from a newer version leaves the other choices in place.
+        let newer: Settings = serde_json::from_str(r#"{"Online":true,"Engine":"someday","RecordKey":84}"#).unwrap();
+        assert_eq!((newer.engine(), newer.record_key), (Engine::Codex, 84));
+        let defaults: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!((defaults.api_url.as_str(), defaults.engine()), (DEFAULT_API_URL, Engine::Local));
+    }
+
+    #[test]
+    fn only_codex_is_written_as_online() {
+        for (engine, online) in [(Engine::Api, false), (Engine::Codex, true), (Engine::Local, false)] {
+            let prefs = Settings { engine: Some(engine), online: !online, ..Settings::default() };
+            let back: Settings = serde_json::from_str(&serde_json::to_string(&prefs.as_saved()).unwrap()).unwrap();
+            assert_eq!((back.online, back.engine()), (online, engine));
+        }
     }
 
     #[test]

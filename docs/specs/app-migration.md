@@ -89,7 +89,7 @@ cargo build --release
 
 - 設定環境變數 `TINGZI_RECORD_KEY` 為一個字母（例如 `T`）再啟動開發版，它會改用該字母當錄音鍵，並使用另一組執行個體名稱，可以和已安裝的版本同時執行。
 - 程式執行中時，再執行一次並加上 `--show`、`--settings`、`--edit` 或 `--open-wav 音檔.wav`，要求會交給執行中的那一份。
-- `Tingzi.exe --transcribe 音檔.wav` 不開視窗，直接檢查線上辨識；加上 `--local` 改用本機辨識。
+- `Tingzi.exe --transcribe 音檔.wav` 不開視窗，直接用 Codex 線上辨識；在音檔前加上 `--local` 改用本機辨識，`--api` 改用設定裡的自選線上服務，`--codex` 明確指定 Codex。
 
 ## 已知限制
 

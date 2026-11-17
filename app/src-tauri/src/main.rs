@@ -1,6 +1,7 @@
 //! Tingzi voice window: press the shortcut, speak, and the text lands where you were typing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod api;
 mod apps;
 mod audio;
 mod codex;
@@ -13,6 +14,7 @@ mod panel;
 mod paths;
 mod recognise;
 mod replace;
+mod secret;
 mod settings;
 mod tidy;
 mod words;
@@ -21,7 +23,7 @@ use deliver::{Desktop, Mode, Outcome, Spot};
 use instance::Request;
 use layout::Layout;
 use serde::Serialize;
-use settings::Settings;
+use settings::{Engine, Settings};
 use std::os::windows::process::CommandExt;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Mutex;
@@ -106,14 +108,17 @@ fn announce(app: &AppHandle, state: &'static str, message: impl Into<String>, te
 fn show(app: &AppHandle, state: &'static str, message: impl Into<String>, text: impl Into<String>, expand: bool) {
     announce(app, state, message, text);
     let now = layout::current(app);
-    let next = match state {
-        "done" if expand => Layout::Editor,
-        "error" | "retry" if now == Layout::Docked => Layout::Bar,
-        _ if now == Layout::Editor => Layout::Bar,
-        _ => now,
-    };
-    if next != now {
-        layout::arrange(app, next);
+    match state {
+        "done" if expand => layout::arrange(app, Layout::Editor),
+        // A dictation started from the keycap opens the pill for as long as it runs.
+        "recording" | "working" if now != Layout::Editor => layout::open_for_work(app),
+        // A problem keeps the pill open until the user deals with it.
+        "error" | "retry" if now != Layout::Editor => layout::arrange(app, Layout::Bar),
+        _ if now == Layout::Editor => layout::arrange(app, Layout::Bar),
+        _ => {}
+    }
+    if matches!(state, "done" | "idle") && !expand {
+        layout::close_soon(app);
     }
 }
 
@@ -144,11 +149,11 @@ enum Sound {
 
 /// Recognises `sound` in the background and delivers the text.
 /// `target` is where the user was typing; None shows the text without inserting it.
-fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) {
+fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>) {
     let session = app.state::<Session>();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
     session.working.store(true, Ordering::SeqCst);
-    show(app, "working", if online { "線上辨識中・再點一下取消" } else { "本機辨識中・再點一下取消" }, "", false);
+    show(app, "working", recognise::working_label(engine, &Settings::load()), "", false);
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
@@ -160,13 +165,13 @@ fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) 
             Sound::Recording(recorder) => recorder.finish(),
             Sound::Wav(wav) => Ok(wav),
         };
-        let heard = wav.clone().and_then(|wav| if online { recognise::online(wav) } else { recognise::local(&wav, &cancelled) });
+        let heard = wav.clone().and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
         let text = heard.map(|heard| apps::finish(&polish(&heard, &prefs), rule.as_ref()));
         if cancelled() {
             return;
         }
         // An online failure keeps the recording so it can be tried on this computer.
-        let can_retry = online && recognise::local_parts().is_some();
+        let can_retry = engine != Engine::Local && recognise::problem(Engine::Local, &prefs).is_none();
         let (state, message, text, expand) = match (text, wav) {
             (Ok(text), _) if !text.is_empty() => {
                 let outcome = match target {
@@ -208,11 +213,11 @@ fn toggle(app: &AppHandle) {
         return;
     }
     if let Some(recorder) = session.recorder.lock().unwrap().take() {
-        recognise(app, Sound::Recording(recorder), Settings::load().online, Some(deliver::target()));
+        recognise(app, Sound::Recording(recorder), Settings::load().engine(), Some(deliver::target()));
         return;
     }
     if let Some(wav) = session.kept.lock().unwrap().take() {
-        recognise(app, Sound::Wav(wav), false, Some(deliver::target()));
+        recognise(app, Sound::Wav(wav), Engine::Local, Some(deliver::target()));
         return;
     }
     let prefs = Settings::load();
@@ -302,13 +307,15 @@ fn import(app: &AppHandle, chosen: Option<std::path::PathBuf>) {
         if !local_wav {
             return show(&app, "error", "請選本機的 WAV 音檔", "", false);
         }
-        if prefs.online && !dialogs::confirm(0, "將這個 WAV 經 Codex 傳到 ChatGPT 辨識？") {
-            return;
+        if let Some(going) = recognise::destination(prefs.engine(), &prefs) {
+            if !dialogs::confirm(0, &format!("將這個 WAV {going}辨識？")) {
+                return;
+            }
         }
         let sound = std::fs::read(&file).map_err(|_| "無法讀取這個音檔".to_string()).and_then(|bytes| audio::normalise(&bytes));
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || match sound {
-            Ok(wav) if !busy(&handle) => recognise(&handle, Sound::Wav(wav), prefs.online, None),
+            Ok(wav) if !busy(&handle) => recognise(&handle, Sound::Wav(wav), prefs.engine(), None),
             Ok(_) => {}
             Err(reason) => show(&handle, "error", reason, "", false),
         });
@@ -463,6 +470,7 @@ struct Facts {
     #[serde(flatten)]
     look: panel::Look,
     layout: Layout,
+    side: layout::Side,
     state: &'static str,
     message: String,
     text: String,
@@ -475,6 +483,7 @@ fn facts(app: AppHandle, keys: State<'_, Keys>, session: State<'_, Session>) -> 
     Facts {
         look: panel::look(&Settings::load(), keys.label()),
         layout: layout::current(&app),
+        side: layout::side(&app),
         state: if state.is_empty() { "idle" } else { state },
         mode: session.mode_label(),
         message: session.message.lock().unwrap().clone(),
@@ -562,7 +571,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("learn-on", "啟用本機學習")?,
             &item("learn-off", "關閉本機學習")?,
             &line()?,
-            &item("dock", "收合到螢幕右側")?,
+            &item("dock", "收合成圖示")?,
             &item("quit", "結束聽字")?,
         ],
     )?;
@@ -606,13 +615,19 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
 }
 
 /// `Tingzi --transcribe a.wav [b.wav ...]` checks recognition without the window.
-/// `--local` before the files uses the recogniser on this computer.
+/// `--local`, `--codex` or `--api` before the files picks the recogniser; otherwise it is Codex, as before.
 fn transcribe_files(arguments: &[String]) -> i32 {
-    let local = arguments.first().is_some_and(|flag| flag == "--local");
-    for file in &arguments[usize::from(local)..] {
+    let prefs = Settings::load();
+    let (engine, files) = match arguments.first().map(String::as_str) {
+        Some("--local") => (Engine::Local, &arguments[1..]),
+        Some("--api") => (Engine::Api, &arguments[1..]),
+        Some("--codex") => (Engine::Codex, &arguments[1..]),
+        _ => (Engine::Codex, arguments),
+    };
+    for file in files {
         let started = std::time::Instant::now();
         let sound = std::fs::read(file).map_err(|_| "無法讀取音檔".to_string()).and_then(|bytes| audio::normalise(&bytes));
-        let heard = sound.and_then(|wav| if local { recognise::local(&wav, &|| false) } else { recognise::online(wav) });
+        let heard = sound.and_then(|wav| recognise::run(engine, &prefs, wav, &|| false));
         match heard {
             Ok(text) => println!("{}", deliver::convert_script(&text, false)),
             Err(reason) => {
@@ -672,6 +687,8 @@ fn main() {
             panel::close_settings,
             panel::load_settings,
             panel::save_settings,
+            panel::set_api_key,
+            panel::clear_api_key,
             panel::test_microphone,
             panel::learning_state,
             panel::set_learning,
@@ -693,7 +710,11 @@ fn main() {
             panel::open_target
         ])
         .on_window_event(|window, event| {
+            // A minimised window is parked far off screen; that is not a place the user chose.
             if let (WindowEvent::Moved(to), "capsule") = (event, window.label()) {
+                if window.is_minimized().unwrap_or(false) || layout::parked(*to) {
+                    return;
+                }
                 layout::moved(window.app_handle(), *to);
             }
         })
