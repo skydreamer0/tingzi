@@ -54,8 +54,6 @@ Traditional Chinese voice and Zhuyin input for Windows.
 > [!NOTE]
 > 這是預覽版。安裝程式沒有數位簽章，Windows 可能會顯示「Windows 已保護您的電腦」，按「其他資訊」再按「仍要執行」。下載頁附有 `.sha256` 檔，可以核對下載的檔案是否完整。
 >
-> 單一安裝程式從 0.7.7 之後的下一版開始提供；在它發行之前，下載頁仍是 0.7.7 的 ZIP。
->
 > macOS 版自行建置出的 `Tingzi.app` 只有本機簽章，沒有 Developer ID，也沒有經過 Apple 公證，第一次開啟時要在 Finder 按右鍵選「打開」。
 
 ## 快速上手

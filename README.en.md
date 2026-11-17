@@ -55,8 +55,6 @@ Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) a
 > [!NOTE]
 > This is a preview. The installer is not code-signed, so Windows may show "Windows protected your PC"; choose More info, then Run anyway. Each release includes a `.sha256` file you can use to check the download.
 >
-> The single installer starts with the release after 0.7.7; until it is out, the download page still has the 0.7.7 ZIP.
->
 > A self-built macOS `Tingzi.app` is signed locally only. It has no Developer ID and is not notarized by Apple, so the first time you open it, right-click it in Finder and choose Open.
 
 ## Quick start

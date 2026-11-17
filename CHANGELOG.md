@@ -8,6 +8,8 @@
 
 ## [尚未發行]
 
+## [0.8.0] - 2026-11-18
+
 ### 新增
 
 - 語音：可選用 AI 潤稿，把辨識出的口語整理成書面文字再貼入，預設關閉。在「語音」頁填入 OpenAI 格式聊天服務的網址、模型與金鑰即可使用，金鑰與辨識服務的金鑰分開保存。只送出文字，不送出錄音；少於 8 個字的文字不送出。可以依程式設定是否潤稿。
@@ -104,7 +106,8 @@
 - 語音：以自訂詞校正同音字、取代規則，以及依程式套用不同設定。
 - 語音：保留最近 50 則辨識紀錄，Alt＋Shift＋Z 可以再次貼上上一則。
 
-[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.7.7...HEAD
+[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/skydreamer0/tingzi/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/skydreamer0/tingzi/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/skydreamer0/tingzi/compare/v0.7.5...v0.7.6
 [0.7.5]: https://github.com/skydreamer0/tingzi/compare/v0.7.4...v0.7.5
