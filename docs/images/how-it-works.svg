@@ -1,57 +1,77 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="960" height="330" viewBox="0 0 960 330" role="img" aria-labelledby="t d" font-family="'Segoe UI','Microsoft JhengHei','PingFang TC','Noto Sans TC',sans-serif">
   <title id="t">聽字的三個步驟</title>
-  <desc id="d">第一步點右側麥克風說話，第二步文字插入游標所在位置，第三步用注音重新選同音字。</desc>
-  <rect width="960" height="330" rx="18" fill="#F6F7FF"/>
+  <desc id="d">第一步點螢幕邊緣的聽字圖示說話，第二步文字插入游標所在位置，第三步用注音重新選同音字。</desc>
+  <defs>
+    <!-- The face of the keycap mark; each use draws its own base underneath so the base can show the state. -->
+    <g id="face">
+      <rect x="3.75" y="7.75" width="56.5" height="46" rx="11" fill="#E4E8FF"/>
+      <g fill="none" stroke="#303897" stroke-linecap="round" stroke-linejoin="round">
+        <path stroke-width="4" d="M46 15v29"/>
+        <path stroke-width="3" d="M17 21h29"/>
+        <path stroke-width="4" d="M12 38h34"/>
+        <path stroke-width="3.5" d="M36 21v17"/>
+        <path stroke-width="3.5" d="M27 21v17"/>
+        <path stroke-width="4" d="M18 17l-2 25"/>
+      </g>
+    </g>
+  </defs>
+  <rect width="960" height="330" rx="18" fill="#F3F5FC"/>
   <g font-size="15" fill="#1F2455">
     <!-- step 1 -->
     <g transform="translate(24,24)">
-      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#C9CEF5"/>
+      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#BEC4E4"/>
       <circle cx="30" cy="32" r="14" fill="#303897"/><text x="30" y="37" text-anchor="middle" fill="#FFFFFF" font-weight="700">1</text>
-      <text x="54" y="37" font-weight="700" font-size="17">點麥克風，開始說</text>
-      <rect x="22" y="62" width="244" height="150" rx="8" fill="#EEF0FB" stroke="#C9CEF5"/>
-      <rect x="22" y="62" width="244" height="22" rx="8" fill="#DCE0F7"/>
-      <text x="34" y="78" font-size="12" fill="#4A4F80">記事本</text>
-      <rect x="36" y="100" width="2" height="18" fill="#303897"/>
-      <text x="44" y="114" font-size="13" fill="#7A7FA8">游標放在要打字的地方</text>
-      <circle cx="244" cy="160" r="20" fill="#303897"/>
-      <rect x="239" y="148" width="10" height="16" rx="5" fill="#FFFFFF"/>
-      <path d="M233 160a11 11 0 0 0 22 0M244 171v6" fill="none" stroke="#FFFFFF" stroke-width="2.4" stroke-linecap="round"/>
-      <text x="22" y="240" font-size="14">螢幕右側常駐一顆麥克風。</text>
+      <text x="54" y="37" font-weight="700" font-size="17">點聽字圖示，開始說</text>
+      <rect x="22" y="62" width="244" height="150" rx="8" fill="#E9ECFA" stroke="#BEC4E4"/>
+      <rect x="34" y="74" width="176" height="76" rx="6" fill="#FFFFFF" stroke="#BEC4E4"/>
+      <path d="M34 94V80a6 6 0 0 1 6-6h164a6 6 0 0 1 6 6v14z" fill="#DCE0F7"/>
+      <text x="44" y="89" font-size="12" fill="#545A80">記事本</text>
+      <rect x="46" y="108" width="2" height="18" fill="#303897"/>
+      <text x="54" y="122" font-size="13" fill="#545A80">游標放在要打字的地方</text>
+      <g transform="translate(222,152) scale(0.66)"><rect x="2" y="6" width="60" height="53" rx="13" fill="#303897"/><use href="#face"/></g>
+      <text x="212" y="178" font-size="12" fill="#545A80" text-anchor="end">螢幕邊緣的聽字圖示</text>
+      <text x="22" y="240" font-size="14">螢幕邊緣常駐一顆聽字圖示。</text>
       <text x="22" y="262" font-size="14">點一下開始，再點一下停止。</text>
     </g>
     <!-- step 2 -->
     <g transform="translate(336,24)">
-      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#C9CEF5"/>
+      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#BEC4E4"/>
       <circle cx="30" cy="32" r="14" fill="#303897"/><text x="30" y="37" text-anchor="middle" fill="#FFFFFF" font-weight="700">2</text>
       <text x="54" y="37" font-weight="700" font-size="17">說完，文字就插入</text>
-      <rect x="22" y="62" width="244" height="150" rx="8" fill="#EEF0FB" stroke="#C9CEF5"/>
-      <rect x="22" y="62" width="244" height="22" rx="8" fill="#DCE0F7"/>
-      <text x="34" y="78" font-size="12" fill="#4A4F80">記事本</text>
-      <text x="36" y="116" font-size="16" fill="#1F2455">明天早上九點開會</text>
-      <rect x="166" y="100" width="2" height="20" fill="#303897"/>
-      <rect x="36" y="160" width="216" height="36" rx="18" fill="#FFFFFF" stroke="#303897"/>
-      <circle cx="56" cy="178" r="9" fill="#2E8B57"/>
-      <path d="M51 178l4 4 7-8" fill="none" stroke="#FFFFFF" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
-      <text x="74" y="183" font-size="13">已插入並複製到剪貼簿</text>
+      <rect x="22" y="62" width="244" height="150" rx="8" fill="#E9ECFA" stroke="#BEC4E4"/>
+      <rect x="34" y="74" width="176" height="76" rx="6" fill="#FFFFFF" stroke="#BEC4E4"/>
+      <path d="M34 94V80a6 6 0 0 1 6-6h164a6 6 0 0 1 6 6v14z" fill="#DCE0F7"/>
+      <text x="44" y="89" font-size="12" fill="#545A80">記事本</text>
+      <text x="46" y="124" font-size="16">明天早上九點開會</text>
+      <rect x="180" y="108" width="2" height="20" fill="#303897"/>
+      <!-- the pill grows from the keycap towards the middle of the screen -->
+      <rect x="40" y="158" width="222" height="40" rx="20" fill="#E4E5F2" stroke="#C1C3E0"/>
+      <text x="210" y="174" font-size="11" fill="#545A80" text-anchor="end">已插入並複製文字</text>
+      <text x="210" y="190" font-size="13" text-anchor="end">明天早上九點開會</text>
+      <g transform="translate(218,154) scale(0.72)"><rect x="2" y="6" width="60" height="53" rx="13" fill="#303897"/><use href="#face"/></g>
       <text x="22" y="240" font-size="14">游標還在原欄位時只插入一次；</text>
-      <text x="22" y="262" font-size="14">換了欄位則留在預覽，由你貼上。</text>
+      <text x="22" y="262" font-size="14">換了欄位則留在編輯卡，由你貼上。</text>
     </g>
     <!-- step 3 -->
     <g transform="translate(648,24)">
-      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#C9CEF5"/>
+      <rect width="288" height="282" rx="14" fill="#FFFFFF" stroke="#BEC4E4"/>
       <circle cx="30" cy="32" r="14" fill="#303897"/><text x="30" y="37" text-anchor="middle" fill="#FFFFFF" font-weight="700">3</text>
       <text x="54" y="37" font-weight="700" font-size="17">同音字，用注音改</text>
-      <rect x="22" y="62" width="244" height="150" rx="8" fill="#EEF0FB" stroke="#C9CEF5"/>
-      <rect x="22" y="62" width="244" height="22" rx="8" fill="#DCE0F7"/>
-      <text x="34" y="78" font-size="12" fill="#4A4F80">記事本</text>
-      <text x="36" y="116" font-size="16" fill="#1F2455">我很想</text>
-      <rect x="86" y="98" width="42" height="24" rx="4" fill="#D7F2EF"/>
-      <text x="90" y="116" font-size="16" fill="#12716F">ㄋㄧˇ</text>
-      <rect x="36" y="134" width="170" height="64" rx="8" fill="#FFFFFF" stroke="#303897"/>
-      <text x="48" y="154" font-size="12" fill="#4A4F80">注音選字　1/3</text>
-      <text x="48" y="184" font-size="17">1 你</text>
-      <rect x="100" y="165" width="56" height="26" rx="5" fill="#303897"/>
-      <text x="108" y="184" font-size="17" fill="#FFFFFF">2 妳</text>
+      <rect x="22" y="62" width="244" height="150" rx="8" fill="#E9ECFA" stroke="#BEC4E4"/>
+      <rect x="34" y="74" width="220" height="126" rx="6" fill="#FFFFFF" stroke="#BEC4E4"/>
+      <path d="M34 94V80a6 6 0 0 1 6-6h208a6 6 0 0 1 6 6v14z" fill="#DCE0F7"/>
+      <text x="44" y="89" font-size="12" fill="#545A80">記事本</text>
+      <text x="46" y="120" font-size="16">我很想</text>
+      <rect x="96" y="103" width="42" height="23" rx="4" fill="#E4E5F2"/>
+      <text x="100" y="120" font-size="16" fill="#303897">ㄋㄧˇ</text>
+      <path d="M97 127h40" stroke="#303897" stroke-width="1.5"/>
+      <!-- candidate window: the chosen row is a soft tint, not a solid block -->
+      <rect x="96" y="132" width="150" height="76" rx="10" fill="#FFFFFF" stroke="#BEC4E4"/>
+      <text x="106" y="148" font-size="11" fill="#545A80">注音選字　1/3　學習中</text>
+      <text x="106" y="166" font-size="14">1　你</text>
+      <rect x="101" y="171" width="140" height="18" rx="5" fill="#E4E5F1"/>
+      <text x="106" y="185" font-size="14" fill="#303897">2　妳</text>
+      <text x="106" y="203" font-size="14">3　擬</text>
       <text x="22" y="240" font-size="14">按 Win＋空白鍵切到聽字，</text>
       <text x="22" y="262" font-size="14">打注音、按 ↓ 選字，Enter 送出。</text>
     </g>
