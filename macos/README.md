@@ -42,6 +42,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 | 依程式設定 | 程式以應用程式名稱比對，例如 `Safari.app` |
 | 貼入 Codex 草稿（Control＋Option＋V） | 鍵盤在 Codex 桌面版的任何欄位都會貼入，不分訊息框或搜尋框 |
 | 自選服務的金鑰 | 存在登入鑰匙圈 |
+| AI 潤稿的金鑰 | 存在登入鑰匙圈，和自選服務的金鑰分開 |
 | 登入時啟動 | 在 `~/Library/LaunchAgents/app.tingzi.voice.plist` 寫一個啟動項目 |
 | 個人資料 | `~/Library/Application Support/Tingzi` |
 | 注音頁 | 只留下自訂詞；鍵盤配置、文字範本、本機學習等注音輸入法的項目不顯示 |
@@ -52,9 +53,13 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 2. 到設定的「語音」頁選「本機 Whisper」，在模型清單按「下載」。下載前會列出來源、大小與授權，下載後核對檔案並試跑一次。自己準備的模型檔（檔名是 `ggml-<名稱>.bin`）也可以放進 `~/Library/Application Support/Tingzi/whisper/downloads/`。
 3. 要用顯示卡辨識，開啟同一頁的「顯示卡加速」；`whisper-cli` 本身就支援，不必另外下載。
 
+## AI 潤稿
+
+選用，預設關閉，用法和 Windows 版相同：在設定的「語音」頁填入 OpenAI 格式的服務網址、模型名稱與金鑰，按「測試」試試，再打開開關。開啟後，辨識出的文字（不是錄音）會連同自訂詞和「補充說明」送到這個服務；網址是 `localhost`（例如 Ollama）時文字留在這台 Mac。服務出錯時照常貼入原文。
+
 ## 還沒做的事
 
-- 在實機上驗收錄音、三種辨識方式、貼入、快捷鍵、選單列選單與設定頁。
+- 在實機上驗收錄音、三種辨識方式、AI 潤稿、貼入、快捷鍵、選單列選單與設定頁。
 - Developer ID 簽章與公證；目前其他 Mac 開啟時會看到 Gatekeeper 警告。
 - 應用程式圖示目前由 256 px 的圖放大，之後換成完整尺寸的圖示。
 - 一份程式同時支援 Apple 晶片與 Intel；目前建置出來的只適用於建置它的那種 Mac。

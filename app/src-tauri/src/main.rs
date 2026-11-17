@@ -15,6 +15,7 @@ mod learn;
 mod panel;
 mod paths;
 mod recognise;
+mod refine;
 mod replace;
 mod secret;
 mod settings;
@@ -129,13 +130,53 @@ fn idle(app: &AppHandle, message: &str) {
 }
 
 /// Traditional first, so the user's own words and replacement rules can be matched, then the script the user chose.
+/// A dictation runs the same two halves with refinement between them; see `refined`.
+#[cfg(test)]
 fn polish(heard: &str, prefs: &Settings) -> String {
+    correct(&clean(heard, prefs), prefs)
+}
+
+/// The steps before refinement: Traditional characters, then tidied speech.
+fn clean(heard: &str, prefs: &Settings) -> String {
     let traditional = deliver::convert_script(heard.trim(), false);
-    let tidied = if prefs.tidy { tidy::tidy(&traditional) } else { traditional };
-    let corrected = if prefs.use_phrases { words::apply(&tidied) } else { tidied };
+    if prefs.tidy { tidy::tidy(&traditional) } else { traditional }
+}
+
+/// The steps after refinement, so the user's own words, words learned from fixes and replacement rules undo
+/// any spelling the model changed; then the script the user chose.
+fn correct(text: &str, prefs: &Settings) -> String {
+    let corrected = if prefs.use_phrases { words::apply(text) } else { text.to_string() };
     let corrected = if prefs.learn_fixes { learn::apply(&corrected) } else { corrected };
     let replaced = if prefs.use_replacements { replace::apply(&corrected) } else { corrected };
     deliver::convert_script(&replaced, prefs.simplified)
+}
+
+/// Tidies cleaned speech into written text with the user's service, when this dictation is refined. `chosen` says
+/// Refine is on in the main settings. A failure keeps the text as it was and says why, so the dictation still goes through.
+/// Blocks; call it on the dictation's own thread.
+fn refined(app: &AppHandle, run: u64, cleaned: String, prefs: &Settings, chosen: bool) -> (String, Option<refine::Failure>) {
+    // Nothing is read from the key store, and nothing is sent, while refinement is off.
+    if !prefs.refine || !refine::wanted(prefs, chosen, secret::refine_exists(), &cleaned) {
+        return (cleaned, None);
+    }
+    working(app, run, refine::WORKING);
+    match refine::refine(&cleaned, &prefs.refine_url, &prefs.refine_model, &prefs.refine_note) {
+        // The model may answer in Simplified characters; the user's words are matched in Traditional.
+        Ok(text) => (deliver::convert_script(&text, false), None),
+        Err(failure) => (cleaned, Some(failure)),
+    }
+}
+
+/// Changes what the window says while a dictation is worked on, unless the user has cancelled it by now.
+/// It runs on the main thread, as cancelling does, so a cancelled dictation never shows as working again.
+fn working(app: &AppHandle, run: u64, message: &'static str) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        let session = handle.state::<Session>();
+        if session.run.load(Ordering::SeqCst) == run && session.working.load(Ordering::SeqCst) {
+            show(&handle, "working", message, "", false);
+        }
+    });
 }
 
 /// The user's rule for the program they were typing in; None when there is no such place or no rule for it.
@@ -163,13 +204,24 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         let cancelled = || session.run.load(Ordering::SeqCst) != run;
         // The program being dictated into may change how the text is finished and delivered.
         let rule = rule_for(target);
-        let prefs = apps::effective(&Settings::load(), rule.as_ref());
+        let main = Settings::load();
+        let prefs = apps::effective(&main, rule.as_ref());
         let wav = match sound {
             Sound::Recording(recorder) => recorder.finish(),
             Sound::Wav(wav) => Ok(wav),
         };
         let heard = wav.clone().and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
-        let text = heard.map(|heard| apps::finish(&polish(&heard, &prefs), rule.as_ref()));
+        if cancelled() {
+            return;
+        }
+        // Refinement goes between tidying and the user's own words, so their words win over the model's.
+        let mut unrefined = None;
+        let text = heard.map(|heard| {
+            let (text, failure) = refined(&app, run, clean(&heard, &prefs), &prefs, main.refine);
+            unrefined = failure;
+            apps::finish(&correct(&text, &prefs), rule.as_ref())
+        });
+        // A request cannot be stopped once sent, so a cancel while refining is honoured when it returns.
         if cancelled() {
             return;
         }
@@ -189,8 +241,13 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                     history::add(&text, inserted);
                 }
                 // Words learned from the user's fixes since the last dictation are mentioned once.
+                // A refinement that failed is mentioned after the usual message; the unrefined text went in.
+                let message = match unrefined {
+                    Some(failure) => format!("{message}{}", failure.suffix()),
+                    None => message.to_string(),
+                };
                 let learned = learn::take_fresh();
-                let message = if learned.is_empty() { message.to_string() } else { format!("{message}・已學會「{}」", learned.join("、")) };
+                let message = if learned.is_empty() { message } else { format!("{message}・已學會「{}」", learned.join("、")) };
                 ("done", message, text, expand)
             }
             (failed, Ok(wav)) if can_retry => {
@@ -664,10 +721,33 @@ fn transcribe_files(arguments: &[String]) -> i32 {
     0
 }
 
+/// `Tingzi --refine "文字"` tidies the text with the saved refinement service and prints it, without the window.
+/// It is for trying the service, so it runs whether or not Refine is on, and sends short text too.
+fn refine_text(text: &str) -> i32 {
+    let prefs = Settings::load();
+    if let Some(problem) = refine::problem(&prefs.refine_url, &prefs.refine_model, secret::refine_exists()) {
+        eprintln!("{problem}");
+        return 1;
+    }
+    let started = std::time::Instant::now();
+    match refine::refine(text, &prefs.refine_url, &prefs.refine_model, &prefs.refine_note) {
+        Ok(refined) => println!("{}", deliver::convert_script(&refined, false)),
+        Err(failure) => {
+            eprintln!("{}", failure.sentence());
+            return 1;
+        }
+    }
+    eprintln!("{} ms", started.elapsed().as_millis());
+    0
+}
+
 fn main() {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     if arguments.len() >= 2 && arguments[0] == "--transcribe" {
         std::process::exit(transcribe_files(&arguments[1..]));
+    }
+    if arguments.len() >= 2 && arguments[0] == "--refine" {
+        std::process::exit(refine_text(&arguments[1..].join(" ")));
     }
     let Some(asked) = instance::parse(&arguments) else { std::process::exit(2) };
     // A second launch hands its request to the copy already running, then leaves.
@@ -714,6 +794,9 @@ fn main() {
             panel::save_settings,
             panel::set_api_key,
             panel::clear_api_key,
+            panel::set_refine_key,
+            panel::clear_refine_key,
+            panel::refine_test,
             panel::test_microphone,
             panel::learning_state,
             panel::set_learning,

@@ -25,6 +25,20 @@ fn lenient_engine<'de, D: Deserializer<'de>>(source: D) -> Result<Option<Engine>
 
 pub const DEFAULT_API_URL: &str = "https://api.openai.com/v1";
 pub const DEFAULT_API_MODEL: &str = "whisper-1";
+pub const DEFAULT_REFINE_URL: &str = "https://api.openai.com/v1";
+/// The most characters the user's note to the refinement service may have; the rest is cut off.
+pub const LONGEST_REFINE_NOTE: usize = 500;
+
+/// The first 500 characters of a note to the refinement service.
+pub fn short_note(note: &str) -> String {
+    note.chars().take(LONGEST_REFINE_NOTE).collect()
+}
+
+/// A note that is not text reads as empty, and a long one is cut to size, from the file and from the page alike.
+fn lenient_note<'de, D: Deserializer<'de>>(source: D) -> Result<String, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(source)?;
+    Ok(value.as_ref().and_then(serde_json::Value::as_str).map(short_note).unwrap_or_default())
+}
 
 #[cfg(not(target_os = "macos"))]
 const DRAFT_CLASH: &str = "Ctrl+Alt+V 用於貼入草稿，請選其他錄音鍵。";
@@ -78,6 +92,14 @@ pub struct Settings {
     pub keep_history: bool,
     /// Whether a word typed with Zhuyin to fix a dictation is used to correct later dictations.
     pub learn_fixes: bool,
+    /// Whether recognised text is sent to a language model to be tidied into written text. Off unless the user turns it on.
+    pub refine: bool,
+    /// The refinement service's address, up to and including the version, such as `https://api.openai.com/v1`.
+    pub refine_url: String,
+    pub refine_model: String,
+    /// What the user adds to the instructions for the refinement service, at most 500 characters.
+    #[serde(deserialize_with = "lenient_note")]
+    pub refine_note: String,
 }
 
 impl Default for Settings {
@@ -105,6 +127,10 @@ impl Default for Settings {
             tidy: true,
             keep_history: true,
             learn_fixes: true,
+            refine: false,
+            refine_url: DEFAULT_REFINE_URL.into(),
+            refine_model: String::new(),
+            refine_note: String::new(),
         }
     }
 }
@@ -237,6 +263,30 @@ mod tests {
         assert!(saved.use_replacements);
         let preview: Settings = serde_json::from_str(r#"{"AutoInsert":false}"#).unwrap();
         assert_eq!(preview.mode(), Mode::Preview);
+    }
+
+    #[test]
+    fn refinement_choices_survive_saving_and_older_files_leave_it_off() {
+        let older: Settings = serde_json::from_str(r#"{"Online":false,"RecordKey":82,"Tidy":true}"#).unwrap();
+        assert_eq!((older.refine, older.refine_url.as_str(), older.refine_model.as_str(), older.refine_note.as_str()), (false, DEFAULT_REFINE_URL, "", ""));
+        let chosen = Settings { refine: true, refine_url: "http://localhost:11434/v1".into(), refine_model: "qwen2.5".into(), refine_note: "用詞正式".into(), ..Settings::default() };
+        let written = serde_json::to_string(&chosen.as_saved()).unwrap();
+        assert!(written.contains(r#""Refine":true"#) && written.contains(r#""RefineUrl":"http://localhost:11434/v1""#));
+        assert!(written.contains(r#""RefineModel":"qwen2.5""#) && written.contains(r#""RefineNote":"用詞正式""#));
+        let back: Settings = serde_json::from_str(&written).unwrap();
+        assert_eq!(back, chosen.as_saved());
+        assert_eq!(back.problem(), None);
+    }
+
+    #[test]
+    fn a_long_note_is_cut_and_a_strange_one_is_dropped() {
+        let long = "字".repeat(LONGEST_REFINE_NOTE + 20);
+        let saved: Settings = serde_json::from_str(&format!(r#"{{"RefineNote":"{long}","RecordKey":84}}"#)).unwrap();
+        assert_eq!((saved.refine_note.chars().count(), saved.record_key), (LONGEST_REFINE_NOTE, 84));
+        let odd: Settings = serde_json::from_str(r#"{"RefineNote":7,"RecordKey":84}"#).unwrap();
+        assert_eq!((odd.refine_note.as_str(), odd.record_key), ("", 84));
+        let empty: Settings = serde_json::from_str(r#"{"RefineNote":null}"#).unwrap();
+        assert_eq!(empty.refine_note, "");
     }
 
     #[test]

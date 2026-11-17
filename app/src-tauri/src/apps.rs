@@ -18,6 +18,9 @@ pub struct AppRule {
     pub delivery_mode: Option<u32>,
     /// Chat boxes and search fields do not want a sentence's closing 「。」.
     pub drop_final_stop: bool,
+    /// Whether text is refined here: false keeps a terminal's or code editor's text away from the service;
+    /// true refines here only when the main settings have the service filled in.
+    pub refine: Option<bool>,
 }
 
 pub fn own_file() -> PathBuf {
@@ -70,6 +73,7 @@ pub fn effective(prefs: &Settings, rule: Option<&AppRule>) -> Settings {
         tidy: rule.tidy.unwrap_or(prefs.tidy),
         simplified: rule.simplified.unwrap_or(prefs.simplified),
         delivery_mode: rule.delivery_mode.or(prefs.delivery_mode),
+        refine: rule.refine.unwrap_or(prefs.refine),
         ..prefs.clone()
     }
 }
@@ -121,6 +125,30 @@ mod tests {
         assert_eq!((changed.tidy, changed.simplified, changed.delivery_mode), (false, true, Some(1)));
         assert_eq!(changed.mode(), crate::deliver::Mode::Copy);
         assert!(!changed.keep_history);
+    }
+
+    #[test]
+    fn a_rule_can_turn_refinement_off_or_on() {
+        let on = Settings { refine: true, refine_model: "m".into(), ..Settings::default() };
+        let off = Settings { refine: false, ..on.clone() };
+        let terminal = AppRule { refine: Some(false), ..rule("WindowsTerminal.exe") };
+        let mail = AppRule { refine: Some(true), ..rule("OUTLOOK.EXE") };
+        assert!(!effective(&on, Some(&terminal)).refine);
+        assert!(effective(&off, Some(&mail)).refine);
+        assert!(effective(&on, Some(&rule("Code.exe"))).refine);
+        assert!(!effective(&off, Some(&rule("Code.exe"))).refine);
+        // Everything else about the service still comes from the main settings.
+        assert_eq!(effective(&off, Some(&mail)).refine_model, "m");
+    }
+
+    #[test]
+    fn older_rules_follow_the_main_refinement_choice() {
+        let older: Vec<AppRule> = serde_json::from_str(r#"[{"Program":"Code.exe","Tidy":false}]"#).unwrap();
+        assert_eq!(older[0].refine, None);
+        let written = serde_json::to_string(&AppRule { refine: Some(false), ..rule("Code.exe") }).unwrap();
+        assert!(written.contains(r#""Refine":false"#));
+        let back: AppRule = serde_json::from_str(&written).unwrap();
+        assert_eq!(back.refine, Some(false));
     }
 
     #[test]

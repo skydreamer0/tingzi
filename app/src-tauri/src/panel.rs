@@ -86,6 +86,8 @@ pub struct Panel {
     shortcut_bound: bool,
     /// Whether a key for the user's own service is stored; the key itself never reaches the page.
     api_key_set: bool,
+    /// Whether a key for the refinement service is stored; that key never reaches the page either.
+    refine_key_set: bool,
     version: &'static str,
     has_keyboard: bool,
     has_learning: bool,
@@ -105,6 +107,7 @@ pub fn load_settings(app: AppHandle) -> Panel {
         microphones: audio::microphones(),
         shortcut_bound: keys.bound(),
         api_key_set: crate::secret::exists(),
+        refine_key_set: crate::secret::refine_exists(),
         version: env!("CARGO_PKG_VERSION"),
         has_keyboard: paths::tool("TingziKeyboard.exe").is_some(),
         has_learning: paths::tool("TingziLearning.exe").is_some(),
@@ -127,6 +130,12 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     // The page stores a newly typed key before saving, so it is counted here.
     if prefs.engine() == crate::settings::Engine::Api {
         if let Some(problem) = crate::api::problem(&prefs.api_url, &prefs.api_model, crate::secret::exists()) {
+            return Err(problem);
+        }
+    }
+    // Refinement is only turned on with a service it can reach; the page stores a new key first here too.
+    if prefs.refine {
+        if let Some(problem) = crate::refine::problem(&prefs.refine_url, &prefs.refine_model, crate::secret::refine_exists()) {
             return Err(problem);
         }
     }
@@ -161,6 +170,40 @@ pub fn set_api_key(key: String) -> Result<(), String> {
 #[tauri::command]
 pub fn clear_api_key() {
     crate::secret::clear();
+}
+
+/// Stores the key for the refinement service, apart from the transcription service's key.
+#[tauri::command]
+pub fn set_refine_key(key: String) -> Result<(), String> {
+    crate::secret::refine_write(&key)
+}
+
+/// Removes the refinement key. A service that needs one cannot be used without it, so refinement is
+/// switched off as well; otherwise every later change to the settings would be refused for the missing key.
+/// Returns whether refinement was switched off.
+#[tauri::command]
+pub fn clear_refine_key() -> bool {
+    crate::secret::refine_clear();
+    let prefs = Settings::load();
+    let stranded = prefs.refine && crate::refine::problem(&prefs.refine_url, &prefs.refine_model, false).is_some();
+    stranded && Settings { refine: false, ..prefs }.store().is_ok()
+}
+
+/// Refines the fixed sample with what the page has filled in and the stored key, whether or not Refine is on.
+/// Saves nothing. The reason for a failure is a whole sentence that never repeats what the server sent.
+#[tauri::command(async)]
+pub fn refine_test(url: String, model: String, note: String) -> Result<String, String> {
+    if let Some(problem) = crate::refine::problem(&url, &model, crate::secret::refine_exists()) {
+        return Err(format!("{problem}。"));
+    }
+    // The blocking client must not run, or be dropped, on the runtime async commands use, so it gets its own thread.
+    let asked = std::thread::spawn(move || crate::refine::refine(crate::refine::SAMPLE, &url, &model, &note));
+    match asked.join() {
+        // A dictation turns the answer into Traditional characters, so the test shows it the same way.
+        Ok(Ok(text)) => Ok(crate::deliver::convert_script(&text, false)),
+        Ok(Err(failure)) => Err(failure.sentence().into()),
+        Err(_) => Err("潤稿測試沒有完成，請再試一次。".into()),
+    }
 }
 
 pub fn open(app: &AppHandle) {

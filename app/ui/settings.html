@@ -118,13 +118,34 @@
             <div class="what"><label for="tidy">整理口語</label><p>去掉句首的「嗯、呃、欸」和重複的字詞，補上中文標點。不會改寫你的句子。</p></div>
             <input id="tidy" type="checkbox" role="switch" class="switch"></div>
         </div>
+        <h2>AI 潤稿</h2>
+        <div class="card">
+          <div class="row">
+            <div class="what"><label for="refine">AI 潤稿</label><p>開啟後，辨識出的文字（不是錄音）會送到下面填的服務，整理改口、贅詞和標點；網址是 localhost 時文字留在這台電腦。</p></div>
+            <input id="refine" type="checkbox" role="switch" class="switch"></div>
+          <div class="row sub">
+            <div class="what"><label for="refine-url">服務網址</label><p>OpenAI 格式的對話服務，例如 OpenAI，或自己電腦上的 Ollama（http://localhost）。</p></div>
+            <input id="refine-url" type="text" class="wide" maxlength="300" autocomplete="off" spellcheck="false" placeholder="https://api.openai.com/v1"></div>
+          <div class="row sub">
+            <div class="what"><label for="refine-model">模型名稱</label><p>依服務填寫。自訂詞會一起送出，讓模型照你的寫法。</p></div>
+            <input id="refine-model" type="text" class="wide" maxlength="120" autocomplete="off" spellcheck="false" placeholder="模型名稱"></div>
+          <div class="row sub">
+            <div class="what"><label for="refine-key">金鑰</label><p id="refine-key-note"></p></div>
+            <div class="group"><input id="refine-key" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="貼上新的金鑰"><button id="refine-key-clear" type="button" class="button" aria-label="刪除已存的潤稿金鑰">刪除</button></div></div>
+          <div class="row sub">
+            <div class="what"><label for="refine-note">補充說明</label><p>給模型的額外說明，例如想要的格式或常用的專有名詞，最多 500 個字。</p></div>
+            <textarea id="refine-note" class="wide" rows="3" maxlength="500" spellcheck="false"></textarea></div>
+          <div class="row sub">
+            <div class="what"><span class="name">測試潤稿</span><p>用一句固定的範例試試上面填的服務，不會儲存設定。</p><p id="refine-result" role="status" aria-live="polite"></p></div>
+            <button id="refine-test" type="button" class="button" aria-label="測試潤稿服務">測試</button></div>
+        </div>
         <h2>送出</h2>
         <div class="card">
           <div class="row">
             <div class="what"><label for="delivery">辨識完成後</label><p>錄音途中切換到別的視窗時，文字會留在浮窗預覽，不會貼錯地方。</p></div>
             <select id="delivery" class="wide"><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></div>
           <div class="row">
-            <div class="what"><span class="name">依程式設定</span><p>對終端機、程式編輯器或聊天軟體另外決定整理口語、輸出文字、送出方式和句尾句號。</p></div>
+            <div class="what"><span class="name">依程式設定</span><p>對終端機、程式編輯器或聊天軟體另外決定整理口語、AI 潤稿、輸出文字、送出方式和句尾句號。</p></div>
             <button id="manage-app-rules" type="button" class="button" aria-label="管理依程式設定">管理</button></div>
         </div>
       </section>
@@ -180,7 +201,7 @@
 
       <section id="page-privacy" role="tabpanel" aria-labelledby="tab-privacy" hidden>
         <h1>隱私</h1>
-        <p class="note" data-mac="自訂詞、辨識紀錄和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。</p>
+        <p class="note" data-mac="自訂詞、辨識紀錄和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務。">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務。</p>
         <h2>這台電腦上的資料</h2>
         <div class="card">
           <div class="row">
@@ -268,6 +289,7 @@
     <datalist id="running-programs"></datalist>
     <div class="choices">
       <label>整理口語<select id="rule-tidy"><option value="">跟隨主要設定</option><option value="1">整理</option><option value="0">不整理</option></select></label>
+      <label>AI 潤稿<select id="rule-refine"><option value="">跟隨主要設定</option><option value="1">潤稿</option><option value="0">不潤稿</option></select></label>
       <label>輸出文字<select id="rule-script"><option value="">跟隨主要設定</option><option value="0">繁體中文</option><option value="1">簡體中文</option></select></label>
       <label>辨識完成後<select id="rule-delivery"><option value="">跟隨主要設定</option><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></label>
       <label>句尾句號<select id="rule-stop"><option value="0">保留</option><option value="1">去掉句尾的「。」</option></select></label>

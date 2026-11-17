@@ -85,6 +85,11 @@ function fill() {
   byId('use-phrases').checked = prefs.UsePhrases;
   byId('use-replacements').checked = prefs.UseReplacements;
   byId('tidy').checked = prefs.Tidy;
+  byId('refine').checked = Boolean(prefs.Refine);
+  byId('refine-url').value = prefs.RefineUrl ?? '';
+  byId('refine-model').value = prefs.RefineModel ?? '';
+  byId('refine-note').value = prefs.RefineNote ?? '';
+  showRefineKey();
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
   byId('learn-fixes').checked = prefs.LearnFixes;
@@ -141,6 +146,10 @@ function collect(engineFromPage) {
       UsePhrases: byId('use-phrases').checked,
       UseReplacements: byId('use-replacements').checked,
       Tidy: byId('tidy').checked,
+      Refine: byId('refine').checked,
+      RefineUrl: byId('refine-url').value.trim(),
+      RefineModel: byId('refine-model').value.trim(),
+      RefineNote: byId('refine-note').value.trim(),
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
       LearnFixes: byId('learn-fixes').checked,
@@ -176,6 +185,16 @@ function showKey() {
   byId('api-key-clear').disabled = !panel.api_key_set;
 }
 byId('engine').addEventListener('change', showEngine);
+
+// AI refinement's own key, kept apart from the recognition service's key; like that one, it is never shown back.
+function showRefineKey() {
+  byId('refine-key').value = '';
+  const store = onMac() ? 'macOS 鑰匙圈' : 'Windows 認證管理員';
+  byId('refine-key-note').textContent = panel.refine_key_set
+    ? `已存一把金鑰，存在 ${store}。要換新的就貼上；留空會沿用。`
+    : `尚未存金鑰。金鑰存在 ${store}，和辨識服務的金鑰分開；服務在 localhost 時可以不填。`;
+  byId('refine-key-clear').disabled = !panel.refine_key_set;
+}
 
 // Local models and the graphics card build. Downloads report on the `local-fetch` event.
 function showLocal() {
@@ -325,9 +344,62 @@ byId('api-key').addEventListener('change', () => {
     }
   });
 });
+byId('refine-key').addEventListener('change', () => {
+  const key = byId('refine-key').value.trim();
+  if (!key) return;
+  storing = storing.then(async () => {
+    try {
+      await invoke('set_refine_key', { key });
+      panel.refine_key_set = true;
+      showRefineKey();
+      say('已存入潤稿金鑰。', true);
+    } catch (reason) {
+      say(String(reason));
+    }
+  });
+});
+byId('refine-key-clear').addEventListener('click', () => {
+  storing = storing.then(async () => {
+    try {
+      // A service that needs a key cannot go on without one, so the app switches refinement off with it.
+      const switchedOff = await invoke('clear_refine_key');
+      panel.refine_key_set = false;
+      showRefineKey();
+      if (switchedOff) {
+        byId('refine').checked = false;
+        panel.prefs.Refine = false;
+        accepted.set('refine', false);
+      }
+      say(switchedOff ? '已刪除潤稿金鑰，並關閉 AI 潤稿。' : '已刪除潤稿金鑰。', true);
+    } catch (reason) {
+      say(String(reason));
+    }
+  });
+});
+// The test uses what the page shows now, after any change still being stored, such as a key just typed.
+const refineTest = byId('refine-test'), refineResult = byId('refine-result');
+refineTest.addEventListener('click', async () => {
+  refineTest.disabled = true;
+  refineResult.classList.remove('failed');
+  refineResult.textContent = '測試中…';
+  await storing;
+  try {
+    refineResult.textContent = await invoke('refine_test', {
+      url: byId('refine-url').value.trim(),
+      model: byId('refine-model').value.trim(),
+      note: byId('refine-note').value.trim(),
+    });
+  } catch (reason) {
+    refineResult.classList.add('failed');
+    refineResult.textContent = String(reason);
+  }
+  refineTest.disabled = false;
+  // Disabling the button drops keyboard focus; give it back.
+  if (document.activeElement === document.body) refineTest.focus();
+});
 document.querySelector('.pages').addEventListener('change', event => {
-  // Local learning is switched by its own tool.
-  if (event.target.id !== 'learning') store(event.target);
+  // Local learning is switched by its own tool, and the refinement key is stored by its own command.
+  if (event.target.id !== 'learning' && event.target.id !== 'refine-key') store(event.target);
 });
 byId('close').addEventListener('click', () => invoke('close_settings'));
 
@@ -585,6 +657,7 @@ const rulesDialog = byId('app-rules'), rulesList = byId('app-rules-list'), ruleP
 const rulesStatus = byId('app-rules-status');
 let appRules = [], rulePick = -1;
 const tidyNames = { true: '整理口語', false: '不整理口語' };
+const refineNames = { true: 'AI 潤稿', false: '不潤稿' };
 const scriptNames = { true: '簡體', false: '繁體' };
 const deliveryNames = ['自動插入', '只複製', '只顯示預覽'];
 const sameProgram = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
@@ -592,6 +665,7 @@ const sameProgram = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
 function ruleSummary(rule) {
   const parts = [];
   if (rule.Tidy !== null && rule.Tidy !== undefined) parts.push(tidyNames[rule.Tidy]);
+  if (rule.Refine !== null && rule.Refine !== undefined) parts.push(refineNames[rule.Refine]);
   if (rule.Simplified !== null && rule.Simplified !== undefined) parts.push(scriptNames[rule.Simplified]);
   if (rule.DeliveryMode !== null && rule.DeliveryMode !== undefined) parts.push(deliveryNames[rule.DeliveryMode]);
   if (rule.DropFinalStop) parts.push('去掉句尾句號');
@@ -605,6 +679,7 @@ const flagFrom = id => byId(id).value === '' ? null : byId(id).value === '1';
 function showRule(rule) {
   ruleProgram.value = rule.Program;
   byId('rule-tidy').value = choiceOf(rule.Tidy);
+  byId('rule-refine').value = choiceOf(rule.Refine);
   byId('rule-script').value = choiceOf(rule.Simplified);
   byId('rule-delivery').value = choiceOf(rule.DeliveryMode);
   byId('rule-stop').value = rule.DropFinalStop ? '1' : '0';
@@ -632,7 +707,7 @@ async function keepRules(next) {
 byId('manage-app-rules').addEventListener('click', async () => {
   rulePick = -1;
   rulesStatus.textContent = '';
-  showRule({ Program: '', Tidy: null, Simplified: null, DeliveryMode: null, DropFinalStop: false });
+  showRule({ Program: '', Tidy: null, Refine: null, Simplified: null, DeliveryMode: null, DropFinalStop: false });
   appRules = await invoke('app_rules_load');
   refillRules();
   rulesDialog.showModal();
@@ -648,6 +723,7 @@ byId('add-app-rule').addEventListener('click', async () => {
   const rule = {
     Program: program,
     Tidy: flagFrom('rule-tidy'),
+    Refine: flagFrom('rule-refine'),
     Simplified: flagFrom('rule-script'),
     DeliveryMode: delivery === '' ? null : Number(delivery),
     DropFinalStop: byId('rule-stop').value === '1',
@@ -747,7 +823,7 @@ invoke('load_settings').then(async loaded => {
   applyLook(panel.look);
   wordForSystem();
   fill();
-  for (const control of document.querySelectorAll('.pages select, .pages input')) accepted.set(control.id, valueOf(control));
+  for (const control of document.querySelectorAll('.pages select, .pages input, .pages textarea')) accepted.set(control.id, valueOf(control));
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');
   const on = await invoke('learning_state');
   learning.checked = on === true;

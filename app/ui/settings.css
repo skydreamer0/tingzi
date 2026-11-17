@@ -71,7 +71,21 @@ select, input[type="text"], input[type="password"] {
   background: var(--input);
 }
 select.wide, input.wide { flex: none; width: 250px; }
-#api-key { width: 160px; }
+/* The one multi-line field, the AI refinement note; it grows downward only. */
+textarea {
+  padding: 6px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--input);
+  font: inherit;
+  color: inherit;
+  resize: vertical;
+}
+textarea.wide { flex: none; width: 250px; min-height: 72px; }
+#api-key, #refine-key { width: 160px; }
+/* The refinement test's answer keeps the line breaks of a list. */
+#refine-result { white-space: pre-line; overflow-wrap: anywhere; color: var(--text); }
+#refine-result.failed { color: var(--danger); }
 .button {
   flex: none;
   min-width: 84px;
@@ -162,7 +176,7 @@ dialog::backdrop { background: rgb(10 12 30 / 0.45); }
 .readings select { width: 118px; }
 #expansion { margin-top: 8px; }
 #words-status, .said { min-height: 20px; margin: 8px 0 12px; font-size: var(--font-sm); color: var(--muted); }
-/* The four choices of a per-program rule. */
+/* The five choices of a per-program rule. */
 #rule-program { margin-bottom: 8px; }
 .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .choices label { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-sm); color: var(--muted); }

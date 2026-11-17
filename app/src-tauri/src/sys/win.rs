@@ -390,10 +390,13 @@ pub fn listen(names: Vec<String>, raised: impl Fn(usize) + Send + 'static) {
 
 // ---- The service key
 
-const SECRET: &str = "Tingzi/RecognitionServiceKey";
+/// Where the key called `name` is kept in Credential Manager, such as `Tingzi/RecognitionServiceKey`.
+fn secret_target(name: &str) -> String {
+    format!("Tingzi/{name}")
+}
 
-pub fn secret_read() -> Option<String> {
-    let target = HSTRING::from(SECRET);
+pub fn secret_read(name: &str) -> Option<String> {
+    let target = HSTRING::from(secret_target(name));
     let mut found: *mut CREDENTIALW = std::ptr::null_mut();
     // SAFETY: CredReadW fills `found` with a buffer Windows owns, which is read and then freed with CredFree.
     unsafe {
@@ -404,9 +407,9 @@ pub fn secret_read() -> Option<String> {
     }
 }
 
-/// Stores `key` for this Windows user, replacing any earlier one.
-pub fn secret_store(key: &str) -> bool {
-    let mut target = wide(SECRET);
+/// Stores `key` under `name` for this Windows user, replacing any earlier one.
+pub fn secret_store(name: &str, key: &str) -> bool {
+    let mut target = wide(&secret_target(name));
     let mut blob = key.as_bytes().to_vec();
     let credential = CREDENTIALW {
         Flags: CRED_FLAGS(0),
@@ -421,9 +424,9 @@ pub fn secret_store(key: &str) -> bool {
     unsafe { CredWriteW(&credential, 0) }.is_ok()
 }
 
-pub fn secret_clear() {
+pub fn secret_clear(name: &str) {
     // SAFETY: the target name is a valid string for the length of the call.
-    let _ = unsafe { CredDeleteW(&HSTRING::from(SECRET), CRED_TYPE_GENERIC, 0) };
+    let _ = unsafe { CredDeleteW(&HSTRING::from(secret_target(name)), CRED_TYPE_GENERIC, 0) };
 }
 
 // ---- Choices kept by the system

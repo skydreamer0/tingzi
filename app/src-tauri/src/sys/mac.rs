@@ -329,21 +329,21 @@ pub fn listen(names: Vec<String>, raised: impl Fn(usize) + Send + 'static) {
 
 // ---- The service key
 
+/// Every key is kept under this service, with its `name`, such as `RecognitionServiceKey`, as the account.
 const KEYCHAIN_SERVICE: &str = "Tingzi";
-const KEYCHAIN_ACCOUNT: &str = "RecognitionServiceKey";
 
-pub fn secret_read() -> Option<String> {
-    let stored = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT).ok()?;
+pub fn secret_read(name: &str) -> Option<String> {
+    let stored = security_framework::passwords::get_generic_password(KEYCHAIN_SERVICE, name).ok()?;
     String::from_utf8(stored).ok().filter(|key| !key.is_empty())
 }
 
-/// Stores `key` in this user's login keychain, replacing any earlier one.
-pub fn secret_store(key: &str) -> bool {
-    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT, key.as_bytes()).is_ok()
+/// Stores `key` under `name` in this user's login keychain, replacing any earlier one.
+pub fn secret_store(name: &str, key: &str) -> bool {
+    security_framework::passwords::set_generic_password(KEYCHAIN_SERVICE, name, key.as_bytes()).is_ok()
 }
 
-pub fn secret_clear() {
-    let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, KEYCHAIN_ACCOUNT);
+pub fn secret_clear(name: &str) {
+    let _ = security_framework::passwords::delete_generic_password(KEYCHAIN_SERVICE, name);
 }
 
 // ---- Choices kept by the system

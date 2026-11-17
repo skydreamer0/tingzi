@@ -9,3 +9,4 @@
 | 新增或修改介面按鈕的圖示 | [圖示集](../assets/icons/README.md) |
 | 了解產品名稱、識別與安裝位置 | [產品識別](specs/tingzi-product.md) |
 | 規劃一般用戶缺少的功能與介面改善 | [一般用戶體驗規格](specs/general-user-experience.md) |
+| 了解 AI 潤稿的做法與設定頁的約定 | [AI 潤稿規格](specs/ai-refine.md) |
