@@ -6,6 +6,7 @@
 | 建置或試用準備中的 macOS 版 | [macOS 說明](../macos/README.md) |
 | 查看各版本改了什麼 | [變更紀錄](../CHANGELOG.md) |
 | 回報問題、建置、執行測試或發行新版 | [貢獻指南](../CONTRIBUTING.md) · [開發指南](development/README.md) |
+| 讓 AI 程式代理（Codex、Claude Code）在這個儲存庫工作 | [AGENTS.md](../AGENTS.md) · [專案 skill](../.claude/skills/) |
 | 私下回報資安問題 | [資安政策](../SECURITY.md) |
 | 取用橫耳鍵 SVG 或 Windows 圖示 | [品牌素材](../assets/brand/README.md) |
 | 新增或修改介面按鈕的圖示 | [圖示集](../assets/icons/README.md) |
