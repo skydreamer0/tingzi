@@ -1,6 +1,6 @@
 ﻿; 聽字・注音與語音輸入法：Windows 安裝程式（Inno Setup 6）。
-; 不直接編譯這個檔，請用 windows/build_installer.py：它解開發行 ZIP、核對檔案清單，
-; 再以 /DAppVersion、/DPayload、/DOutputDir 呼叫 ISCC。
+; 不直接編譯這個檔，請用 windows/build_installer.py：它先核對發行 ZIP 的檔案清單，
+; 再以 /DAppVersion、/DPayloadZip、/DOutputDir 呼叫 ISCC。
 ;
 ; 安裝程式只是把發行 ZIP 的內容交給既有的 InstallTingzi.cmd：註冊、升級與保留資料的規則都沿用它與
 ; TingziVersion.exe，這裡不重寫。安裝程式另外負責：WebView2 Runtime、在「設定 → 應用程式」登記，
@@ -9,8 +9,8 @@
 #ifndef AppVersion
   #error 請以 /DAppVersion=<版號> 指定版本
 #endif
-#ifndef Payload
-  #error 請以 /DPayload=<解開的發行 ZIP 資料夾> 指定內容
+#ifndef PayloadZip
+  #error 請以 /DPayloadZip=<發行 ZIP> 指定內容
 #endif
 #ifndef OutputDir
   #define OutputDir "."
@@ -65,10 +65,8 @@ zh_TW.WelcomeLabel2=這會在電腦上安裝 [name/ver]。%n%n裝好後按 Win�
 
 [Files]
 Source: "..\tingzi.ico"; DestDir: "{app}"; Flags: ignoreversion
-; 發行 ZIP 的完整內容放到暫存資料夾，交給 InstallTingzi.cmd；裝完即刪。
-Source: "{#Payload}\*"; DestDir: "{tmp}\payload"; Excludes: "InstallTingzi.cmd"; Flags: recursesubdirs createallsubdirs deleteafterinstall
-; 最後一個檔：放好後立即執行註冊。失敗時丟出例外，安裝程式會停下並還原。
-Source: "{#Payload}\InstallTingzi.cmd"; DestDir: "{tmp}\payload"; Flags: deleteafterinstall; AfterInstall: RegisterTingzi
+; 發行 ZIP 原封不動帶著，在 PrepareToInstall 解開並執行 InstallTingzi.cmd；註冊失敗時安裝程式會停下，不留下任何登記。
+Source: "{#PayloadZip}"; DestName: "payload.zip"; Flags: dontcopy
 
 [Run]
 Filename: "{app}\v{#AppVersion}\TingziFloat\TingziFloat.exe"; Description: "開啟語音浮窗"; Flags: postinstall nowait skipifsilent runasoriginaluser; Check: IsFirstInstall
@@ -200,18 +198,44 @@ begin
   Result := Result + '（代碼 ' + IntToStr(Code) + '）';
 end;
 
-procedure RegisterTingzi;
+procedure LogFile(const Path: String);
+var
+  Lines: TArrayOfString;
+  I: Integer;
+begin
+  if LoadStringsFromFile(Path, Lines) then
+    for I := 0 to GetArrayLength(Lines) - 1 do
+      Log('  ' + Lines[I]);
+end;
+
+// 在複製任何檔案、登記應用程式清單之前註冊輸入法。這裡回傳文字就會停止安裝並顯示原因，
+// 不會留下半套的安裝；AfterInstall 裡丟出例外只會顯示錯誤，安裝照樣完成。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
 var
   Code: Integer;
-  Script: String;
+  Payload, Archive, Output: String;
 begin
-  WizardForm.StatusLabel.Caption := '正在註冊輸入法並建立捷徑…';
-  Script := ExpandConstant('{tmp}\payload\InstallTingzi.cmd');
-  if not Exec(ExpandConstant('{cmd}'), '/c ""' + Script + '" /quiet"', ExpandConstant('{tmp}\payload'), SW_HIDE, ewWaitUntilTerminated, Code) then
-    RaiseException('無法執行安裝腳本。');
+  Result := '';
+  ExtractTemporaryFile('payload.zip');
+  Archive := ExpandConstant('{tmp}\payload.zip');
+  Payload := ExpandConstant('{tmp}\payload');
+  Output := ExpandConstant('{tmp}\install-output.txt');
+  if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath ''' + Archive + ''' -DestinationPath ''' + Payload + ''' -Force"',
+      '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+  begin
+    Result := '無法解開安裝內容（代碼 ' + IntToStr(Code) + '）。請重新下載安裝程式。';
+    exit;
+  end;
+  if not Exec(ExpandConstant('{cmd}'), '/c ""' + Payload + '\InstallTingzi.cmd" /quiet > "' + Output + '" 2>&1"', Payload, SW_HIDE, ewWaitUntilTerminated, Code) then
+  begin
+    Result := '無法執行安裝腳本。';
+    exit;
+  end;
   Log('InstallTingzi.cmd exit code ' + IntToStr(Code));
+  LogFile(Output);
   if Code <> 0 then
-    RaiseException(InstallFailure(Code));
+    Result := InstallFailure(Code);
 end;
 
 // 個人資料夾以外，使用者可能換過的本機詞表與語音資料夾設定放在目前使用的版本子目錄裡。
