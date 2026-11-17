@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-Hant-TW">
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>聽字 Tingzi｜品牌與輸入介面草案</title>
+<style>
+:root{font-family:"Segoe UI","Microsoft JhengHei",sans-serif;color:#20213b;background:#f8f9ff;--ink:#303897;--light:#e4e8ff;--rule:#c5c9e3}
+*{box-sizing:border-box}body{margin:0}main{max-width:1100px;margin:auto;padding:28px clamp(16px,5vw,70px) 48px}header,footer,.caption,.toolbar,.choices,.sizes{display:flex;align-items:center;gap:12px;flex-wrap:wrap}header,footer{justify-content:space-between}header{border-bottom:2px solid var(--ink);padding-bottom:14px}header b{font-size:18px}small,figcaption,footer{color:#50546b}h1,h2,p,figure{margin:0}h2{font-size:20px}.hero{display:grid;grid-template-columns:1.1fr 1fr;align-items:center;gap:36px;margin:42px 0}.hero h1{font-size:clamp(64px,9vw,108px);line-height:1.17;color:var(--ink);letter-spacing:.035em}.wordmark{font-family:Georgia,serif;color:var(--ink);font-size:clamp(30px,4vw,49px);line-height:1}.lead{font-size:clamp(21px,3vw,32px);line-height:1.5;font-weight:650;margin:20px 0 8px}.sub{font-size:15px;line-height:1.65;color:#50546b}
+.proof{background:#e9edff;border-radius:24px;padding:24px;display:grid;gap:16px}.markrow{display:flex;justify-content:space-between;align-items:center;gap:16px}.markrow>img{width:clamp(80px,11vw,132px)}.sizes{justify-content:space-around;background:white;border-radius:14px;padding:12px 8px;gap:6px}.sizes figure{display:grid;grid-template-rows:34px auto;justify-items:center;align-items:end;font-size:12px;gap:5px}.night{background:#292b45;border-radius:5px;padding:3px;display:inline-grid}
+.choices{gap:5px}.choices button,.candidates button{appearance:none;font:inherit;background:white;color:var(--ink);border:1px solid var(--rule);border-radius:7px;padding:8px 12px;cursor:pointer}.choices button[aria-pressed=true],.candidates button[aria-pressed=true]{color:white;background:var(--ink);border-color:var(--ink)}button:focus-visible{outline:3px solid #c25000;outline-offset:2px}.detail{font-size:14px;line-height:1.6;color:#363954;max-width:16em}
+.sample{display:grid;grid-template-columns:1fr 1.65fr;border-top:1px solid var(--rule);padding:26px 0;gap:28px}.sample p{margin-top:10px}.desk{background:#fff;border:1px solid var(--rule);border-radius:16px;overflow:hidden}.toolbar{font-size:13px;border-bottom:1px solid var(--rule);padding:11px 18px;justify-content:space-between;color:#50546b}.toolbar span:first-child{display:flex;gap:8px;align-items:center;font-weight:700;color:#20213b}.composer{padding:20px}.sentence{font-size:clamp(21px,3.3vw,32px);line-height:1.65;font-weight:600}.sentence mark{color:var(--ink);background:var(--light);border-bottom:3px solid var(--ink);padding:0 2px}.candidates{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:16px}.candidates span{font-size:14px;margin-right:4px}.candidates button{padding:5px 13px}.status{font-size:13px;color:#50546b;min-height:1.6em}.caption{margin-top:6px;color:var(--ink);font-weight:600;font-size:14px}footer{border-top:1px solid var(--rule);padding-top:15px;font-size:13px}a{color:var(--ink)}
+@media(max-width:680px){.hero,.sample{grid-template-columns:1fr;gap:19px}.hero{margin:24px 0}.proof{padding:18px}.markrow{justify-content:flex-start}.sample{padding:20px 0}}
+</style>
+<main>
+<header><b>聽字 <span lang="en">Tingzi</span></b><small>品牌設計稿　v0.1</small></header>
+<section class="hero" aria-label="品牌與圖示">
+<div><h1>聽字</h1><div class="wordmark" lang="en">Tingzi</div><p class="lead">說完就能打，錯字用注音改。</p><p class="sub">聽字・注音與語音輸入法<br><span lang="en">Traditional Chinese voice and Zhuyin input for Windows</span></p></div>
+<div class="proof"><div class="choices" role="group" aria-label="選擇圖示"><button data-mark="ear-caret" aria-pressed="true">耳標</button><button data-mark="sound-key" aria-pressed="false">聲字鍵</button></div>
+<div class="markrow"><img class="icon" src="ear-caret.svg" alt="選用的圖示"><p class="detail" id="reason">取「聽」左邊的耳，右直筆落成游標。主圖示留給輸入法，麥克風留給錄音。</p></div>
+<div class="sizes" aria-label="圖示實際尺寸"><figure><img class="micro" src="ear-caret-16.svg" alt="" width="16" height="16"><figcaption>16 px</figcaption></figure><figure><img class="icon" src="ear-caret.svg" alt="" width="24" height="24"><figcaption>24 px</figcaption></figure><figure><img class="icon" src="ear-caret.svg" alt="" width="32" height="32"><figcaption>32 px</figcaption></figure><figure><span class="night"><img class="micro" src="ear-caret-16.svg" alt="" width="16" height="16"></span><figcaption>深色底</figcaption></figure></div></div>
+</section>
+<section class="sample" aria-labelledby="demo"><div><h2 id="demo">用注音換一個字</h2><p class="sub">試著把「會議記路」的「路」換成「錄」。看圖示放進輸入視窗後，和選字放在一起是否好認。</p><p class="caption">離線示意，使用範例文字</p></div>
+<div class="desk"><div class="toolbar"><span><img class="icon" src="ear-caret.svg" alt="" width="20" height="20">聽字</span><span>修正辨識結果</span></div><div class="composer"><div class="sentence">把會議記<mark id="word">路</mark>寄給我。</div><div class="candidates" role="group" aria-label="ㄌㄨˋ 的候選字"><span>ㄌㄨˋ</span><button aria-pressed="false">錄</button><button aria-pressed="true">路</button><button aria-pressed="false">鹿</button></div><p class="status" id="status" aria-live="polite">點選候選字即可替換。</p></div></div></section>
+<footer><span>Windows 介面草案</span></footer>
+</main>
+<script>
+for(const button of document.querySelectorAll('[data-mark]'))button.onclick=()=>{
+ const name=button.dataset.mark,ear=name==='ear-caret';
+ for(const el of document.querySelectorAll('[data-mark]'))el.setAttribute('aria-pressed',String(el===button));
+ for(const img of document.querySelectorAll('.icon,.micro'))img.src=name+(ear&&img.classList.contains('micro')?'-16':'')+'.svg';
+ document.getElementById('reason').textContent=ear?'取「聽」左邊的耳，右直筆落成游標。主圖示留給輸入法，麥克風留給錄音。':'鍵帽裡放一段聲紋。語音與打字容易聯想，縮小時則容易看成錄音工具。';
+};
+for(const button of document.querySelectorAll('.candidates button'))button.onclick=()=>{
+ for(const el of document.querySelectorAll('.candidates button'))el.setAttribute('aria-pressed',String(el===button));
+ document.getElementById('word').textContent=button.textContent;
+ document.getElementById('status').textContent='目前選用「'+button.textContent+'」。';
+};
+</script>
+</html>
