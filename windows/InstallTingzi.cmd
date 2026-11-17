@@ -6,6 +6,8 @@ set "TARGET=%ProgramW6432%\Tingzi"
 reg query "HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32" /ve /reg:64 >nul 2>&1
 if not errorlevel 1 (
   "%~dp0TingziVersion.exe" upgrade || exit /b
+  rem Earlier versions did not declare these; without them Windows will not add the keyboard from Settings.
+  "%~dp0TingziSetup64.exe" categories
   call :voiceShortcuts || exit /b
   call :keyboards
   exit /b 0

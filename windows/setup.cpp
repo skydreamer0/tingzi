@@ -52,6 +52,15 @@ HRESULT profilePresent(ITfInputProcessorProfileMgr* profiles,bool& found) {
     }
     found=false;return hr==S_FALSE?S_OK:E_FAIL;
 }
+// Windows lists a text service as usable in all programs, and lets the user add it from Settings, only when
+// it declares support for Store apps; without it, choosing it under "Add a keyboard" does nothing.
+// The system tray category lets the input indicator show it as a current input method.
+const GUID* capabilities[]={&GUID_TFCAT_TIPCAP_IMMERSIVESUPPORT,&GUID_TFCAT_TIPCAP_SYSTRAYSUPPORT};
+HRESULT declareCapabilities(ITfCategoryMgr* categories){
+    HRESULT hr=S_OK;
+    for(const GUID* category:capabilities)if(SUCCEEDED(hr))hr=categories->RegisterCategory(serviceId,*category,serviceId);
+    return report(L"Register capability categories",hr);
+}
 HRESULT run(const std::wstring& action,const fs::path& dll){
     // Machine COM registration must only refer to a DLL in a protected installation directory.
     wchar_t pf[32768]{};DWORD bytes=sizeof(pf);
@@ -73,6 +82,8 @@ HRESULT run(const std::wstring& action,const fs::path& dll){
     if(FAILED(hr))return report(L"TSF category manager",hr);
     TF_INPUTPROCESSORPROFILE profile{};
     auto inspect=[&](){return profiles->GetProfile(TF_PROFILETYPE_INPUTPROCESSOR,languageId,serviceId,profileId,nullptr,&profile);};
+    // An upgrade keeps the existing registration; this adds the categories that earlier versions did not declare.
+    if(action==L"categories")return declareCapabilities(categories.Get());
     if(action==L"status"){
         hr=report(L"GetProfile",inspect());
         if(hr==S_OK) wprintf(L"profile flags = 0x%lx\n",profile.dwFlags);
@@ -102,6 +113,7 @@ HRESULT run(const std::wstring& action,const fs::path& dll){
             if(FAILED(hr)||present)return report(L"Verify profile removal",FAILED(hr)?hr:E_FAIL);
         }
         categories->UnregisterCategory(serviceId,GUID_TFCAT_TIP_KEYBOARD,serviceId);
+        for(const GUID* category:capabilities)categories->UnregisterCategory(serviceId,*category,serviceId);
         return report(L"Remove COM class",removeClass(hive));
     }
     if(action!=L"install")return E_INVALIDARG;
@@ -117,6 +129,7 @@ HRESULT run(const std::wstring& action,const fs::path& dll){
     hr=report(L"RegisterProfile",profiles->RegisterProfile(serviceId,languageId,profileId,profileName,
         ARRAYSIZE(profileName)-1,icon.c_str(),(ULONG)icon.size(),0,nullptr,0,TRUE,0));
     if(SUCCEEDED(hr))hr=report(L"Register keyboard category",categories->RegisterCategory(serviceId,GUID_TFCAT_TIP_KEYBOARD,serviceId));
+    if(SUCCEEDED(hr))hr=declareCapabilities(categories.Get());
 #ifdef TINGZI_STANDALONE
     if(SUCCEEDED(hr)){
         ComPtr<ITfInputProcessorProfiles> userProfiles;
@@ -129,6 +142,7 @@ HRESULT run(const std::wstring& action,const fs::path& dll){
     if(FAILED(hr)){
         if(!previousProfile && inspect()==S_OK){
             categories->UnregisterCategory(serviceId,GUID_TFCAT_TIP_KEYBOARD,serviceId);
+            for(const GUID* category:capabilities)categories->UnregisterCategory(serviceId,*category,serviceId);
             profiles->UnregisterProfile(serviceId,languageId,profileId,0);
         }
         if(created)removeClass(hive);
@@ -137,7 +151,7 @@ HRESULT run(const std::wstring& action,const fs::path& dll){
 }
 }
 int wmain(int argc,wchar_t** argv){
-    if(argc!=2){wprintf(L"Tingzi IME setup: install | status | remove\n");return 2;}
+    if(argc!=2){wprintf(L"Tingzi IME setup: install | categories | status | remove\n");return 2;}
     wchar_t path[32768];GetModuleFileNameW(nullptr,path,32768);
     HRESULT hr=CoInitializeEx(nullptr,COINIT_APARTMENTTHREADED);
     if(FAILED(hr))return 1;
