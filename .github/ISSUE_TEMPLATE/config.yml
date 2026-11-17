@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 使用手冊（Windows）
+    url: https://github.com/skydreamer0/tingzi/blob/main/windows/README.md
+    about: 安裝、設定與常見問題
+  - name: 使用手冊（macOS）
+    url: https://github.com/skydreamer0/tingzi/blob/main/macos/README.md
+    about: macOS 版語音浮窗的安裝與設定

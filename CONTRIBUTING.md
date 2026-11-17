@@ -4,7 +4,7 @@
 
 ## 回報問題
 
-使用 [GitHub Issue](https://github.com/skydreamer0/tingzi/issues) 回報。儲存庫提供[問題回報模板](.github/ISSUE_TEMPLATE/bug-report.yml)。填入 Windows 版本、程式版號或 commit、重現步驟、預期結果、實際結果與辨識模式。
+使用 [GitHub Issue](https://github.com/skydreamer0/tingzi/issues) 回報。儲存庫提供[問題回報模板](.github/ISSUE_TEMPLATE/bug-report.yml)與[功能需求模板](.github/ISSUE_TEMPLATE/feature-request.yml)。回報問題時填入平台、作業系統版本、程式版號或 commit、辨識方式、重現步驟、預期結果與實際結果。
 
 以下是使用合成文字的回報範例，不需要附錄音：
 
