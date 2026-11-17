@@ -48,7 +48,7 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     Dictionary& dictionary() {
         static Dictionary data;
         static const bool loaded=data.load(folder(module));
-        static const bool extended=(data.loadUser(userPhraseFile()),data.loadTemplates(userTemplateFile()),true);
+        static const bool extended=(data.loadUser(userPhraseFile()),data.loadTemplates(userTemplateFile()),data.loadPairs(folder(module)+L"pairs.txt"),true);
         static const bool learned=([]{for(const auto& word:Learning().learnedWords())data.addUser(word.reading,word.text);}(),true);
         (void)learned;
         (void)extended;

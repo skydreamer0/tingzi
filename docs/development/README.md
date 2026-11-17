@@ -8,13 +8,15 @@
 | --- | --- |
 | `windows/service.cpp`、`profile.h`、`engine.h`、`learning.h` | C++ Windows TSF 文字服務、輸入法識別與自有引擎。 |
 | `windows/setup.cpp`、`upgrade.cpp`、`InstallTingzi.cmd`、`RemoveTingzi.cmd` | 註冊、升級與移除。 |
-| `windows/editor.cpp`、`keyboard.cpp`、`learning_cli.cpp` | 打字板、切換輸入法與學習工具。 |
+| `windows/keyboard.cpp`、`learning_cli.cpp` | 切換輸入法與學習工具。 |
+| `windows/editor.cpp` | 開發用的注音測試視窗；預設建置已不再編譯，也不隨安裝包發行。 |
 | `app/src-tauri/` | 語音浮窗與設定頁的 Rust 後端（Tauri 2）：錄音、辨識（內建 codex-asr 與本機 Whisper）、貼入規則、設定、系統匣與單一執行個體。各檔案的職責見[遷移規格](../specs/app-migration.md)的架構表；測試寫在各模組裡，以 `cargo test` 執行。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`）的網頁介面，只顯示狀態與收集選擇。 |
 | `windows/engine_test.cpp`、`learning_test.cpp` | 自有引擎與學習測試原始碼。 |
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
 | `windows/licenses/` | 標準授權全文，打包時附給沒有自帶授權檔的 Rust 相依套件。 |
+| `windows/standalone-data/pairs.txt`、`windows/tools/build_pairs.py` | 詞語搭配統計與產生它的腳本。腳本讀詞庫和一份語料（維基百科分卷或純文字檔），輸出常一起出現的詞對；語料本身不放進專案。授權見 `pairs-NOTICE.txt`。 |
 | `assets/icons/` | 介面圖示集的 SVG 原稿；規範見[圖示集說明](../../assets/icons/README.md)。 |
 | `assets/brand/` | 橫耳鍵品牌素材。Windows 建置使用 `windows/tingzi.svg` 與 `windows/tingzi.ico`。 |
 | `docs/specs/` | 產品識別與待實作規格。 |
@@ -32,7 +34,7 @@ cargo test
 cargo build --release
 ```
 
-`cargo test` 目前有 30 個測試，涵蓋貼入規則與啟動參數等邏輯。測試成功不代表真實麥克風、線上辨識、Windows 焦點或 TSF 安裝已通過。
+`cargo test` 目前有 56 個測試，涵蓋貼入規則、簡繁轉換與啟動參數等邏輯。測試成功不代表真實麥克風、線上辨識、Windows 焦點或 TSF 安裝已通過。
 
 要手動啟動剛建置的浮窗，執行建置輸出裡的 `Tingzi.exe`。已安裝的浮窗與開發版共用單一執行個體識別；先把環境變數 `TINGZI_RECORD_KEY` 設為一個字母（例如 `T`）再啟動，開發版會改用該字母當錄音鍵並使用另一組執行個體名稱，可以和已安裝的版本同時執行。`--show`、`--settings`、`--edit`、`--open-wav` 與 `--transcribe` 等啟動參數見[遷移規格](../specs/app-migration.md)的「開發與測試」。
 
@@ -61,7 +63,7 @@ python windows/package_release.py <package-directory> <new-output.zip> --cargo-m
 
 ## 版本與授權界線
 
-主分支的浮窗專案（`app/src-tauri`）、升級目錄與打包器均標記程式版本 `0.7.4`，這是開發版資訊，不代表已發行。
+主分支的浮窗專案（`app/src-tauri`）、升級目錄與打包器均標記程式版本 `0.7.5`，這是開發版資訊，不代表已發行。
 
 浮窗內建第三方 codex-asr 0.1.2。打包器把它與其他 Rust 相依套件的名稱、版本與授權記錄在套件的 `notices/rust-dependencies.json` 與 `THIRD-PARTY-NOTICES.txt`。專案整體授權、公開時間、可重現建置、簽章和試行驗收仍待確認。
 

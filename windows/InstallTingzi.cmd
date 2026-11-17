@@ -11,14 +11,14 @@ if not errorlevel 1 (
 )
 reg query "HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32" /ve /reg:32 >nul 2>&1
 if not errorlevel 1 exit /b 9
-for %%f in (THIRD-PARTY-NOTICES.txt TingziFloat\LICENSE TingziVersion.exe TingziKeyboard.exe TingziLearning.exe TingziFloat\TingziFloat.exe) do (
+for %%f in (THIRD-PARTY-NOTICES.txt pairs.txt pairs-NOTICE.txt TingziFloat\LICENSE TingziVersion.exe TingziKeyboard.exe TingziLearning.exe TingziFloat\TingziFloat.exe) do (
   if not exist "%~dp0%%f" exit /b 4
 )
-for %%f in (TingziSetup64.exe TingziSetup32.exe TingziTextService64.dll TingziTextService32.dll TingziPad.exe README.md RemoveTingzi.cmd VoiceShortcuts.ps1) do (
+for %%f in (TingziSetup64.exe TingziSetup32.exe TingziTextService64.dll TingziTextService32.dll README.md RemoveTingzi.cmd VoiceShortcuts.ps1) do (
   if not exist "%~dp0%%f" exit /b 4
 )
 if not exist "%TARGET%\" mkdir "%TARGET%" || exit /b 5
-for %%f in (TingziSetup64.exe TingziSetup32.exe TingziTextService64.dll TingziTextService32.dll TingziPad.exe README.md RemoveTingzi.cmd VoiceShortcuts.ps1) do (
+for %%f in (TingziSetup64.exe TingziSetup32.exe TingziTextService64.dll TingziTextService32.dll README.md RemoveTingzi.cmd VoiceShortcuts.ps1) do (
   if not exist "%TARGET%\%%f" copy /y /b "%~dp0%%f" "%TARGET%\%%f" >nul || goto copyfailed
 )
 for %%f in (Tingzi.cin phrases.txt McBopomofo-LICENSE.txt ACKNOWLEDGEMENTS.md) do if exist "%~dp0%%f" if not exist "%TARGET%\%%f" (

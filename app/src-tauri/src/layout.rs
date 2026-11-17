@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter, LogicalSize, Manager, Monitor, PhysicalPosition}
 pub enum Layout {
     /// A round microphone at the right edge of the screen.
     Docked,
-    /// Microphone, status and the recognised text, with a strip of quick actions below.
+    /// One line: microphone, status and the recognised text.
     Bar,
     /// The bar with the recognised text open for editing.
     Editor,
@@ -21,8 +21,8 @@ impl Layout {
     fn size(self) -> (f64, f64) {
         match self {
             Layout::Docked => (72.0, 72.0),
-            Layout::Bar => (480.0, 134.0),
-            Layout::Editor => (480.0, 342.0),
+            Layout::Bar => (480.0, 92.0),
+            Layout::Editor => (480.0, 300.0),
         }
     }
 }

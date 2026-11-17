@@ -19,7 +19,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 - **語音輸入**：螢幕右側常駐一顆聽字圖示（橫耳鍵標誌），點一下開始、再點一下停止。辨識完成時，若游標還在原欄位，文字只插入一次，同時複製到剪貼簿。
 - **換欄也不會貼錯**：錄音途中換了欄位，文字會留在浮窗裡可以修改的編輯區，讓你自己決定貼到哪裡。
 - **注音修字**：用 Win＋空白鍵切到「聽字・注音與語音輸入法」，在要改的位置打注音選字。
-- **簡體／繁體輸出**：在設定選「輸出文字」，語音結果和注音送出的字都會照選擇轉換；系統匣選單也能把剪貼簿的文字轉成繁體或簡體。
+- **簡體／繁體輸出**：在設定選「輸出文字」，語音結果和注音送出的字都會照選擇轉換；浮條上的簡繁互轉鍵和系統匣選單也能把剪貼簿的文字在繁體和簡體之間互轉。
 - **跟著系統的外觀**：設定、浮條、系統匣選單、注音候選窗和輸入行會跟隨 Windows 的深色或淺色模式，也可以固定其中一種；強調色可用聽字靛色或 Windows 的強調色。
 - **內建注音引擎**：使用自己的注音引擎與公開授權詞庫，不需要另外安裝其他輸入法。支援標準（大千）與倚天兩種鍵盤配置。
 - **自訂詞**：在設定加入姓名或專有名詞，打注音時優先出現，語音辨識的同音字也會換成這些詞；破音字可以指定讀音。
@@ -50,7 +50,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ## 目前狀態
 
-最新版本是 **0.7.4**，安裝包在 [Releases](https://github.com/skydreamer0/tingzi/releases) 下載。這是預覽版：安裝包沒有數位簽章，Windows 可能會跳出警告。要自己建置請看[開發指南](docs/development/README.md)。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
+最新版本是 **0.7.5**，安裝包在 [Releases](https://github.com/skydreamer0/tingzi/releases) 下載。這是預覽版：安裝包沒有數位簽章，Windows 可能會跳出警告。要自己建置請看[開發指南](docs/development/README.md)。接下來要補齊的項目列在[一般用戶體驗規格](docs/specs/general-user-experience.md)。
 
 ## 安裝
 

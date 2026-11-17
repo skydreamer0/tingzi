@@ -122,7 +122,6 @@ pub struct Panel {
     local_ready: bool,
     version: &'static str,
     has_keyboard: bool,
-    has_pad: bool,
     has_learning: bool,
     has_word_list: bool,
     look: Look,
@@ -140,7 +139,6 @@ pub fn load_settings(app: AppHandle) -> Panel {
         local_ready: recognise::local_parts().is_some(),
         version: env!("CARGO_PKG_VERSION"),
         has_keyboard: paths::tool("TingziKeyboard.exe").is_some(),
-        has_pad: paths::tool("TingziPad.exe").is_some(),
         has_learning: paths::tool("TingziLearning.exe").is_some(),
         has_word_list: paths::word_list().is_some(),
         look: look(&prefs, keys.label()),
@@ -178,24 +176,16 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
 }
 
 pub fn open(app: &AppHandle) {
-    open_at(app, None);
-}
-
-/// Opens the settings window, on the page with this name when one is given (voice, zhuyin, look or about).
-pub fn open_at(app: &AppHandle, page: Option<&'static str>) {
     if let Some(window) = app.get_webview_window("settings") {
         let _ = window.unminimize();
         let _ = window.show();
         let _ = window.set_focus();
-        if let Some(page) = page {
-            let _ = app.emit_to("settings", "open-page", page);
-        }
         return;
     }
     // Creating a window from an event handler can stall on Windows, so it happens on its own thread.
     let app = app.clone();
     std::thread::spawn(move || {
-        let _ = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App(page.map_or_else(|| "settings.html".to_string(), |page| format!("settings.html#{page}")).into()))
+        let _ = WebviewWindowBuilder::new(&app, "settings", WebviewUrl::App("settings.html".into()))
             .title("聽字・注音與語音輸入法 · 設定")
             .inner_size(860.0, 660.0)
             .min_inner_size(660.0, 460.0)
@@ -414,7 +404,6 @@ pub fn open_target(which: String) -> bool {
     };
     match which.as_str() {
         "keyboard" => tool("TingziKeyboard.exe", Some("switch")),
-        "pad" => tool("TingziPad.exe", None),
         "language" => dialogs::open("ms-settings:regionlanguage"),
         "home" => dialogs::open("https://github.com/skydreamer0/tingzi"),
         "issues" => dialogs::open("https://github.com/skydreamer0/tingzi/issues"),

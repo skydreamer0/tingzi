@@ -15,6 +15,7 @@
     <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 7H6M12 7H20M4 12H12M18 12H20M4 17H7M13 17H20"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="10" cy="17" r="2"/></symbol>
     <symbol id="i-dock" viewBox="0 0 24 24"><path d="M9 6L15 12L9 18M20 5V19"/></symbol>
     <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12L10 17L19 7"/></symbol>
+    <symbol id="i-convert" viewBox="0 0 24 24"><path d="M4 8H17M14 5L17 8L14 11M20 16H7M10 13L7 16L10 19"/></symbol>
   </svg>
 
   <main class="capsule" data-state="idle" data-layout="docked">
@@ -46,19 +47,11 @@
         <button id="copy" class="tool for-text" type="button" title="複製辨識文字" aria-label="複製辨識文字"><svg class="glyph"><use href="#i-copy"/></svg></button>
         <button id="edit" class="tool for-text" type="button" title="編輯辨識文字" aria-label="編輯辨識文字"><svg class="glyph"><use href="#i-edit"/></svg></button>
         <button id="discard" class="tool for-retry" type="button" title="捨棄這段錄音" aria-label="捨棄這段錄音"><svg class="glyph"><use href="#i-trash"/></svg></button>
+        <button id="convert" class="tool" type="button" title="剪貼簿文字簡繁互轉" aria-label="剪貼簿文字簡繁互轉"><svg class="glyph"><use href="#i-convert"/></svg></button>
         <button id="settings" class="tool" type="button" title="開啟設定" aria-label="開啟設定"><svg class="glyph"><use href="#i-settings"/></svg></button>
         <button id="dock" class="tool" type="button" title="收合到螢幕右側" aria-label="收合到螢幕右側"><svg class="glyph"><use href="#i-dock"/></svg></button>
       </div>
     </div>
-    <nav class="quick" aria-label="快捷列">
-      <button type="button" data-quick="zhuyin" title="切換到注音輸入法">注音</button>
-      <button type="button" data-quick="pad" title="開啟本機打字板">打字板</button>
-      <button type="button" data-quick="words" title="管理自訂詞、範本與已學會的詞">詞語</button>
-      <button type="button" data-quick="history" title="最近的辨識紀錄">紀錄</button>
-      <button type="button" data-quick="last" title="把上一則貼回剛才打字的地方">貼上一則</button>
-      <button type="button" data-quick="traditional" title="把剪貼簿的文字轉成繁體">轉繁</button>
-      <button type="button" data-quick="simplified" title="把剪貼簿的文字轉成簡體">轉簡</button>
-    </nav>
     <section class="editor" aria-label="辨識文字">
       <textarea id="text" spellcheck="false" aria-label="辨識文字，可以修改"></textarea>
       <div class="actions">

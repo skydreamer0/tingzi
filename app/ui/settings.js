@@ -93,8 +93,6 @@ function fill() {
   if (!panel.has_word_list) byId('words-note').textContent = '找不到注音詞庫，請重新安裝完整套件。';
   byId('open-keyboard').disabled = !panel.has_keyboard;
   if (!panel.has_keyboard) byId('keyboard-note').textContent = '找不到注音切換工具，請重新安裝完整套件。';
-  byId('open-pad').disabled = !panel.has_pad;
-  if (!panel.has_pad) byId('pad-note').textContent = '找不到打字板，請重新安裝完整套件。';
   byId('learning-data').hidden = !panel.has_learning;
   byId('learned-row').hidden = !panel.has_learning;
   if (!panel.shortcut_bound) say('目前錄音快捷鍵被占用，請選其他組合。');
@@ -168,10 +166,6 @@ byId('microphone').addEventListener('change', stopTest);
 listen('mic-level', event => { if (testing) byId('mic-level').style.width = Math.round(Math.sqrt(event.payload) * 100) + '%'; });
 listen('mic-test-ended', () => showTest(false));
 listen('look', event => applyLook(event.payload));
-// The voice window's quick strip opens settings straight on a page.
-const pageFor = name => byId('tab-' + name);
-listen('open-page', event => { if (pageFor(event.payload)) openPage(pageFor(event.payload)); });
-if (pageFor(location.hash.slice(1))) openPage(pageFor(location.hash.slice(1)));
 
 // Local learning
 const learning = byId('learning');
@@ -204,7 +198,7 @@ byId('history-clear').addEventListener('click', async () => {
 });
 
 // Links and tools
-for (const which of ['keyboard', 'pad', 'language', 'home', 'issues', 'folder']) {
+for (const which of ['keyboard', 'language', 'home', 'issues', 'folder']) {
   byId('open-' + which).addEventListener('click', async () => {
     if (!await invoke('open_target', { which })) say('無法開啟，請確認完整套件已安裝。');
   });

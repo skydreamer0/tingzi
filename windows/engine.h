@@ -8,6 +8,7 @@
 #include <map>
 #include <sstream>
 #include <string>
+#include <unordered_map>
 #include <vector>
 #include <memory>
 #include <optional>
@@ -128,6 +129,33 @@ struct Dictionary {
     // How common each character is under each of its readings.
     std::map<std::pair<Text,Text>,double> charScore;
     size_t longestPhrase = 1;
+    // Words that occur together more often than chance: for each second word, the first words that favour it
+    // and by how many powers of ten. Words are kept as hashes; the table is loaded into every application.
+    using Followers=std::vector<std::pair<unsigned long long,float>>;
+    std::unordered_map<unsigned long long,Followers> pairs;
+    static unsigned long long wordHash(const Text& word){
+        unsigned long long hash=1469598103934665603ull;
+        for(wchar_t unit:word){hash^=unit;hash*=1099511628211ull;}
+        return hash;
+    }
+    // "first<TAB>second<TAB>bonus" per line.
+    void loadPairs(const Text& file) {
+        std::ifstream in(file, std::ios::binary);
+        std::string line;
+        while (std::getline(in, line)) {
+            if (!line.empty() && line.back() == '\r') line.pop_back();
+            const auto one = line.find('\t'), two = one == std::string::npos ? one : line.find('\t', one + 1);
+            if (two == std::string::npos) continue;
+            const float bonus = std::strtof(line.c_str() + two + 1, nullptr);
+            if (bonus <= 0) continue;
+            pairs[wordHash(wide(line.substr(one + 1, two - one - 1)))].push_back({wordHash(wide(line.substr(0, one))), bonus});
+        }
+        for (auto& [second, firsts] : pairs) std::sort(firsts.begin(), firsts.end());
+    }
+    const Followers* followers(unsigned long long second) const {
+        auto found=pairs.find(second);
+        return found==pairs.end()?nullptr:&found->second;
+    }
     // A character the word list does not score ranks below every one it does.
     double scoreOf(const Text& reading,const Text& text) const {
         auto found=charScore.find({reading,text});
@@ -403,30 +431,52 @@ class Input {
         list.erase(std::remove_if(list.begin(),list.end(),[&](const Choice& word){return word.count>limit;}),list.end());
         return list;
     }
+    // The most likely sentence from `pos` on. Each word counts for how common it is, plus a bonus when the
+    // word before it is one it often follows, so the choice of a word depends on its neighbour.
     std::vector<Span> highestPath(size_t pos,size_t* firstLength=nullptr) const {
-        size_t len=syllables.size();
-        std::vector<double> cost(len+1, -1e100);
-        std::vector<Text> text(len+1);
-        std::vector<size_t> step(len+1,0);
-        cost[len]=0;
-        for(size_t i=len;i>pos;--i){
-            if(const Segment* seg=owner(i-1)){
+        const size_t len=syllables.size();
+        struct Edge { size_t count; Text text; double best; int back; unsigned long long hash; };
+        std::vector<Edge> edges;
+        // For each position, the words that end there, and the best of them.
+        std::vector<std::vector<int>> ending(len+1);
+        std::vector<int> strongest(len+1,-1);
+        std::vector<char> reached(len+1,0);
+        if(pos<=len)reached[pos]=1;
+        for(size_t at=pos;at<len;++at){
+            if(!reached[at])continue;
+            std::vector<Choice> options;
+            if(const Segment* seg=owner(at)){
                 // A settled stretch is taken whole, exactly as the user left it.
-                const bool head=seg->at==i-1;
-                step[i-1]=head?seg->count:1;
-                if(head)text[i-1]=seg->text;
-                cost[i-1]=cost[i-1+step[i-1]];
-                continue;
-            }
-            for(const auto& term:wordsFor(i-1)) {
-                size_t next=i-1+term.count;
-                double score=term.score+cost[next];
-                if(score>cost[i-1]) { cost[i-1]=score; text[i-1]=term.text; step[i-1]=term.count; }
+                const bool head=seg->at==at;
+                options.push_back({head?seg->text:Text(),head?seg->count:1,0.0});
+            } else options=wordsFor(at);
+            const auto& before=ending[at];
+            for(auto& term:options){
+                const unsigned long long hash=Dictionary::wordHash(term.text);
+                double lead=0;int back=-1;
+                if(!before.empty()){
+                    back=strongest[at];lead=edges[back].best;
+                    if(const auto* favoured=dict.followers(hash)){
+                        for(int candidate:before){
+                            const auto found=std::lower_bound(favoured->begin(),favoured->end(),std::make_pair(edges[candidate].hash,0.0f));
+                            if(found==favoured->end() || found->first!=edges[candidate].hash)continue;
+                            const double total=edges[candidate].best+found->second;
+                            if(total>lead){lead=total;back=candidate;}
+                        }
+                    }
+                }
+                const size_t next=at+term.count;
+                const int index=int(edges.size());
+                edges.push_back({term.count,std::move(term.text),term.score+lead,back,hash});
+                ending[next].push_back(index);
+                if(strongest[next]<0 || edges[index].best>edges[strongest[next]].best)strongest[next]=index;
+                reached[next]=1;
             }
         }
-        if(firstLength)*firstLength=pos<len?step[pos]:0;
         std::vector<Span> spans;
-        for(size_t at=pos;at<len && step[at];at+=step[at])spans.push_back({text[at],step[at]});
+        for(int at=strongest[len];at>=0;at=edges[at].back)spans.push_back({edges[at].text,edges[at].count});
+        std::reverse(spans.begin(),spans.end());
+        if(firstLength)*firstLength=spans.empty()?0:spans.front().count;
         return spans;
     }
     // Syllables that sound close: the usual initial and final confusions, in every tone.

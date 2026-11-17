@@ -351,10 +351,19 @@ fn copy_preview_text(app: &AppHandle) -> bool {
     copied
 }
 
-fn convert_clipboard(app: &AppHandle, simplified: bool) {
-    let converted = deliver::clipboard_text().filter(|text| !text.is_empty()).map(|text| deliver::convert_script(&text, simplified));
-    let done = converted.is_some_and(|text| deliver::copy(&text));
-    let _ = app.emit("notice", if done { "剪貼簿文字已轉換" } else { "剪貼簿沒有文字" });
+/// Turns the clipboard text into the other script, for the bar's button and the tray menu.
+fn convert_clipboard(app: &AppHandle) {
+    // Delivery pastes through the clipboard, so it is left alone while a dictation is in progress.
+    if busy(app) {
+        return;
+    }
+    let message = match deliver::clipboard_text().and_then(|text| deliver::other_script(&text)) {
+        None => "剪貼簿沒有可轉換的文字",
+        Some((text, _)) if !deliver::copy(&text) => "剪貼簿忙碌，請再試一次",
+        Some((_, true)) => "已轉成簡體",
+        Some((_, false)) => "已轉成繁體",
+    };
+    let _ = app.emit("notice", message);
 }
 
 /// Opens the recognised text for editing.
@@ -412,41 +421,9 @@ fn copy_preview(app: AppHandle) -> bool {
     copy_preview_text(&app)
 }
 
-/// Pastes the most recent dictation where the user was typing before they clicked this window.
-fn paste_last_there(app: &AppHandle) {
-    let app = app.clone();
-    std::thread::spawn(move || {
-        let Some(latest) = history::load().into_iter().next() else {
-            let _ = app.emit("notice", "還沒有辨識紀錄");
-            return;
-        };
-        let target = deliver::begin();
-        let pasted = deliver::deliver(&latest.text, Mode::Insert, &mut Desktop::new(target), &|| false).inserted;
-        deliver::end();
-        let _ = app.emit("notice", if pasted { "已貼上上一則" } else { "上一則已複製，請手動貼上" });
-    });
-}
-
-/// The strip of quick actions under the status line.
 #[tauri::command]
-fn quick(app: AppHandle, action: String) {
-    if busy(&app) {
-        return;
-    }
-    match action.as_str() {
-        "zhuyin" | "pad" => {
-            let which = if action == "zhuyin" { "keyboard" } else { "pad" };
-            if !panel::open_target(which.into()) {
-                let _ = app.emit("notice", "找不到這個工具，請確認完整套件已安裝");
-            }
-        }
-        "words" => panel::open_at(&app, Some("zhuyin")),
-        "history" => layout::arrange(&app, Layout::Editor),
-        "last" => paste_last_there(&app),
-        "traditional" => convert_clipboard(&app, false),
-        "simplified" => convert_clipboard(&app, true),
-        _ => {}
-    }
+fn convert_clipboard_script(app: AppHandle) {
+    convert_clipboard(&app);
 }
 
 #[tauri::command(async)]
@@ -579,8 +556,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("edit", "編輯辨識文字…")?,
             &item("history", "最近的辨識紀錄…")?,
             &item("copy", "複製辨識文字")?,
-            &item("traditional", "剪貼簿文字轉成繁體")?,
-            &item("simplified", "剪貼簿文字轉成簡體")?,
+            &item("convert", "剪貼簿文字簡繁互轉")?,
             &line()?,
             &item("zhuyin", "切換到注音輸入法")?,
             &item("learn-on", "啟用本機學習")?,
@@ -614,8 +590,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             "copy" => {
                 copy_preview_text(app);
             }
-            "traditional" => convert_clipboard(app, false),
-            "simplified" => convert_clipboard(app, true),
+            "convert" => convert_clipboard(app),
             "zhuyin" => run_tool(app, "TingziKeyboard.exe", "switch"),
             "learn-on" => run_tool(app, "TingziLearning.exe", "on"),
             "learn-off" => run_tool(app, "TingziLearning.exe", "off"),
@@ -690,7 +665,7 @@ fn main() {
             history_list,
             history_use,
             history_clear,
-            quick,
+            convert_clipboard_script,
             arrange,
             facts,
             panel::open_settings,

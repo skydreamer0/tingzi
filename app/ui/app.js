@@ -109,9 +109,6 @@ function setLayout(shape) {
 }
 
 mic.addEventListener('click', () => invoke('toggle_recording'));
-for (const button of document.querySelectorAll('[data-quick]')) {
-  button.addEventListener('click', () => invoke('quick', { action: button.dataset.quick }));
-}
 // The docked button has no others beside it, so a right-click opens the full bar.
 mic.addEventListener('contextmenu', event => { event.preventDefault(); invoke('arrange', { shape: 'bar' }); });
 byId('copy').addEventListener('click', () => invoke('copy_preview'));
@@ -120,6 +117,7 @@ byId('edit').addEventListener('click', () => invoke('arrange', { shape: 'editor'
 byId('collapse').addEventListener('click', () => invoke('arrange', { shape: 'bar' }));
 byId('dock').addEventListener('click', () => invoke('arrange', { shape: 'docked' }));
 byId('discard').addEventListener('click', () => invoke('discard_result'));
+byId('convert').addEventListener('click', () => invoke('convert_clipboard_script'));
 byId('settings').addEventListener('click', () => invoke('open_settings'));
 editor.addEventListener('input', () => { voice.text = editor.value; invoke('set_preview', { text: editor.value }); });
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && capsule.dataset.layout === 'editor') invoke('arrange', { shape: 'bar' }); });

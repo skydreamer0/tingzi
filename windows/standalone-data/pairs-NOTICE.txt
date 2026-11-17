@@ -1,0 +1,14 @@
+pairs.txt — word-pair statistics for the Tingzi Zhuyin engine
+
+Each line is "first<TAB>second<TAB>bonus": two words from the word list that occur next to each
+other more often than their separate frequencies predict, and by how many powers of ten.
+
+The numbers were counted from the text of Chinese Wikipedia (zh.wikipedia.org), the partial
+article dump "zhwiki-latest-pages-articles1", by the script windows/tools/build_pairs.py in the
+Tingzi source repository. Only counts were kept; no article text is included.
+
+Wikipedia text is written by its contributors and licensed under the Creative Commons
+Attribution-ShareAlike 4.0 International License (https://creativecommons.org/licenses/by-sa/4.0/).
+Source: https://dumps.wikimedia.org/zhwiki/
+
+This file of statistics is made available under the same licence.

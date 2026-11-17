@@ -222,6 +222,22 @@ int wmain(int argc,wchar_t** argv) {
     input.clear();input.setSentences(nullptr);
 
     {
+        // Word pairs: a word that often follows another is preferred even when a more common one fits.
+        wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
+        Text file=Text(temp)+L"tingzi-pairs-test.txt";
+        {std::ofstream out(file,std::ios::binary);out<<narrow(L"常\t文本\t3.00\nbroken line\n你\t好\t0\n");}
+        Dictionary paired;paired.load(Text(argv[1])+L"\\");paired.loadPairs(file);DeleteFileW(file.c_str());
+        Input custom(paired);custom.setSegmenter(Segmenter::Path);custom.setLayout(KeyLayout::Standard);custom.setSimplifiedOutput(false);
+        custom.press('T');custom.press(VK_OEM_1);for(const char* k="6JP61P3";*k;++k)custom.press((WPARAM)*k);
+        expect(custom.preview()==L"常文本","a word pair outweighs the more common single character");
+        custom.clear();
+        custom.press('T');custom.press(VK_OEM_1);custom.press('6');
+        expect(custom.preview()==L"長","and without the following word the common character stays");
+        custom.clear();
+        for(const char* k="SU3CL3A87";*k;++k)custom.press((WPARAM)*k);
+        expect(custom.press(VK_RETURN)==L"你好嗎","sentences without a listed pair convert as before");
+    }
+    {
         wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
         Text file=Text(temp)+L"tingzi-templates-test.txt";
         {std::ofstream out(file,std::ios::binary);out<<narrow(L"ㄋㄧˇ-ㄏㄠˇ\t您好，這是範本\nno tab here\n");}

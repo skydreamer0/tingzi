@@ -7,7 +7,6 @@ try {
     if (!$Remove -and !$tip) { throw 'The input method is not registered.' }
     $directory = if ($tip) { Split-Path -Parent $tip.GetValue('') } else { $root }
     $float = 'TingziFloat\TingziFloat.exe'
-    $pad = 'TingziPad.exe'
     $programs = [Environment]::GetFolderPath('Programs')
     $menu = Join-Path $programs '聽字・注音與語音輸入法'
     $shell = New-Object -ComObject WScript.Shell
@@ -28,8 +27,19 @@ try {
         Copy-Item -LiteralPath $path -Destination $staged
         try { $link = $shell.CreateShortcut($staged); @($link.TargetPath, $link.Arguments) } finally { Remove-Item -LiteralPath $staged }
     }
+    # Only shortcuts that still point into this product's install folder are removed.
+    function Remove-Ours($name, $relative) {
+        $path = Join-Path $menu ($name + '.lnk')
+        if (!(Test-Path -LiteralPath $path -PathType Leaf)) { return }
+        $link = Read-Link $path
+        if ($link[0].StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and $link[0].EndsWith('\' + $relative, [StringComparison]::OrdinalIgnoreCase)) {
+            Remove-Item -LiteralPath $path
+        }
+    }
     # Each entry: shortcut name, path relative to the installed version, arguments.
-    $items = @(@('聽字・注音與語音輸入法', $float, '--settings'), @('聽字設定', $float, '--settings'), @('語音浮窗', $float, '--show'), @('注音打字板', $pad, ''))
+    $items = @(@('聽字・注音與語音輸入法', $float, '--settings'), @('聽字設定', $float, '--settings'), @('語音浮窗', $float, '--show'))
+    # Versions before the typing pad was retired left this shortcut behind.
+    $retired = @('注音打字板', 'TingziPad.exe')
     if (!$Remove) {
         foreach ($item in $items) {
             $required = Join-Path $directory $item[1]
@@ -39,16 +49,10 @@ try {
         foreach ($item in $items) {
             Save-Link (Join-Path $menu ($item[0] + '.lnk')) (Join-Path $directory $item[1]) $item[2]
         }
+        Remove-Ours $retired[0] $retired[1]
     } else {
-        # Only shortcuts that still point into this product's install folder are removed.
-        foreach ($item in $items) {
-            $path = Join-Path $menu ($item[0] + '.lnk')
-            if (!(Test-Path -LiteralPath $path -PathType Leaf)) { continue }
-            $link = Read-Link $path
-            if ($link[0].StartsWith($root + '\', [StringComparison]::OrdinalIgnoreCase) -and $link[0].EndsWith('\' + $item[1], [StringComparison]::OrdinalIgnoreCase)) {
-                Remove-Item -LiteralPath $path
-            }
-        }
+        foreach ($item in $items) { Remove-Ours $item[0] $item[1] }
+        Remove-Ours $retired[0] $retired[1]
         if ((Test-Path -LiteralPath $menu -PathType Container) -and !(Get-ChildItem -LiteralPath $menu -Force | Select-Object -First 1)) {
             Remove-Item -LiteralPath $menu
         }

@@ -6,8 +6,8 @@ from pathlib import Path
 import re
 import zipfile
 
-VERSION = '0.7.4'
-ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziPad.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg', 'Tingzi.cin', 'phrases.txt', 'McBopomofo-LICENSE.txt']
+VERSION = '0.7.5'
+ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg', 'Tingzi.cin', 'phrases.txt', 'pairs.txt', 'pairs-NOTICE.txt', 'McBopomofo-LICENSE.txt']
 FLOAT_FILES = ['TingziFloat.exe', 'LICENSE']
 # Every licence name that may appear in a dependency's licence expression has been reviewed for redistribution.
 LICENSE_WORDS = {'MIT', 'Apache-2.0', 'BSD-3-Clause', 'BSD-2-Clause', 'Unicode-3.0', 'ISC', 'Zlib', 'Unlicense', 'BSL-1.0', 'CDLA-Permissive-2.0', 'MPL-2.0', '0BSD', 'CC0-1.0', 'MIT-0', 'AND', 'OR'}
@@ -74,6 +74,7 @@ def package(source, destination, metadata_path):
     entries['RELEASE.txt'] = ('聽字・注音與語音輸入法 ' + VERSION + '\nWindows x64. The voice window needs Microsoft Edge WebView2 Runtime, which Windows 11 includes.\n'
         'InstallTingzi.cmd installs or upgrades the application.\n'
         'Includes public Zhuyin word data from McBopomofo (MIT, see McBopomofo-LICENSE.txt). No voice recordings, local models, accounts or credentials are included.\n'
+        'Word-pair statistics (pairs.txt) were counted from Chinese Wikipedia text and are under CC BY-SA 4.0; see pairs-NOTICE.txt.\n'
         'Online recognition uses the third-party codex-asr 0.1.2 library: https://github.com/wangnov/codex-asr\n'
         'The voice window is built from the Rust packages listed in notices/rust-dependencies.json, each unmodified from crates.io; '
         'packages under MPL-2.0 are available in source form there.\n').encode('utf-8')

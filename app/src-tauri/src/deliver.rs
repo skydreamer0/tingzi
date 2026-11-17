@@ -34,6 +34,17 @@ pub fn convert_script(text: &str, simplified: bool) -> String {
     String::from_utf16_lossy(&mapped[..written as usize])
 }
 
+/// The text in the other script and whether that is Simplified; None when neither conversion changes it.
+/// Any Simplified-only character means the text goes to Traditional, so mixed text is not flipped both ways.
+pub fn other_script(text: &str) -> Option<(String, bool)> {
+    let traditional = convert_script(text, false);
+    if traditional != text {
+        return Some((traditional, false));
+    }
+    let simplified = convert_script(text, true);
+    (simplified != text).then_some((simplified, true))
+}
+
 pub fn copy(text: &str) -> bool {
     arboard::Clipboard::new().and_then(|mut clipboard| clipboard.set_text(text.to_string())).is_ok()
 }
@@ -393,6 +404,14 @@ mod tests {
         assert_eq!(convert_script("語音輸入與體驗", true), "语音输入与体验");
         assert_eq!(convert_script("abc 123", false), "abc 123");
         assert_eq!(convert_script("", true), "");
+    }
+
+    #[test]
+    fn other_script_flips_the_text() {
+        assert_eq!(other_script("语音输入与体验"), Some(("語音輸入與體驗".to_string(), false)));
+        assert_eq!(other_script("語音輸入與體驗"), Some(("语音输入与体验".to_string(), true)));
+        assert_eq!(other_script("abc 123"), None);
+        assert_eq!(other_script(""), None);
     }
 
     #[test]

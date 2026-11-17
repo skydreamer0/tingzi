@@ -15,6 +15,8 @@ if errorlevel 1 exit /b 1
 copy /y "windows\README.md" "%OUTPUT%\" >nul || exit /b 1
 rem Public word data, so a new computer can type Zhuyin right after installation.
 "%SystemRoot%\System32\tar.exe" -xf "windows\standalone-data\public-data.zip" -C "%OUTPUT%" || exit /b 1
+copy /y "windows\standalone-data\pairs.txt" "%OUTPUT%\" >nul || exit /b 1
+copy /y "windows\standalone-data\pairs-NOTICE.txt" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\tingzi.svg" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\InstallTingzi.cmd" "%OUTPUT%\" >nul || exit /b 1
 copy /y "windows\VoiceShortcuts.ps1" "%OUTPUT%\" >nul || exit /b 1
@@ -46,7 +48,6 @@ set "FLAGS=/nologo /std:c++17 /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /DNOMINM
 rc /nologo /i windows /fo "%OBJ%\tingzi.res" windows\tingzi.rc || exit /b 1
 cl %FLAGS% /LD windows\service.cpp "%OBJ%\tingzi.res" /Fo"%OBJ%\service.obj" /Fe"%OUTPUT%\TingziTextService%2.dll" /link /def:windows\exports.def /implib:"%OBJ%\service.lib" winsqlite3.lib shell32.lib ole32.lib uuid.lib oleaut32.lib advapi32.lib user32.lib gdi32.lib ole32.lib uuid.lib || exit /b 1
 cl %FLAGS% windows\setup.cpp /Fo"%OBJ%\setup.obj" /Fe"%OUTPUT%\TingziSetup%2.exe" /link /MANIFEST:EMBED /manifestinput:windows\compatibility.manifest /MANIFESTUAC:"level='asInvoker' uiAccess='false'" ole32.lib advapi32.lib shell32.lib uuid.lib || exit /b 1
-if "%1"=="x64" cl %FLAGS% windows\editor.cpp "%OBJ%\tingzi.res" /Fo"%OBJ%\editor.obj" /Fe"%OUTPUT%\TingziPad.exe" /link /SUBSYSTEM:WINDOWS advapi32.lib user32.lib gdi32.lib imm32.lib winsqlite3.lib shell32.lib ole32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\keyboard.cpp /Fo"%OBJ%\keyboard.obj" /Fe"%OUTPUT%\TingziKeyboard.exe" /link /MANIFEST:EMBED ole32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\learning_cli.cpp /Fo"%OBJ%\learning.obj" /Fe"%OUTPUT%\TingziLearning.exe" /link /MANIFEST:EMBED winsqlite3.lib shell32.lib ole32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\upgrade.cpp /Fo"%OBJ%\upgrade.obj" /Fe"%OUTPUT%\TingziVersion.exe" /link /MANIFEST:EMBED /manifestinput:windows\compatibility.manifest advapi32.lib ole32.lib uuid.lib || exit /b 1
