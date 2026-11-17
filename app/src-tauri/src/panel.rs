@@ -1,9 +1,12 @@
 //! The settings window: what it shows, and what saving changes.
 
+use crate::apps::{self, AppRule};
 use crate::dialogs::{self, Kind};
+use crate::replace::{self, Replacement};
 use crate::settings::Settings;
 use crate::words::{self, Entry};
 use crate::{audio, paths, recognise};
+use std::ffi::OsStr;
 use serde::{Deserialize, Serialize};
 use std::os::windows::process::CommandExt;
 use std::process::{Command, Stdio};
@@ -259,6 +262,43 @@ pub fn set_learning(on: bool) -> bool {
     learning_tool(&[if on { "on" } else { "off" }.as_ref()]).is_some_and(|(done, _)| done)
 }
 
+/// A word the Zhuyin engine learned from the user's typing. `reading` has its syllables joined with hyphens.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct Learned {
+    reading: String,
+    text: String,
+    /// How many times it was typed; a word seen once is only kept provisionally.
+    hits: u32,
+}
+
+/// Reads the learning tool's word list, `reading TAB text TAB hits` per line. Lines it cannot read are skipped.
+fn parse_learned(output: &str) -> Vec<Learned> {
+    output
+        .lines()
+        .filter_map(|line| {
+            let fields: Vec<&str> = line.split('\t').map(str::trim).collect();
+            let [reading, text, hits] = fields[..] else { return None };
+            let hits = hits.parse::<u32>().ok().filter(|hits| *hits >= 1)?;
+            (!reading.is_empty() && !text.is_empty()).then(|| Learned { reading: reading.to_string(), text: text.to_string(), hits })
+        })
+        .collect()
+}
+
+/// The words local learning has picked up. None when the tool is missing or fails.
+#[tauri::command(async)]
+pub fn learned_words() -> Option<Vec<Learned>> {
+    match learning_tool(&["words".as_ref()])? {
+        (true, output) => Some(parse_learned(&output)),
+        _ => None,
+    }
+}
+
+/// Removes one learned word. False when the tool is missing or did not remove it.
+#[tauri::command(async)]
+pub fn forget_learned_word(reading: String, text: String) -> bool {
+    learning_tool(&["forget-word".as_ref(), OsStr::new(&reading), OsStr::new(&text)]).is_some_and(|(done, _)| done)
+}
+
 fn owner(app: &AppHandle) -> isize {
     app.get_webview_window("settings").and_then(|window| window.hwnd().ok()).map_or(0, |handle| handle.0 as isize)
 }
@@ -320,6 +360,44 @@ pub fn words_export(app: AppHandle, templates: bool, entries: Vec<Entry>) -> Opt
     dialogs::pick(owner(&app), Kind::Text, Some(name)).map(|file| words::save(&file, &entries, templates).is_ok())
 }
 
+#[tauri::command(async)]
+pub fn replacements_load() -> Vec<Replacement> {
+    replace::load(&replace::own_file())
+}
+
+#[tauri::command(async)]
+pub fn replacements_save(rules: Vec<Replacement>) -> bool {
+    replace::save(&replace::own_file(), &rules).is_ok()
+}
+
+/// Reads replacement rules from a file the user picks. None means the user closed the dialog.
+#[tauri::command(async)]
+pub fn replacements_import(app: AppHandle) -> Option<Vec<Replacement>> {
+    dialogs::pick(owner(&app), Kind::Text, None).map(|file| replace::load(&file))
+}
+
+/// Writes replacement rules to a file the user names. None means the user closed the dialog.
+#[tauri::command(async)]
+pub fn replacements_export(app: AppHandle, rules: Vec<Replacement>) -> Option<bool> {
+    dialogs::pick(owner(&app), Kind::Text, Some("tingzi-replacements.txt")).map(|file| replace::save(&file, &rules).is_ok())
+}
+
+#[tauri::command(async)]
+pub fn app_rules_load() -> Vec<AppRule> {
+    apps::load(&apps::own_file())
+}
+
+#[tauri::command(async)]
+pub fn app_rules_save(rules: Vec<AppRule>) -> bool {
+    apps::save(&apps::own_file(), &rules).is_ok()
+}
+
+/// The programs with a window on screen, offered as names when the user adds a rule.
+#[tauri::command(async)]
+pub fn running_programs() -> Vec<String> {
+    apps::running()
+}
+
 /// Opens one of the fixed places the settings page links to. Returns false when it could not be opened.
 #[tauri::command(async)]
 pub fn open_target(which: String) -> bool {
@@ -345,6 +423,19 @@ mod tests {
     fn accent_text_stays_readable() {
         assert_eq!(accent_pair(0, 120, 215), ("#0078d7".to_string(), "#ffffff".to_string()));
         assert_eq!(accent_pair(255, 220, 0), ("#ffdc00".to_string(), "#181b3c".to_string()));
+    }
+
+    #[test]
+    fn learned_words_are_read_and_bad_lines_skipped() {
+        let output = "ㄊㄧㄥ-ㄗˋ\t聽字\t3\r\nㄋㄧˇ\t你\t1\n只有一欄\nㄅㄚ\t八\t0\nㄅㄚ\t八\tmany\n\t空\t2\nㄎㄨㄥ\t\t2\nㄧ\t一\t2\t多一欄\n";
+        assert_eq!(
+            parse_learned(output),
+            vec![
+                Learned { reading: "ㄊㄧㄥ-ㄗˋ".into(), text: "聽字".into(), hits: 3 },
+                Learned { reading: "ㄋㄧˇ".into(), text: "你".into(), hits: 1 },
+            ]
+        );
+        assert!(parse_learned("").is_empty());
     }
 
     #[test]

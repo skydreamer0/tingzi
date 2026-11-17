@@ -67,6 +67,7 @@ function fill() {
     + '選用線上辨識時，錄音會經第三方的 codex-asr 傳到 ChatGPT。';
   byId('script').value = prefs.Simplified ? '1' : '0';
   byId('use-phrases').checked = prefs.UsePhrases;
+  byId('use-replacements').checked = prefs.UseReplacements;
   byId('tidy').checked = prefs.Tidy;
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
@@ -95,6 +96,7 @@ function fill() {
   byId('open-pad').disabled = !panel.has_pad;
   if (!panel.has_pad) byId('pad-note').textContent = '找不到打字板，請重新安裝完整套件。';
   byId('learning-data').hidden = !panel.has_learning;
+  byId('learned-row').hidden = !panel.has_learning;
   if (!panel.shortcut_bound) say('目前錄音快捷鍵被占用，請選其他組合。');
 }
 
@@ -112,6 +114,7 @@ function collect() {
       AutoInsert: number('delivery') === 0,
       Simplified: byId('script').value === '1',
       UsePhrases: byId('use-phrases').checked,
+      UseReplacements: byId('use-replacements').checked,
       Tidy: byId('tidy').checked,
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
@@ -305,8 +308,209 @@ byId('words-import').addEventListener('click', async () => {
     : `已匯入 ${fresh.length} 筆，略過 ${incoming.length - fresh.length} 筆重複。`;
 });
 
+// A list of choices the user can pick one of; clicking an item calls `chosen` with its index.
+function fillList(element, labels, current, chosen) {
+  element.replaceChildren(...labels.map((label, index) => {
+    const item = document.createElement('li');
+    item.textContent = label;
+    item.setAttribute('role', 'option');
+    item.setAttribute('aria-selected', String(index === current));
+    item.addEventListener('click', () => chosen(index));
+    return item;
+  }));
+}
+
+// Replacement rules: what the recogniser keeps hearing, and what to write instead.
+const replaceDialog = byId('replacements'), replaceList = byId('replacements-list');
+const newHeard = byId('new-heard'), newWanted = byId('new-wanted'), replaceStatus = byId('replacements-status');
+let replacements = [], replacePick = -1;
+// English letters are compared without case, as the rules themselves are.
+const sameHeard = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+function refillReplacements() {
+  fillList(replaceList, replacements.map(rule => `${rule.heard}　→　${rule.wanted}`), replacePick, index => {
+    replacePick = index;
+    refillReplacements();
+  });
+}
+
+async function keepReplacements(next) {
+  if (!await invoke('replacements_save', { rules: next })) {
+    replaceStatus.textContent = '無法儲存。';
+    return false;
+  }
+  replacements = next;
+  replacePick = -1;
+  refillReplacements();
+  return true;
+}
+
+byId('manage-replacements').addEventListener('click', async () => {
+  replacePick = -1;
+  newHeard.value = newWanted.value = replaceStatus.textContent = '';
+  replacements = await invoke('replacements_load');
+  refillReplacements();
+  replaceDialog.showModal();
+  newHeard.focus();
+});
+byId('replacements-close').addEventListener('click', () => replaceDialog.close());
+byId('add-replacement').addEventListener('click', async () => {
+  const heard = newHeard.value.trim(), wanted = newWanted.value.trim();
+  if (!heard || !wanted) return void (replaceStatus.textContent = '請輸入聽到的字和要換成的字。');
+  if (heard === wanted) return void (replaceStatus.textContent = '兩邊的字相同，不需要取代。');
+  // A rule for the same heard text replaces the old one.
+  if (!await keepReplacements([...replacements.filter(rule => !sameHeard(rule.heard, heard)), { heard, wanted }])) return;
+  newHeard.value = newWanted.value = '';
+  replaceStatus.textContent = `已加入「${heard}」→「${wanted}」。`;
+  newHeard.focus();
+});
+for (const field of [newHeard, newWanted]) {
+  field.addEventListener('keydown', event => { if (event.key === 'Enter') byId('add-replacement').click(); });
+}
+byId('replacements-remove').addEventListener('click', async () => {
+  if (replacePick < 0) return void (replaceStatus.textContent = '請先在清單選一項。');
+  if (await keepReplacements(replacements.filter((_, index) => index !== replacePick))) replaceStatus.textContent = '已刪除。';
+});
+byId('replacements-export').addEventListener('click', async () => {
+  const done = await invoke('replacements_export', { rules: replacements });
+  if (done !== null) replaceStatus.textContent = done ? `已匯出 ${replacements.length} 筆。` : '無法寫入該位置。';
+});
+byId('replacements-import').addEventListener('click', async () => {
+  const incoming = await invoke('replacements_import');
+  if (incoming === null) return;
+  const fresh = incoming.filter(rule => !replacements.some(have => have.heard === rule.heard && have.wanted === rule.wanted));
+  // An imported rule for text already listed takes over from the old one.
+  const kept = replacements.filter(have => !fresh.some(rule => sameHeard(rule.heard, have.heard)));
+  if (fresh.length && !await keepReplacements([...kept, ...fresh])) return;
+  replaceStatus.textContent = incoming.length === 0
+    ? '檔案裡沒有可用的規則。'
+    : `已匯入 ${fresh.length} 筆，略過 ${incoming.length - fresh.length} 筆重複。`;
+});
+
+// Per-program rules. An empty choice means the program follows the main setting.
+const rulesDialog = byId('app-rules'), rulesList = byId('app-rules-list'), ruleProgram = byId('rule-program');
+const rulesStatus = byId('app-rules-status');
+let appRules = [], rulePick = -1;
+const tidyNames = { true: '整理口語', false: '不整理口語' };
+const scriptNames = { true: '簡體', false: '繁體' };
+const deliveryNames = ['自動插入', '只複製', '只顯示預覽'];
+const sameProgram = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
+
+function ruleSummary(rule) {
+  const parts = [];
+  if (rule.Tidy !== null && rule.Tidy !== undefined) parts.push(tidyNames[rule.Tidy]);
+  if (rule.Simplified !== null && rule.Simplified !== undefined) parts.push(scriptNames[rule.Simplified]);
+  if (rule.DeliveryMode !== null && rule.DeliveryMode !== undefined) parts.push(deliveryNames[rule.DeliveryMode]);
+  if (rule.DropFinalStop) parts.push('去掉句尾句號');
+  return parts.length ? parts.join('・') : '全部跟隨主要設定';
+}
+
+// A yes-or-no choice as a select value, and back; '' is "follow the main setting".
+const choiceOf = value => value === null || value === undefined ? '' : String(Number(value));
+const flagFrom = id => byId(id).value === '' ? null : byId(id).value === '1';
+
+function showRule(rule) {
+  ruleProgram.value = rule.Program;
+  byId('rule-tidy').value = choiceOf(rule.Tidy);
+  byId('rule-script').value = choiceOf(rule.Simplified);
+  byId('rule-delivery').value = choiceOf(rule.DeliveryMode);
+  byId('rule-stop').value = rule.DropFinalStop ? '1' : '0';
+}
+
+function refillRules() {
+  fillList(rulesList, appRules.map(rule => `${rule.Program}　${ruleSummary(rule)}`), rulePick, index => {
+    rulePick = index;
+    showRule(appRules[index]);
+    refillRules();
+  });
+}
+
+async function keepRules(next) {
+  if (!await invoke('app_rules_save', { rules: next })) {
+    rulesStatus.textContent = '無法儲存。';
+    return false;
+  }
+  appRules = next;
+  rulePick = -1;
+  refillRules();
+  return true;
+}
+
+byId('manage-app-rules').addEventListener('click', async () => {
+  rulePick = -1;
+  rulesStatus.textContent = '';
+  showRule({ Program: '', Tidy: null, Simplified: null, DeliveryMode: null, DropFinalStop: false });
+  appRules = await invoke('app_rules_load');
+  refillRules();
+  rulesDialog.showModal();
+  ruleProgram.focus();
+  const running = await invoke('running_programs');
+  byId('running-programs').replaceChildren(...running.map(name => option(name, name)));
+});
+byId('app-rules-close').addEventListener('click', () => rulesDialog.close());
+byId('add-app-rule').addEventListener('click', async () => {
+  const program = ruleProgram.value.trim();
+  if (!program) return void (rulesStatus.textContent = '請輸入程式名稱，例如 Code.exe。');
+  const delivery = byId('rule-delivery').value;
+  const rule = {
+    Program: program,
+    Tidy: flagFrom('rule-tidy'),
+    Simplified: flagFrom('rule-script'),
+    DeliveryMode: delivery === '' ? null : Number(delivery),
+    DropFinalStop: byId('rule-stop').value === '1',
+  };
+  // A program has one rule; adding it again updates that rule.
+  const existed = appRules.some(have => sameProgram(have.Program, program));
+  if (!await keepRules([...appRules.filter(have => !sameProgram(have.Program, program)), rule])) return;
+  rulesStatus.textContent = existed ? `已更新「${program}」。` : `已加入「${program}」。`;
+});
+ruleProgram.addEventListener('keydown', event => { if (event.key === 'Enter') byId('add-app-rule').click(); });
+byId('app-rules-remove').addEventListener('click', async () => {
+  if (rulePick < 0) return void (rulesStatus.textContent = '請先在清單選一項。');
+  if (await keepRules(appRules.filter((_, index) => index !== rulePick))) rulesStatus.textContent = '已刪除。';
+});
+
+// Words local learning picked up from typing.
+const learnedDialog = byId('learned'), learnedList = byId('learned-list'), learnedStatus = byId('learned-status');
+let learned = [], learnedPick = -1;
+
+function refillLearned() {
+  const labels = learned.map(word => `${word.text}　${word.reading.replaceAll('-', ' ')}${word.hits === 1 ? '（暫記）' : ''}`);
+  fillList(learnedList, labels, learnedPick, index => {
+    learnedPick = index;
+    refillLearned();
+  });
+}
+
+async function readLearned() {
+  const found = await invoke('learned_words');
+  learned = found ?? [];
+  learnedPick = -1;
+  const empty = found === null ? '找不到本機學習工具' : '還沒有學會任何詞';
+  learnedList.dataset.empty = empty;
+  learnedStatus.textContent = learned.length ? `共 ${learned.length} 個詞。` : empty;
+  byId('learned-remove').disabled = learned.length === 0;
+  refillLearned();
+}
+
+byId('show-learned').addEventListener('click', async () => {
+  learnedList.dataset.empty = learnedStatus.textContent = '讀取中…';
+  learned = [];
+  refillLearned();
+  learnedDialog.showModal();
+  await readLearned();
+});
+byId('learned-close').addEventListener('click', () => learnedDialog.close());
+byId('learned-remove').addEventListener('click', async () => {
+  if (learnedPick < 0) return void (learnedStatus.textContent = '請先在清單選一項。');
+  const { reading, text } = learned[learnedPick];
+  if (!await invoke('forget_learned_word', { reading, text })) return void (learnedStatus.textContent = `無法刪除「${text}」。`);
+  await readLearned();
+  learnedStatus.textContent = `已刪除「${text}」。`;
+});
+
 document.addEventListener('keydown', event => {
-  if (event.key === 'Escape' && !dialog.open) invoke('close_settings');
+  if (event.key === 'Escape' && !document.querySelector('dialog[open]')) invoke('close_settings');
 });
 
 invoke('load_settings').then(async loaded => {

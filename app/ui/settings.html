@@ -60,12 +60,18 @@
         <div class="row"><svg class="glyph"><use href="#i-plus"/></svg>
           <div class="what"><label for="use-phrases">套用自訂詞</label><p>把辨識結果裡同音的字換成你加入的自訂詞，例如人名和專有名詞。</p></div>
           <input id="use-phrases" type="checkbox" role="switch" class="switch"></div>
+        <div class="row"><svg class="glyph"><use href="#i-convert"/></svg>
+          <div class="what"><label for="use-replacements">套用取代規則</label><p>把常聽錯的字換成你要的寫法，例如把「github」換成「GitHub」。</p></div>
+          <div class="group"><button id="manage-replacements" type="button" class="button" aria-label="管理取代規則">管理</button><input id="use-replacements" type="checkbox" role="switch" class="switch"></div></div>
         <div class="row"><svg class="glyph"><use href="#i-edit"/></svg>
           <div class="what"><label for="tidy">整理口語</label><p>去掉句首的「嗯、呃、欸」、重複的「我我我」「然後然後」，並把空白與半形標點補成中文標點。不會改寫你的句子。</p></div>
           <input id="tidy" type="checkbox" role="switch" class="switch"></div>
         <div class="row"><svg class="glyph"><use href="#i-copy"/></svg>
           <div class="what"><label for="delivery">辨識完成後</label><p>錄音途中若切換到別的視窗，辨識文字會留在浮窗預覽，不會貼錯地方。</p></div>
           <select id="delivery" class="wide"><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></div>
+        <div class="row"><svg class="glyph"><use href="#i-settings"/></svg>
+          <div class="what"><span class="name">依程式設定</span><p>對終端機、程式編輯器或聊天軟體另外決定整理口語、輸出文字、送出方式和句尾句號。</p></div>
+          <button id="manage-app-rules" type="button" class="button" aria-label="管理依程式設定">管理</button></div>
         <h2>操作</h2>
         <div class="row"><svg class="glyph"><use href="#i-keyboard"/></svg>
           <div class="what"><span class="name">錄音快捷鍵</span><p>按一次開始錄音，再按一次停止。</p></div>
@@ -110,6 +116,9 @@
         <div class="row"><svg class="glyph"><use href="#i-learn"/></svg>
           <div class="what"><label for="learning">本機學習</label><p id="learning-note">讀取學習狀態中…</p></div>
           <input id="learning" type="checkbox" role="switch" class="switch" disabled></div>
+        <div class="row" id="learned-row"><svg class="glyph"><use href="#i-learn"/></svg>
+          <div class="what"><span class="name">已學會的詞</span><p>打字時連續選出的字會記成新詞。記錯的可以在這裡刪掉。</p></div>
+          <button id="show-learned" type="button" class="button" aria-label="查看已學會的詞">查看</button></div>
         <div class="row" id="learning-data"><svg class="glyph"><use href="#i-export"/></svg>
           <div class="what"><span class="name">學習資料</span><p id="learning-data-note">匯出成文字檔帶到另一台電腦再匯入，或全部清除。</p></div>
           <div class="group"><button id="learning-import" type="button" class="button" aria-label="匯入學習資料">匯入</button><button id="learning-export" type="button" class="button" aria-label="匯出學習資料">匯出</button><button id="learning-clear" type="button" class="button" aria-label="清除學習資料">清除</button></div></div>
@@ -185,6 +194,55 @@
       <button id="words-export" type="button" class="button">匯出</button>
       <button id="words-remove" type="button" class="button">刪除選取</button>
       <button id="words-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="replacements" aria-labelledby="replacements-title">
+    <h1 id="replacements-title">取代規則</h1>
+    <p class="note">辨識結果裡出現「聽到的字」時，換成「要換成的字」。英文字母不分大小寫，只比對完整的字；中文要完全相同。中間的空白可以有也可以沒有。</p>
+    <ul id="replacements-list" class="list" role="listbox" tabindex="0" aria-label="已加入的取代規則"></ul>
+    <div class="add">
+      <input id="new-heard" type="text" maxlength="60" autocomplete="off" placeholder="聽到的字" aria-label="聽到的字">
+      <input id="new-wanted" type="text" maxlength="200" autocomplete="off" placeholder="要換成的字" aria-label="要換成的字">
+      <button id="add-replacement" type="button" class="button primary">加入</button>
+    </div>
+    <p id="replacements-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="replacements-import" type="button" class="button">匯入</button>
+      <button id="replacements-export" type="button" class="button">匯出</button>
+      <button id="replacements-remove" type="button" class="button">刪除選取</button>
+      <button id="replacements-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="app-rules" aria-labelledby="app-rules-title">
+    <h1 id="app-rules-title">依程式設定</h1>
+    <p class="note">在這些程式裡說話時，改用這裡的選擇；選「跟隨主要設定」的項目照語音輸入頁的設定。程式以執行檔名稱比對，例如 Code.exe。</p>
+    <ul id="app-rules-list" class="list" role="listbox" tabindex="0" aria-label="已加入的程式"></ul>
+    <input id="rule-program" type="text" maxlength="120" autocomplete="off" list="running-programs" placeholder="程式名稱，例如 Code.exe" aria-label="程式名稱">
+    <datalist id="running-programs"></datalist>
+    <div class="choices">
+      <label>整理口語<select id="rule-tidy"><option value="">跟隨主要設定</option><option value="1">整理</option><option value="0">不整理</option></select></label>
+      <label>輸出文字<select id="rule-script"><option value="">跟隨主要設定</option><option value="0">繁體中文</option><option value="1">簡體中文</option></select></label>
+      <label>辨識完成後<select id="rule-delivery"><option value="">跟隨主要設定</option><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></label>
+      <label>句尾句號<select id="rule-stop"><option value="0">保留</option><option value="1">去掉句尾的「。」</option></select></label>
+    </div>
+    <p id="app-rules-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="add-app-rule" type="button" class="button primary">加入或更新</button>
+      <button id="app-rules-remove" type="button" class="button">刪除選取</button>
+      <button id="app-rules-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="learned" aria-labelledby="learned-title">
+    <h1 id="learned-title">已學會的詞</h1>
+    <p class="note">打字時連續選出的字會記成新詞；只出現過一次的標為「暫記」。刪掉的詞不會再優先出現。</p>
+    <ul id="learned-list" class="list" role="listbox" tabindex="0" aria-label="已學會的詞"></ul>
+    <p id="learned-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="learned-remove" type="button" class="button">刪除選取</button>
+      <button id="learned-close" type="button" class="button">關閉</button>
     </div>
   </dialog>
   <script src="settings.js"></script>

@@ -216,6 +216,8 @@ inline bool appendUserPhrase(const Text& reading, const Text& text) {
 inline constexpr WPARAM shiftKey=0x10000;
 // Set on a key that carries one finished character, typed while full-width letters are on.
 inline constexpr WPARAM literalKey=0x20000;
+// Set on a digit pressed while only Ctrl is held: keep that many characters before the caret as a word.
+inline constexpr WPARAM controlKey=0x40000;
 // First character of a pseudo-syllable that carries a symbol through the composition.
 inline constexpr wchar_t symbolMark=L'\x01';
 // The symbol list, by kind. The first group opens with the list; Tab moves to the next.
@@ -280,6 +282,10 @@ class Input {
     size_t page = 0;
     size_t highlighted=0;
     bool nearMode=false, symbolMode=false;
+    // True while the list offers sentences typed before, recalled from the first key of each syllable.
+    bool recallMode=false;
+    std::shared_ptr<const std::vector<Sentence>> sentences;
+    std::optional<Sentence> committed;
     size_t symbolGroup=0;
     // The syllable whose character is being chosen while the list is open.
     size_t target=0;
@@ -291,7 +297,15 @@ class Input {
     size_t firstLimit=0;
     std::optional<NewWord> added;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
-    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=false;symbolGroup=0;}
+    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;}
+    // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
+    std::vector<Sentence> recalled() const {
+        std::vector<Sentence> found;
+        if(sentences && syllables.empty() && raw.size()>=2)
+            for(const auto& said:*sentences)if(said.codes.rfind(raw,0)==0)found.push_back(said);
+        return found;
+    }
+    Text scripted(const Text& text) const {return simplifiedOutput.value_or(configuredSimplifiedOutput())?convertScript(text,true):text;}
     std::shared_ptr<const Preferences> preferences;
     Segmenter segmenter=configuredSegmenter();
     KeyLayout layout=configuredLayout();
@@ -530,6 +544,9 @@ class Input {
 public:
     explicit Input(const Dictionary& d):dict(d){}
     void setPreferences(std::shared_ptr<const Preferences> p){preferences=std::move(p);}
+    void setSentences(std::shared_ptr<const std::vector<Sentence>> list){sentences=std::move(list);}
+    // The sentence the last key committed, for the caller to remember; unset for short or symbol-only text.
+    std::optional<Sentence> committedSentence() const {return committed;}
     void setSegmenter(Segmenter mode){segmenter=mode;}
     void setLayout(KeyLayout keys){layout=keys;}
     // Unset follows the user setting each time text is committed.
@@ -558,6 +575,7 @@ public:
     DisplayRuns displayRuns() const {
         if (picking) {
             auto list=choices();
+            if(recallMode && highlighted<list.size())return {{},list[highlighted].text,{}};
             if(symbolMode && highlighted<list.size()){
                 const size_t at=caret.value_or(syllables.size());
                 return {cut(at,false),list[highlighted].text,cut(at,true)};
@@ -574,6 +592,7 @@ public:
     }
     std::vector<Choice> choices() const {
         std::vector<Choice> result;
+        if(recallMode){for(const auto& said:recalled())result.push_back({said.text,0});return result;}
         if(symbolMode){for(const wchar_t* mark:symbolGroups[symbolGroup].marks)result.push_back({mark,0});return result;}
         auto pos=target;
         if(pos>=syllables.size()) return result;
@@ -630,6 +649,7 @@ public:
         return text;
     }
     Text listTitle() const {
+        if(recallMode)return L"打過的句子";
         if(symbolMode)return Text(L"符號・")+symbolGroups[symbolGroup].name+L"（Tab 換類別）";
         return nearMode?L"近音字":L"注音選字";
     }
@@ -660,6 +680,10 @@ public:
     std::optional<NewWord> addedWord() const {return added;}
     bool wants(WPARAM key) const {
         if(key&literalKey)return !active();
+        if(key&controlKey){
+            const WPARAM digit=key&0xffff;
+            return !picking && raw.empty() && digit>='2' && digit<='8' && caret.value_or(syllables.size())>=size_t(digit-'0');
+        }
         const bool shifted=(key&shiftKey)!=0; key&=0xffff;
         if(picking) return !shifted && ((key>='1' && key<='9') || key==VK_NEXT || key==VK_PRIOR || key==VK_UP || key==VK_DOWN || key==VK_LEFT || key==VK_RIGHT || key==VK_SPACE || key==VK_ESCAPE || key==VK_RETURN || key==VK_BACK || key==VK_TAB);
         if(shifted) return !punctuation(key,true,layout).empty() || (key==VK_RETURN && active());
@@ -670,15 +694,31 @@ public:
     }
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
-        added.reset();
+        added.reset();committed.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
+        if(key&controlKey){
+            // The characters before the caret, as they stand, become one of the user's own words.
+            const size_t count=size_t((key&0xffff)-'0'),end=caret.value_or(syllables.size()),from=end-count;
+            Text reading;
+            for(size_t at=from;at<end;++at){
+                if(symbol(syllables[at]))return {};
+                if(at!=from)reading+=L"-";
+                reading+=dict.reading(syllables[at]);
+            }
+            const Text text=cut(end,false).substr(cut(from,false).size());
+            if(text.size()!=count)return {};
+            place({from,text,count,{},true});
+            added=NewWord{reading,text};
+            return {};
+        }
         const bool shifted=(key&shiftKey)!=0; key&=0xffff;
         if(key==VK_ESCAPE) { if(picking)leavePicking(); else clear(); return {}; }
         if(picking) {
             auto list=choices();
             if(list.empty()){leavePicking();return {};}
             if(key==VK_TAB){
+                if(recallMode)return {};
                 if(symbolMode){symbolGroup=(symbolGroup+1)%std::size(symbolGroups);page=0;highlighted=0;return {};}
                 nearMode=!nearMode;page=0;highlighted=0;
                 if(choices().empty())nearMode=false;
@@ -697,6 +737,13 @@ public:
             size_t idx=key==VK_RETURN?highlighted:page*9+key-'1';
             if(idx<list.size()){
                 const Choice picked=list[idx];
+                if(recallMode){
+                    const auto found=recalled();
+                    clear();
+                    // Choosing it again moves it back to the front of the recent sentences.
+                    if(idx<found.size())committed=found[idx];
+                    return scripted(picked.text);
+                }
                 if(symbolMode){
                     leavePicking();
                     if(!active())return picked.text;
@@ -779,7 +826,14 @@ public:
             return {};
         }
         if(key==VK_DOWN || key==VK_SPACE || key==VK_END) {
-            if(!raw.empty()) {if(!finishSyllable()) return {}; if(key==VK_SPACE) return {};}
+            if(!raw.empty()) {
+                if(!finishSyllable()){
+                    // Keys that spell no syllable may be the first key of each syllable of an earlier sentence.
+                    if(!recalled().empty()){recallMode=true;picking=true;page=0;highlighted=0;}
+                    return {};
+                }
+                if(key==VK_SPACE) return {};
+            }
             if(syllables.empty())return {};
             // End reaches the last character; a moved caret chooses the character on its left;
             // otherwise choosing runs from the left, one unsettled word at a time.
@@ -801,11 +855,17 @@ public:
                 }
                 if(plain)keep=NewWord{reading,result};
             }
-            clear();added=keep;
-            return simplifiedOutput.value_or(configuredSimplifiedOutput())?convertScript(result,true):result;
+            // Sentences of three or more syllables can be recalled later from their first keys.
+            Text codes;
+            for(const auto& syllable:syllables)if(!symbol(syllable))codes+=syllable[0];
+            std::optional<Sentence> said;
+            if(codes.size()>=3 && codes.size()<=16)said=Sentence{codes,result};
+            clear();added=keep;committed=said;
+            return scripted(result);
         }
         wchar_t ch=codeKey(key,layout);
-        if(raw.size()>=5 || syllables.size()>=128) return {};
+        // A syllable is at most a few keys; a run of first keys recalling a sentence may be longer.
+        if(raw.size()>=(syllables.empty()?size_t(16):size_t(5)) || syllables.size()>=128) return {};
         raw+=ch;
         if(ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7') finishSyllable();
         return {};

@@ -211,11 +211,19 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
             session->Release();
         });
     }
-    bool wants(ITfContext* c,WPARAM key) const {
-        if(losingFocus || !chinese || !input || !c || (composingIn && c!=composingIn.Get()))return false;
-        if((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN)) & 0x8000)return false;
-        return input->wants(withShift(key));
+    // The key as the engine takes it, or 0 when it is not for the engine.
+    WPARAM engineKey(ITfContext* c,WPARAM key) const {
+        if(losingFocus || !chinese || !input || !c || (composingIn && c!=composingIn.Get()))return 0;
+        if((GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN)) & 0x8000)return 0;
+        if(GetKeyState(VK_CONTROL)&0x8000){
+            // Ctrl alone with a digit keeps characters as a word; every other Ctrl shortcut belongs to the application.
+            const WPARAM kept=controlKey|key;
+            return !(GetKeyState(VK_SHIFT)&0x8000) && input->wants(kept)?kept:0;
+        }
+        const WPARAM typed=withShift(key);
+        return input->wants(typed)?typed:0;
     }
+    bool wants(ITfContext* c,WPARAM key) const {return engineKey(c,key)!=0;}
     void endLater(){
         hideCompositionUI();
         if(!composition || !composingIn)return;
@@ -295,7 +303,8 @@ public:
         }
         shiftPending=false;
         if(widthSwitch(c,k)){fullWidth=!fullWidth;indicateMode();*eat=TRUE;return S_OK;}
-        const WPARAM typed=wants(c,k)?withShift(k):literal(c,k,flags);
+        const WPARAM wanted=engineKey(c,k);
+        const WPARAM typed=wanted?wanted:literal(c,k,flags);
         *eat=FALSE;if(!typed)return S_OK;
         auto session=new KeyEdit(this,c,typed);HRESULT result=E_FAIL;
         HRESULT hr=c->RequestEditSession(client,session,TF_ES_SYNC|TF_ES_READWRITE,&result);
@@ -356,17 +365,21 @@ public:
                 layoutCookie=TF_INVALID_COOKIE;
         } else {hr=composition->GetRange(&range);if(FAILED(hr))return hr;}
         bool allowed=learnable(c,ec,range.Get(),activationFlags);
-        if(!allowed){next.setPreferences(nullptr);learningStatus=1;}
+        if(!allowed){next.setPreferences(nullptr);next.setSentences(nullptr);learningStatus=1;}
         else if(!input->active()){
             Learning store;
             bool enabled=store.enabled();learningStatus=enabled?3:2;
             next.setPreferences(enabled?std::make_shared<const Preferences>(store.ranks()):nullptr);
+            next.setSentences(enabled?std::make_shared<const std::vector<Sentence>>(store.sentences()):nullptr);
         }
         auto edits=next.corrections();
         auto fresh=next.newWords();
         Text commit;
         if(key)commit=next.press(key);else next.clear();
         auto added=next.addedWord();
+        auto said=next.committedSentence();
+        // A word kept with Ctrl and a digit is saved at once; the sentence is still being typed.
+        if(added && allowed)appendUserPhrase(added->reading,added->text);
         Text text=next.active()?next.preview():commit;
         hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr))return hr;
         ComPtr<ITfRange> caret;
@@ -380,8 +393,7 @@ public:
         if(input->active()){present(ec,c,range.Get(),true);return S_OK;}
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
         if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
-                if(!edits.empty() || !fresh.empty()){Learning store;store.save(edits);store.saveWords(fresh);}
-                if(added)appendUserPhrase(added->reading,added->text);
+                if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
             }}
         return hr;
     }

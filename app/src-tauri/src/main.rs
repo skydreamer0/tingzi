@@ -1,6 +1,7 @@
 //! Tingzi voice window: press the shortcut, speak, and the text lands where you were typing.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod apps;
 mod audio;
 mod codex;
 mod deliver;
@@ -11,6 +12,7 @@ mod layout;
 mod panel;
 mod paths;
 mod recognise;
+mod replace;
 mod settings;
 mod tidy;
 mod words;
@@ -119,12 +121,20 @@ fn idle(app: &AppHandle, message: &str) {
     show(app, "idle", message, "", false);
 }
 
-/// Traditional first, so the user's own words can be matched, then the script the user chose.
+/// Traditional first, so the user's own words and replacement rules can be matched, then the script the user chose.
 fn polish(heard: &str, prefs: &Settings) -> String {
     let traditional = deliver::convert_script(heard.trim(), false);
     let tidied = if prefs.tidy { tidy::tidy(&traditional) } else { traditional };
     let corrected = if prefs.use_phrases { words::apply(&tidied) } else { tidied };
-    deliver::convert_script(&corrected, prefs.simplified)
+    let replaced = if prefs.use_replacements { replace::apply(&corrected) } else { corrected };
+    deliver::convert_script(&replaced, prefs.simplified)
+}
+
+/// The user's rule for the program they were typing in; None when there is no such place or no rule for it.
+fn rule_for(target: Option<Spot>) -> Option<apps::AppRule> {
+    let spot = target.filter(|spot| spot.process != 0 && !spot.ours())?;
+    let program = apps::program(spot.process)?;
+    apps::find(&apps::load(&apps::own_file()), &program).cloned()
 }
 
 enum Sound {
@@ -143,13 +153,15 @@ fn recognise(app: &AppHandle, sound: Sound, online: bool, target: Option<Spot>) 
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let cancelled = || session.run.load(Ordering::SeqCst) != run;
-        let prefs = Settings::load();
+        // The program being dictated into may change how the text is finished and delivered.
+        let rule = rule_for(target);
+        let prefs = apps::effective(&Settings::load(), rule.as_ref());
         let wav = match sound {
             Sound::Recording(recorder) => recorder.finish(),
             Sound::Wav(wav) => Ok(wav),
         };
         let heard = wav.clone().and_then(|wav| if online { recognise::online(wav) } else { recognise::local(&wav, &cancelled) });
-        let text = heard.map(|heard| polish(&heard, &prefs));
+        let text = heard.map(|heard| apps::finish(&polish(&heard, &prefs), rule.as_ref()));
         if cancelled() {
             return;
         }
@@ -656,6 +668,15 @@ fn main() {
             panel::word_readings,
             panel::words_import,
             panel::words_export,
+            panel::replacements_load,
+            panel::replacements_save,
+            panel::replacements_import,
+            panel::replacements_export,
+            panel::app_rules_load,
+            panel::app_rules_save,
+            panel::running_programs,
+            panel::learned_words,
+            panel::forget_learned_word,
             panel::open_target
         ])
         .on_window_event(|window, event| {
@@ -706,7 +727,7 @@ mod tests {
 
     #[test]
     fn recognised_text_follows_the_script_choice() {
-        let traditional = Settings { use_phrases: false, ..Settings::default() };
+        let traditional = Settings { use_phrases: false, use_replacements: false, ..Settings::default() };
         assert_eq!(polish(" 语音输入 \n", &traditional), "語音輸入");
         assert_eq!(polish("語音輸入", &Settings { simplified: true, ..traditional }), "语音输入");
     }

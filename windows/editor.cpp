@@ -45,15 +45,17 @@ void press(WPARAM key){
     if(!input.active()){
         Learning store;
         input.setPreferences(store.enabled()?std::make_shared<const Preferences>(store.ranks()):nullptr);
+        input.setSentences(store.enabled()?std::make_shared<const std::vector<Sentence>>(store.sentences()):nullptr);
     }
     auto edits=input.corrections();
     auto fresh=input.newWords();
     Text commit=input.press(key);
     if(!commit.empty()){
         SendMessageW(edit,EM_REPLACESEL,TRUE,(LPARAM)commit.c_str());
-        if(!edits.empty() || !fresh.empty()){Learning store;store.save(edits);store.saveWords(fresh);}
-        if(auto added=input.addedWord())appendUserPhrase(added->reading,added->text);
+        auto said=input.committedSentence();
+        if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
     }
+    if(auto added=input.addedWord())appendUserPhrase(added->reading,added->text);
     paintState();
 }
 void switchLanguage() {

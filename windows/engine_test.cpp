@@ -178,6 +178,28 @@ int wmain(int argc,wchar_t** argv) {
     input.press(VK_OEM_3);input.press(VK_TAB);
     expect(input.listTitle().rfind(L"符號・括號",0)==0 && input.press('1')==L"「","Tab in the symbol list moves to the next group");
 
+    input.clear();
+    enter("SU3CL3A87");
+    expect(input.wants(controlKey|'2') && !input.wants(controlKey|'4') && input.press(controlKey|'2').empty()
+        && input.addedWord() && input.addedWord()->text==L"好嗎" && input.addedWord()->reading==L"ㄏㄠˇ-ㄇㄚ˙" && input.preview()==L"你好嗎" && input.active(),
+        "Ctrl with a digit keeps the characters before the caret as a word");
+    expect(input.press(VK_RETURN)==L"你好嗎" && input.committedSentence() && input.committedSentence()->codes==L"sca" && !input.addedWord(),"a committed sentence carries its first keys");
+    enter("SU3");
+    expect(input.press(VK_RETURN)==L"你" && !input.committedSentence(),"a single character is not kept as a sentence");
+    input.setSentences(std::make_shared<const std::vector<Sentence>>(std::vector<Sentence>{{L"scajb",L"你好嗎我們"},{L"sca",L"你好嗎"},{L"jb",L"我們"}}));
+    enter("SC");
+    expect(input.displayRuns().active==L"ㄋㄏ" && !input.selecting(),"first keys show as they are typed");
+    input.press(VK_SPACE);
+    options=input.choices();
+    expect(input.selecting() && input.listTitle()==L"打過的句子" && options.size()==2 && options[0].text==L"你好嗎我們" && options[1].text==L"你好嗎","Space recalls sentences that begin with those keys");
+    expect(input.press('2')==L"你好嗎" && !input.active() && input.committedSentence() && input.committedSentence()->codes==L"sca","choosing one commits it and refreshes it");
+    enter("SCA");input.press(VK_SPACE);input.press(VK_ESCAPE);
+    expect(input.active() && !input.selecting(),"Escape closes the list and keeps the keys");
+    input.clear();
+    enter("SU3");input.press(VK_SPACE);
+    expect(!input.selecting() || input.listTitle()!=L"打過的句子","ordinary typing is not taken for a recall");
+    input.clear();input.setSentences(nullptr);
+
     {
         wchar_t temp[MAX_PATH];GetTempPathW(MAX_PATH,temp);
         Text file=Text(temp)+L"tingzi-templates-test.txt";

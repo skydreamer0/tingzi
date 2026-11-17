@@ -16,6 +16,10 @@ using LearnKey=std::pair<Text,Text>;
 using Preferences=std::map<LearnKey,Text>;
 struct Correction { LearnKey key; Text choice; };
 struct NewWord { Text reading, text; };
+// A learned word with how many times it has been committed.
+struct LearnedWord { Text reading, text; int hits; };
+// A sentence the user committed, with the first key of each syllable, so typing only those keys recalls it.
+struct Sentence { Text codes, text; };
 inline Text localLearningDir(){
     PWSTR path=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,KF_FLAG_NO_PACKAGE_REDIRECTION,nullptr,&path)))return {};
@@ -85,7 +89,7 @@ public:
         if(ok && exec("COMMIT"))return true;
         exec("ROLLBACK");return false;
     }
-    // Characters the user picked one after another become a word once the same run is committed twice.
+    // Characters the user picked one after another become a word the first time the run is committed.
     bool saveWords(const std::vector<NewWord>& words){
         if(words.empty())return true;
         if(!enabled())return false;
@@ -102,7 +106,7 @@ public:
     std::vector<NewWord> learnedWords() const {
         std::vector<NewWord> words;
         sqlite3_stmt* s=nullptr;
-        if(db && sqlite3_prepare_v2(db,"SELECT reading,text FROM words WHERE hits>=2 AND (SELECT enabled FROM settings)=1",-1,&s,nullptr)==SQLITE_OK){
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,text FROM words WHERE (SELECT enabled FROM settings)=1",-1,&s,nullptr)==SQLITE_OK){
             while(sqlite3_step(s)==SQLITE_ROW){
                 auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
                 words.push_back({col(0),col(1)});
@@ -110,7 +114,48 @@ public:
         }
         sqlite3_finalize(s);return words;
     }
-    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM words");return ok;}
+    // Every learned word, whether or not learning is switched on, for the user to review.
+    std::vector<LearnedWord> allWords() const {
+        std::vector<LearnedWord> words;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,text,hits FROM words ORDER BY text,reading",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW){
+                auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
+                words.push_back({col(0),col(1),sqlite3_column_int(s,2)});
+            }
+        }
+        sqlite3_finalize(s);return words;
+    }
+    bool forgetWord(const Text& reading,const Text& text){
+        sqlite3_stmt* s=nullptr;
+        bool ok=db && sqlite3_prepare_v2(db,"DELETE FROM words WHERE reading=? AND text=?",-1,&s,nullptr)==SQLITE_OK;
+        if(ok){bind(s,1,reading);bind(s,2,text);ok=sqlite3_step(s)==SQLITE_DONE && sqlite3_changes(db)==1;}
+        sqlite3_finalize(s);return ok;
+    }
+    // Keeps the hundred most recent sentences; saying one again moves it to the front.
+    bool saveSentence(const Sentence& said){
+        if(said.codes.empty() || said.text.empty() || !enabled())return false;
+        exec("CREATE TABLE IF NOT EXISTS sentences(text TEXT PRIMARY KEY,codes TEXT NOT NULL,seq INTEGER NOT NULL) WITHOUT ROWID");
+        sqlite3_stmt* s=nullptr;
+        bool ok=sqlite3_prepare_v2(db,"INSERT OR REPLACE INTO sentences VALUES(?,?,(SELECT COALESCE(MAX(seq),0)+1 FROM sentences))",-1,&s,nullptr)==SQLITE_OK;
+        if(ok){bind(s,1,said.text);bind(s,2,said.codes);ok=sqlite3_step(s)==SQLITE_DONE;}
+        sqlite3_finalize(s);
+        exec("DELETE FROM sentences WHERE seq<=(SELECT MAX(seq) FROM sentences)-100");
+        return ok;
+    }
+    // Most recent first; empty while learning is off.
+    std::vector<Sentence> sentences() const {
+        std::vector<Sentence> list;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT codes,text FROM sentences WHERE (SELECT enabled FROM settings)=1 ORDER BY seq DESC",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW){
+                auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
+                list.push_back({col(0),col(1)});
+            }
+        }
+        sqlite3_finalize(s);return list;
+    }
+    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM words");exec("DELETE FROM sentences");return ok;}
     // Reads the file exportTo writes; rows already present are replaced.
     bool importFrom(const std::filesystem::path& path){
         std::ifstream in(path,std::ios::binary);

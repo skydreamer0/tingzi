@@ -21,6 +21,8 @@ pub struct Settings {
     pub simplified: bool,
     /// Whether recognised speech is corrected with the user's own words.
     pub use_phrases: bool,
+    /// Whether the user's "heard → wanted" replacement rules are applied to recognised speech.
+    pub use_replacements: bool,
     /// 0 follows Windows, 1 is light, 2 is dark.
     pub appearance: u32,
     pub system_accent: bool,
@@ -46,6 +48,7 @@ impl Default for Settings {
             auto_insert: true,
             simplified: false,
             use_phrases: true,
+            use_replacements: true,
             appearance: 0,
             system_accent: false,
             delivery_mode: None,
@@ -149,6 +152,8 @@ mod tests {
     fn older_file_keeps_inserting() {
         let saved: Settings = serde_json::from_str(r#"{"Online":false,"Modifiers":3,"RecordKey":82,"TextSize":20}"#).unwrap();
         assert_eq!(saved.mode(), Mode::Insert);
+        // Files saved before replacement rules existed turn them on.
+        assert!(saved.use_replacements);
         let preview: Settings = serde_json::from_str(r#"{"AutoInsert":false}"#).unwrap();
         assert_eq!(preview.mode(), Mode::Preview);
     }
