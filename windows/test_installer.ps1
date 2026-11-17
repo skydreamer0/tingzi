@@ -8,7 +8,15 @@ $root = Join-Path ${env:ProgramW6432} 'Tingzi'
 $logs = Join-Path ([IO.Path]::GetDirectoryName((Resolve-Path $Installer))) 'installer-logs'
 New-Item -ItemType Directory -Force $logs | Out-Null
 
-function Check($condition, $message) { if (!$condition) { throw "FAILED: $message" } else { Write-Host "ok: $message" } }
+function Report {
+    # What the installer and the registry say, so a failure on a machine nobody can log in to can be traced.
+    Get-ChildItem $logs -Filter *.log | ForEach-Object { Write-Host "----- $($_.Name)"; Get-Content $_.FullName -Tail 60 }
+    foreach ($view in '/reg:64', '/reg:32') { Write-Host "----- HKLM CLSID $view"; reg query 'HKLM\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}' /s $view 2>&1 | Write-Host }
+    Write-Host '----- HKCU CLSID'; reg query 'HKCU\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}' /s 2>&1 | Write-Host
+    Write-Host "----- $root"; Get-ChildItem $root -Recurse -ErrorAction SilentlyContinue | Select-Object -First 60 | ForEach-Object { Write-Host $_.FullName }
+}
+
+function Check($condition, $message) { if (!$condition) { Report; throw "FAILED: $message" } else { Write-Host "ok: $message" } }
 
 function Install($name) {
     $process = Start-Process -FilePath $Installer -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs "$name.log") + '"') -Wait -PassThru
@@ -21,7 +29,8 @@ Check ($entry.DisplayName -eq '聽字・注音與語音輸入法') 'the apps lis
 Check ($entry.DisplayVersion -match '^\d+\.\d+\.\d+$') "the apps list shows version $($entry.DisplayVersion)"
 Check ($entry.Publisher -eq 'Tingzi contributors') 'the apps list shows the publisher'
 Check (Test-Path $entry.DisplayIcon) 'the apps list icon exists'
-$dll = (Get-ItemProperty $serviceKey).'(default)'
+$dll = (Get-ItemProperty $serviceKey -ErrorAction SilentlyContinue).'(default)'
+Check ($dll) 'the text service is registered for the whole machine'
 Check ($dll -like "$root\v$($entry.DisplayVersion)\TingziTextService64.dll") "the text service is registered from the version folder ($dll)"
 Check (Test-Path $dll) 'the registered text service exists'
 Check (Test-Path "$root\v$($entry.DisplayVersion)\TingziFloat\TingziFloat.exe") 'the voice window is installed'
