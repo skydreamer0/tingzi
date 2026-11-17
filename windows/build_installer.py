@@ -1,6 +1,6 @@
 """Build 聽字-Setup-<version>-x64.exe from a release ZIP made by package_release.py.
 
-The installer carries the ZIP's contents unchanged and runs InstallTingzi.cmd from them, so the
+The installer carries the ZIP unchanged, unpacks it and runs InstallTingzi.cmd from it, so the
 registration and upgrade rules stay in one place. Needs Inno Setup 6.3 or later (ISCC.exe).
 """
 import argparse
@@ -52,12 +52,13 @@ def build(release, output, compiler):
     with tempfile.TemporaryDirectory(prefix='tingzi-installer-') as staging:
         payload = Path(staging) / 'payload'
         payload.mkdir()
+        # Checked here so a damaged or hand-edited ZIP never becomes an installer.
         version = unpack(release, payload)
         output.mkdir(parents=True, exist_ok=True)
         target = output / ('聽字-Setup-' + version + '-x64.exe')
         if target.exists():
             raise SystemExit('Destination already exists; remove it or choose another folder: ' + str(target))
-        subprocess.run([str(compiler), '/Qp', '/DAppVersion=' + version, '/DPayload=' + str(payload), '/DOutputDir=' + str(output.resolve()), str(SCRIPT.resolve())], check=True)
+        subprocess.run([str(compiler), '/Qp', '/DAppVersion=' + version, '/DPayloadZip=' + str(release.resolve()), '/DOutputDir=' + str(output.resolve()), str(SCRIPT.resolve())], check=True)
     if not target.is_file():
         raise SystemExit('ISCC did not write ' + target.name)
     sha = digest(target)

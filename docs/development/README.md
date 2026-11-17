@@ -75,7 +75,7 @@ python windows/package_release.py .build/package .build/Tingzi-0.7.0-windows-x64
 python windows/build_installer.py .build/Tingzi-0.7.0-windows-x64.zip .build/installer
 ```
 
-它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `聽字-Setup-<版本>-x64.exe` 與它的 `.sha256`。版號取自 ZIP 的清單，不必另外修改。安裝程式把 ZIP 的內容原封不動放在暫存資料夾並執行 `InstallTingzi.cmd /quiet`，所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
+它解開 ZIP、逐一核對 `release-manifest.json` 的雜湊，再以 ISCC 編譯 `windows/installer/Tingzi.iss`，輸出 `聽字-Setup-<版本>-x64.exe` 與它的 `.sha256`。版號取自 ZIP 的清單，不必另外修改。安裝程式原封不動帶著 ZIP，在開始複製檔案前解開到暫存資料夾並執行 `InstallTingzi.cmd /quiet`（失敗時停止安裝、不登記應用程式清單，腳本的輸出寫進安裝記錄），所以註冊與升級的規則仍只寫在 `InstallTingzi.cmd` 與 `upgrade.cpp`；安裝程式只另外處理 WebView2 Runtime、應用程式清單的登記，以及解除安裝時是否刪除 `%LOCALAPPDATA%\Tingzi` 與 `HKCU\Software\Tingzi`。`AppId` 決定應用程式清單裡的那一筆，發行後不可更改。
 
 `windows/package_release.py` 的介面如下：
 
