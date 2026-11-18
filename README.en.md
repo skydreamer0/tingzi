@@ -120,7 +120,7 @@ With AI refinement on, Tingzi sends the recognized **text** (not the audio), wit
 
 While automatic updates are on (關於 About page), Tingzi asks GitHub at most once a day whether a new version exists, sending only the current version number. With them off, it doesn't connect on its own.
 
-Tingzi keeps an activity record, `tingzi-log.txt`, in your personal folder, to help with problem reports. It notes when you dictated, which method was used, how long it took and what failed. It holds nothing you said or typed, no audio and no keys, and stays on your computer; past 256 KB it starts a new file and keeps only one older one. Press 回報問題… (Report a problem) on the 關於 (About) page or in the tray menu to see what a report would include and edit it. Only 到 GitHub 回報 (Report on GitHub) opens the issue page in your browser, and you decide whether to submit it.
+Tingzi keeps an activity record, `tingzi-log.txt`, in your personal folder, to help with problem reports. It notes when and how a recording started (shortcut, window button or menu), which program the text was for, which method was used, how long it took, and what failed or crashed. It holds nothing you said or typed, no audio and no keys, and stays on your computer; past 256 KB it starts a new file and keeps only one older one. Press 回報問題… (Report a problem) on the 關於 (About) page or in the tray menu to see what a report would include and edit it. Only 到 GitHub 回報 (Report on GitHub) opens the issue page in your browser, and you decide whether to submit it.
 
 ## Documentation
 

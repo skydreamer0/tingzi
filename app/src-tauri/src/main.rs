@@ -217,6 +217,21 @@ fn rule_for(target: Option<Spot>) -> Option<apps::AppRule> {
     apps::find(&apps::load(&apps::own_file()), &program).cloned()
 }
 
+/// Notes what the user pressed and what that does now, so a report says how each dictation began and ended.
+fn note_trigger(app: &AppHandle, source: &str) {
+    let session = app.state::<Session>();
+    let doing = if session.working.load(Ordering::SeqCst) {
+        "取消辨識"
+    } else if session.recorder.lock().unwrap().is_some() {
+        "停止錄音"
+    } else if session.kept.lock().unwrap().is_some() {
+        "改用本機重試"
+    } else {
+        "開始錄音"
+    };
+    report::note(format!("{source}：{doing}"));
+}
+
 /// The recogniser's name in the problem report's record.
 fn report_engine(engine: Engine) -> &'static str {
     match engine {
@@ -447,13 +462,16 @@ fn toggle(app: &AppHandle) {
         return;
     }
     let prefs = Settings::load();
-    deliver::begin();
+    let spot = deliver::begin();
     let meter = app.clone();
     let started = audio::Recorder::start(prefs.microphone_name.clone(), move |peak| {
         let _ = meter.emit("level", peak);
     });
     match started {
         Ok(recorder) => {
+            // The program's name only, never what is in it, so a report says where the dictation was going.
+            let program = (spot.process != 0).then(|| apps::program(spot.process)).flatten().unwrap_or_else(|| "無".into());
+            report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
             *session.recorder.lock().unwrap() = Some(recorder);
             let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
             // While the user speaks: the connection to an online service is opened, and words typed
@@ -484,6 +502,7 @@ fn record_key(app: &AppHandle, pressed: bool) {
     let recording = || session.recorder.lock().unwrap().is_some();
     if pressed {
         let was_recording = recording();
+        note_trigger(app, "錄音快捷鍵");
         toggle(app);
         let started = !was_recording && recording();
         *session.held_since.lock().unwrap() = (started && Settings::load().hold_to_talk).then(Instant::now);
@@ -652,6 +671,7 @@ fn run_tool(app: &AppHandle, name: &str, argument: Option<&str>) {
 
 #[tauri::command]
 fn toggle_recording(app: AppHandle) {
+    note_trigger(&app, "浮窗按鈕");
     toggle(&app);
 }
 
@@ -864,7 +884,10 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
         .on_menu_event(|app, event| match event.id().as_ref() {
             "settings" => panel::open(app),
             "show" => layout::recover(app),
-            "record" => toggle(app),
+            "record" => {
+                note_trigger(app, "系統匣選單");
+                toggle(app)
+            }
             "file" => import(app, None),
             "edit" => edit(app),
             "history" => {
