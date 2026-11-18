@@ -29,7 +29,7 @@ macOS 版只有語音浮窗，沒有注音輸入法。各檔案的職責見 `doc
 GitHub Actions（只在 `app/**`、`macos/**`、`windows/**` 或工作流程檔有變動時觸發；只改文件的 PR 不會跑 CI）：
 
 - `.github/workflows/macos.yml`：在 Mac 上 `cargo test --locked` 與 `bash macos/build.sh`，產物是 `Tingzi.app` 的 ZIP。
-- `.github/workflows/windows.yml`：在 Windows 上 `cargo test --locked`、`windows\build.cmd`、打包 ZIP 再做成單一安裝程式，並實際安裝、升級、移除一次。
+- `.github/workflows/windows.yml`：在 Windows 上 `cargo test --locked`、`windows\test_engine.cmd`（引擎測試與選字基準）、`windows\build.cmd`、打包 ZIP 再做成單一安裝程式，並實際安裝、升級、移除一次。
 - `.github/workflows/release.yml`：推送 `v*` 標籤時觸發，建置並檢查安裝程式，只把 `Tingzi-Setup-<版本>-x64.exe` 與 `.sha256` 附到該標籤的**草稿** release。見下方「發行」。
 
 在 Windows 電腦上（需要 Rust stable 與 Visual Studio C++ x86／x64 工具；不需要 .NET）：
@@ -49,7 +49,7 @@ windows/test_installer.ps1 -Installer .build/installer/Tingzi-Setup-<版本>-x64
 
 `build_installer.py` 需要 Inno Setup 6.3 以上，輸出安裝程式與它的 `.sha256`。`test_installer.ps1` 會在這台電腦上實際安裝、升級並移除，只在可拋棄的機器（例如 CI）或要做實機驗收時執行。
 
-C++ 引擎與學習的測試（`windows/engine_test.cpp`、`learning_test.cpp`）由 `windows/build_standalone.cmd` 編譯，`build.cmd` 不會編譯它們。
+C++ 引擎與學習的測試（`windows/engine_test.cpp`、`learning_test.cpp`）和選字基準測試（`windows/bench/`）由 `windows\test_engine.cmd` 編譯並執行，Windows 工作流程每次都會跑；`build.cmd` 不會編譯它們。改了 `engine.h` 的選字或校正，要看基準測試的結果：某類別變差就不要合併，變好就在同一個 commit 更新 `windows/bench/baseline.tsv`。
 
 在 Mac 上（需要 Rust、Python 3 與 Xcode 命令列工具，不需要完整的 Xcode）：
 

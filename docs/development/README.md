@@ -13,10 +13,11 @@
 | `app/src-tauri/` | 語音浮窗與設定頁的 Rust 後端（Tauri 2）：錄音、辨識（內建 codex-asr 與本機 Whisper）、貼入規則、設定、系統匣與單一執行個體。各檔案的職責見[遷移規格](../specs/app-migration.md)的架構表；測試寫在各模組裡，以 `cargo test` 執行。 |
 | `app/src-tauri/src/sys/` | 向作業系統要求的每一件事，一個系統一個檔：`win.rs`（Win32、登錄檔、認證管理員）與 `mac.rs`（AppKit、Quartz 按鍵事件、鑰匙圈）。兩個檔提供同一組函式，其他模組只呼叫 `sys::`，不直接使用系統 API。 |
 | `macos/build.sh`、`notices.py`、`README.md` | macOS 版的建置腳本（組出 `Tingzi.app` 與 ZIP）、第三方聲明產生器與使用說明。macOS 版只有語音浮窗，沒有注音輸入法。 |
-| `.github/workflows/windows.yml` | 在 GitHub 的 Windows 電腦上執行 `cargo test`、`windows/build.cmd`、打包 ZIP 與安裝程式，再在那台用完即丟的電腦上以 `windows/test_installer.ps1` 安裝、升級與移除一次，並存成工作流程的產物。 |
+| `.github/workflows/windows.yml` | 在 GitHub 的 Windows 電腦上執行 `cargo test`、`windows/test_engine.cmd`、`windows/build.cmd`、打包 ZIP 與安裝程式，再在那台用完即丟的電腦上以 `windows/test_installer.ps1` 安裝、升級與移除一次，並存成工作流程的產物。 |
 | `.github/workflows/macos.yml` | 在 GitHub 的 Mac 上執行 `cargo test` 與 `macos/build.sh`，並把 ZIP 存成工作流程的產物。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`）的網頁介面，只顯示狀態與收集選擇。 |
-| `windows/engine_test.cpp`、`learning_test.cpp` | 自有引擎與學習測試原始碼。 |
+| `windows/engine_test.cpp`、`learning_test.cpp`、`test_engine.cmd` | 自有引擎與學習的測試。`test_engine.cmd` 編譯並執行它們和選字基準測試，Windows 工作流程每次都會跑。 |
+| `windows/bench/` | 選字基準測試：測試句、各類別的基準數字與量測程式，說明見[選字基準測試](../../windows/bench/README.md)。 |
 | `windows/segment_compare.cpp` | 開發用比對工具：同一串按鍵分別以「整句最高分」與「分批定案」兩種斷詞模式轉換並列出差異。分批定案預設關閉，可在 `HKCU\Software\Tingzi\Engine` 設 DWORD `StagedSegmentation=1` 啟用。 |
 | `windows/build.cmd`、`package_release.py` | 完整 Windows 建置與明列檔案的 ZIP 打包入口。 |
 | `windows/build_installer.py`、`windows/installer/` | 由發行 ZIP 做出單一安裝程式（Inno Setup 6）。`ChineseTraditional.isl` 是 Inno Setup 官方儲存庫 `is-6_4_3` 標籤的繁體中文翻譯，原樣收錄。 |
