@@ -7,6 +7,7 @@
 | 路徑 | 用途 |
 | --- | --- |
 | `windows/service.cpp`、`profile.h`、`engine.h`、`learning.h` | C++ Windows TSF 文字服務、輸入法識別與自有引擎。 |
+| `windows/journal.h` | 注音輸入法的操作記錄 `tingzi-ime-log.txt`：在哪個程式啟用、哪一步失敗、哪些按鍵沒能交給輸入法；只記事件，不記按鍵與文字。設定頁的「回報問題…」會和語音浮窗的記錄依時間合併。 |
 | `windows/setup.cpp`、`upgrade.cpp`、`InstallTingzi.cmd`、`RemoveTingzi.cmd` | 註冊、升級與移除。 |
 | `windows/keyboard.cpp`、`learning_cli.cpp` | 切換輸入法與學習工具。 |
 | `windows/editor.cpp` | 開發用的注音測試視窗；預設建置已不再編譯，也不隨安裝包發行。 |

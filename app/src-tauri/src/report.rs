@@ -149,13 +149,22 @@ fn hide_word(word: &str) -> String {
     }
 }
 
-/// The record's latest lines, older ones first.
+/// The latest lines of the voice window's record and the Zhuyin input method's (`tingzi-ime-log.txt`, written by
+/// every program the input method runs in), in time order, older ones first.
 fn latest_lines(count: usize) -> Vec<String> {
-    let read = |file: PathBuf| std::fs::read(file).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
-    let mut lines: Vec<String> = read(older_record()).lines().chain(read(record()).lines()).map(str::to_string).collect();
+    let read = |name: &str| std::fs::read(crate::paths::data().join(name)).map(|bytes| String::from_utf8_lossy(&bytes).into_owned()).unwrap_or_default();
+    let files = ["tingzi-log.old.txt", "tingzi-log.txt", "tingzi-ime-log.old.txt", "tingzi-ime-log.txt"];
+    merged(&files.map(read), count)
+}
+
+/// Lines from several records, each already in time order, put in one time order; the last `count` are kept.
+/// Every line starts with the same kind of stamp, so text order is time order.
+fn merged(records: &[String], count: usize) -> Vec<String> {
+    let mut lines: Vec<&str> = records.iter().flat_map(|record| record.lines()).filter(|line| !line.trim().is_empty()).collect();
+    // A stable sort keeps the order of lines written in the same second.
+    lines.sort_by_key(|line| line.get(..19).unwrap_or_default().to_string());
     let skip = lines.len().saturating_sub(count);
-    lines.drain(..skip);
-    lines
+    lines[skip..].iter().map(|line| line.to_string()).collect()
 }
 
 fn engine_name(engine: Engine) -> &'static str {
@@ -280,6 +289,14 @@ mod tests {
         assert_eq!(clean("Bearer AbCdEfGhIjKlMnOpQrStUvWxYz012345", home), "Bearer （已隱藏金鑰）");
         assert_eq!(clean("辨識完成 1234 ms・本機 Whisper", home), "辨識完成 1234 ms・本機 Whisper");
         assert_eq!(clean("ggml-large-v3-turbo-q5_0.bin", home), "ggml-large-v3-turbo-q5_0.bin");
+    }
+
+    #[test]
+    fn both_records_are_read_in_time_order() {
+        let voice = "2026-11-18 05:40:12 UTC 啟動\n2026-11-18 05:41:00 UTC 錄音中\n".to_string();
+        let zhuyin = "2026-11-18 05:40:30 UTC 注音（notepad.exe）：啟用\n".to_string();
+        let lines = merged(&[voice, String::new(), zhuyin], 2);
+        assert_eq!(lines, ["2026-11-18 05:40:30 UTC 注音（notepad.exe）：啟用", "2026-11-18 05:41:00 UTC 錄音中"]);
     }
 
     #[test]
