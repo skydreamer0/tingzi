@@ -133,6 +133,26 @@ int wmain(int argc,wchar_t** argv) {
     enter("J30 ");
     expect(input.preview()==L"午安","a final typed with its own Space stays a syllable of its own");
     input.clear();
+    enter("2I");
+    expect(input.displayRuns().active==L"ㄛ","an initial and a final that spell nothing are split for now");
+    enter("J");
+    runs=input.displayRuns();
+    expect(runs.before.empty() && runs.active==L"ㄉㄨㄛ","a medial typed after the final goes back between them");
+    enter(" ");
+    expect(input.preview()==L"多","and the syllable is the one meant");
+    input.clear();
+    enter("2JI3");
+    const Text inOrder=input.preview();
+    input.clear();
+    enter("2IJ3");
+    expect(input.preview().size()==1 && input.preview()==inOrder,"the moved medial keeps the tone typed after it");
+    input.clear();
+    enter("GIJ CL3");
+    expect(input.preview()==L"說好","an initial that is a syllable on its own takes its keys back too");
+    input.clear();
+    enter("CJ8 ");
+    expect(input.preview().size()==1,"keys typed in order are left alone");
+    input.clear();
 
     enter("SU3CL3");input.press(VK_DOWN);
     options=input.choices();
