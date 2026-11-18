@@ -118,6 +118,9 @@ pub struct Settings {
     /// the rule, so it is never saved with the main settings.
     #[serde(skip)]
     pub refine_app_note: String,
+    /// Whether Ctrl+Alt+E rewrites the selected text as the user says, with the refinement service. Off unless turned on,
+    /// since the selected text is sent.
+    pub rewrite_selection: bool,
     /// Whether GitHub is asked once a day for a newer version. Off means no request is made unless the user presses the button.
     pub check_updates: bool,
 }
@@ -154,6 +157,7 @@ impl Default for Settings {
             refine_note: String::new(),
             refine_language: String::new(),
             refine_app_note: String::new(),
+            rewrite_selection: false,
             check_updates: true,
         }
     }
@@ -205,6 +209,9 @@ impl Settings {
     pub fn problem(&self) -> Option<String> {
         if let Some(problem) = self.hotkey().problem() {
             return Some(problem);
+        }
+        if self.rewrite_selection && self.hotkey() == crate::hotkey::REWRITE {
+            return Some(format!("{} 用於改寫選取文字，請選其他錄音鍵，或關閉「用語音改寫選取的文字」。", crate::hotkey::REWRITE.label()));
         }
         if !matches!(self.text_size, 18 | 20 | 24) || self.appearance > 2 || self.delivery_mode.is_some_and(|mode| mode > 2) {
             return Some("設定內容不完整，請重新選擇。".into());

@@ -92,6 +92,7 @@ function fill() {
   byId('refine-model').value = prefs.RefineModel ?? '';
   byId('refine-note').value = prefs.RefineNote ?? '';
   byId('refine-language').value = prefs.RefineLanguage ?? '';
+  byId('rewrite-selection').checked = Boolean(prefs.RewriteSelection);
   showRefineKey();
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
@@ -153,6 +154,7 @@ function collect(engineFromPage) {
       RefineModel: byId('refine-model').value.trim(),
       RefineNote: byId('refine-note').value.trim(),
       RefineLanguage: byId('refine-language').value,
+      RewriteSelection: byId('rewrite-selection').checked,
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
       CheckUpdates: byId('check-updates').checked,
@@ -383,10 +385,13 @@ byId('refine-key-clear').addEventListener('click', () => {
       showRefineKey();
       if (switchedOff) {
         byId('refine').checked = false;
+        byId('rewrite-selection').checked = false;
         panel.prefs.Refine = false;
+        panel.prefs.RewriteSelection = false;
         accepted.set('refine', false);
+        accepted.set('rewrite-selection', false);
       }
-      say(switchedOff ? '已刪除潤稿金鑰，並關閉 AI 潤稿。' : '已刪除潤稿金鑰。', true);
+      say(switchedOff ? '已刪除潤稿金鑰，並關閉 AI 潤稿與語音改寫。' : '已刪除潤稿金鑰。', true);
     } catch (reason) {
       say(String(reason));
     }

@@ -99,6 +99,55 @@ fn left_target() -> bool {
     WATCH.lock().map(|watch| watch.left).unwrap_or(true)
 }
 
+/// Text the user selected to rewrite, and what the clipboard held before it was copied.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Selection {
+    pub text: String,
+    /// None when the clipboard held no text, such as a picture, which cannot be put back.
+    pub clipboard: Option<String>,
+}
+
+/// Copies what is selected in the program in front, then puts the clipboard's text back. None when nothing is
+/// selected, or the program did not copy. Blocks for up to about two seconds; call it off the main thread.
+pub fn take_selection() -> Option<Selection> {
+    // A shortcut still held down would turn Ctrl+C into something else.
+    for _ in 0..40 {
+        if !crate::sys::modifier_held() {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    let clipboard = clipboard_text();
+    let before = crate::sys::clipboard_serial();
+    if !crate::sys::press_copy() {
+        return None;
+    }
+    let copied = (0..30).any(|_| {
+        std::thread::sleep(Duration::from_millis(20));
+        crate::sys::clipboard_serial() != before
+    });
+    if !copied {
+        return None;
+    }
+    // Some programs write the clipboard in more than one step.
+    std::thread::sleep(Duration::from_millis(40));
+    let text = clipboard_text();
+    if let Some(earlier) = &clipboard {
+        copy(earlier);
+    }
+    text.filter(|text| !text.trim().is_empty()).map(|text| Selection { text, clipboard })
+}
+
+/// Puts back what the clipboard held before a rewrite, once the program has had time to paste, unless something
+/// else has been copied since.
+pub fn give_back(pasted: &str, earlier: Option<&str>) {
+    let Some(earlier) = earlier else { return };
+    std::thread::sleep(Duration::from_millis(500));
+    if clipboard_text().as_deref() == Some(pasted) {
+        copy(earlier);
+    }
+}
+
 /// What the user chose to happen when recognition finishes.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {

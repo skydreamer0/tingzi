@@ -65,6 +65,8 @@ struct Session {
     full_width: AtomicBool,
     /// When the shortcut went down to start a recording, while it may still be held.
     held_since: Mutex<Option<Instant>>,
+    /// The selected text the running recording is a command for, after Ctrl+Alt+E.
+    rewrite: Mutex<Option<deliver::Selection>>,
 }
 
 impl Session {
@@ -82,6 +84,26 @@ impl Session {
 
 fn draft_keys() -> Shortcut {
     Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV)
+}
+
+/// Ctrl+Alt+E rewrites the selected text, when the user turned that on.
+fn rewrite_keys() -> Shortcut {
+    hotkey::REWRITE.shortcut_unchecked()
+}
+
+/// Holds Ctrl+Alt+E while rewriting is on, and lets it go otherwise. Another program may hold it; the settings
+/// page then says so.
+pub fn rewrite_follows(app: &AppHandle, prefs: &Settings) -> bool {
+    let shortcuts = app.global_shortcut();
+    let held = shortcuts.is_registered(rewrite_keys());
+    match (prefs.rewrite_selection, held) {
+        (true, false) => shortcuts.register(rewrite_keys()).is_ok(),
+        (false, true) => {
+            let _ = shortcuts.unregister(rewrite_keys());
+            true
+        }
+        _ => true,
+    }
 }
 
 /// Alt+Shift+Z pastes the most recent dictation again, wherever the keyboard is now.
@@ -205,11 +227,15 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
     let session = app.state::<Session>();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
     session.working.store(true, Ordering::SeqCst);
+    let rewrite = session.rewrite.lock().unwrap().take();
     show(app, "working", recognise::working_label(engine, &Settings::load()), "", false);
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let cancelled = || session.run.load(Ordering::SeqCst) != run;
+        if let Some(selection) = rewrite {
+            return rewrite_with(&app, run, sound, engine, target, selection);
+        }
         // The program being dictated into may change how the text is finished and delivered.
         let rule = rule_for(target);
         let main = Settings::load();
@@ -285,11 +311,97 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
     });
 }
 
+/// The second half of Ctrl+Alt+E: recognises the spoken command, has the service rewrite the selection, and pastes
+/// the result over it. A failure leaves the selected text and the clipboard as they were.
+fn rewrite_with(app: &AppHandle, run: u64, sound: Sound, engine: Engine, target: Option<Spot>, selection: deliver::Selection) {
+    let session = app.state::<Session>();
+    let cancelled = || session.run.load(Ordering::SeqCst) != run;
+    let prefs = Settings::load();
+    let wav = match sound {
+        Sound::Recording(recorder) => recorder.finish(),
+        Sound::Wav(wav) => Ok(wav),
+    };
+    let heard = wav.and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
+    if cancelled() {
+        return;
+    }
+    let (state, message, text, expand) = match heard {
+        Ok(heard) if !heard.trim().is_empty() => {
+            working(app, run, "改寫中・再點一下取消");
+            let command = clean(&heard, &prefs);
+            match refine::rewrite(&selection.text, &command, &prefs.refine_url, &prefs.refine_model) {
+                _ if cancelled() => return,
+                Ok(rewritten) => {
+                    let text = correct(&deliver::convert_script(&rewritten, false), &prefs);
+                    let spot = target.unwrap_or_default();
+                    let outcome = deliver::deliver(&text, Mode::Insert, &mut Desktop::new(spot), &cancelled);
+                    if outcome.cancelled || cancelled() {
+                        return;
+                    }
+                    if outcome.inserted {
+                        deliver::give_back(&text, selection.clipboard.as_deref());
+                        ("done", format!("已照「{command}」改寫選取的文字"), text, false)
+                    } else {
+                        ("done", format!("已照「{command}」改寫・{}", outcome.message), text, outcome.expand)
+                    }
+                }
+                Err(failure) => ("error", format!("沒有改寫：{}", failure.sentence()), String::new(), false),
+            }
+        }
+        Ok(_) => ("error", "沒有聽到要怎麼改，選取的文字沒有變動".to_string(), String::new(), false),
+        Err(reason) => ("error", reason, String::new(), false),
+    };
+    deliver::end();
+    session.working.store(false, Ordering::SeqCst);
+    show(app, state, message, text, expand);
+}
+
+/// Ctrl+Alt+E: copies the selected text and starts recording the command for it; pressing it again sends.
+fn rewrite_key(app: &AppHandle) {
+    let session = app.state::<Session>();
+    if session.rewrite.lock().unwrap().is_some() {
+        if session.recorder.lock().unwrap().is_some() {
+            toggle(app);
+        }
+        return;
+    }
+    if busy(app) {
+        return;
+    }
+    let prefs = Settings::load();
+    if !prefs.rewrite_selection || refine::problem(&prefs.refine_url, &prefs.refine_model, secret::refine_exists()).is_some() {
+        return show(app, "error", "用語音改寫選取的文字，要先在設定的「語音」頁填好 AI 潤稿服務", "", false);
+    }
+    let app = app.clone();
+    std::thread::spawn(move || {
+        let taken = deliver::take_selection();
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let session = handle.state::<Session>();
+            match taken {
+                Some(selection) if !busy(&handle) => {
+                    *session.rewrite.lock().unwrap() = Some(selection);
+                    toggle(&handle);
+                    if session.recorder.lock().unwrap().is_some() {
+                        let message = format!("說出要怎麼改，例如「改得客氣一點」，再按一次 {} 送出", hotkey::REWRITE.label());
+                        show(&handle, "recording", message, "", false);
+                    } else {
+                        session.rewrite.lock().unwrap().take();
+                    }
+                }
+                Some(_) => {}
+                None => show(&handle, "error", "請先選取要改寫的文字，再按一次", "", false),
+            }
+        });
+    });
+}
+
 /// The mic button and the recording shortcut: start, stop, cancel, or retry on this computer.
 fn toggle(app: &AppHandle) {
     let session = app.state::<Session>();
     if session.working.swap(false, Ordering::SeqCst) {
         session.run.fetch_add(1, Ordering::SeqCst);
+        session.rewrite.lock().unwrap().take();
         deliver::end();
         idle(app, "已取消");
         return;
@@ -375,6 +487,7 @@ fn discard(app: &AppHandle) {
     session.working.store(false, Ordering::SeqCst);
     session.recorder.lock().unwrap().take();
     session.kept.lock().unwrap().take();
+    session.rewrite.lock().unwrap().take();
     deliver::end();
     idle(app, "");
 }
@@ -808,7 +921,11 @@ fn main() {
             tauri_plugin_global_shortcut::Builder::new()
                 .with_handler(|app, keys, event| {
                     let pressed = event.state() == ShortcutState::Pressed;
-                    if *keys == draft_keys() || *keys == last_keys() {
+                    if *keys == rewrite_keys() {
+                        if pressed {
+                            rewrite_key(app);
+                        }
+                    } else if *keys == draft_keys() || *keys == last_keys() {
                         if pressed && *keys == draft_keys() {
                             paste_draft(app);
                         } else if pressed {
@@ -898,6 +1015,7 @@ fn main() {
             }
             // Another program may hold this one; pasting the last dictation is then only in the window.
             let _ = app.global_shortcut().register(last_keys());
+            rewrite_follows(app.handle(), &Settings::load());
             build_tray(app)?;
             panel::follow_upgrade();
             panel::welcome_first_run(app.handle());

@@ -151,16 +151,27 @@ fn may_press_keys() -> bool {
 
 /// Presses Command+V. False when macOS has not been told this app may press keys.
 pub fn press_paste() -> bool {
+    /// The key in V's place on a US keyboard; programs read it together with Command.
+    const V: u16 = 9;
+    press_with_command(V)
+}
+
+/// Presses Command+C, so the program in front copies what is selected. False when the keys could not be sent.
+pub fn press_copy() -> bool {
+    /// The key in C's place on a US keyboard.
+    const C: u16 = 8;
+    press_with_command(C)
+}
+
+fn press_with_command(letter: u16) -> bool {
     if !may_press_keys() {
         return false;
     }
-    /// The key in V's place on a US keyboard; programs read it together with Command.
-    const V: u16 = 9;
     const WHOLE_SYSTEM: u32 = 0;
     // SAFETY: each event is checked, used and released here; a null source means the default one.
     unsafe {
-        let down = CGEventCreateKeyboardEvent(std::ptr::null(), V, true);
-        let up = CGEventCreateKeyboardEvent(std::ptr::null(), V, false);
+        let down = CGEventCreateKeyboardEvent(std::ptr::null(), letter, true);
+        let up = CGEventCreateKeyboardEvent(std::ptr::null(), letter, false);
         let made = !down.is_null() && !up.is_null();
         if made {
             CGEventSetFlags(down, COMMAND);
