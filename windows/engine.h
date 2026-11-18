@@ -143,6 +143,22 @@ inline Text syllableOrder(const Text& keys){
     }
     return parts[0]+parts[1]+parts[2]+parts[3];
 }
+// Keys in reading order that no syllable is spelled with, written the way the syllable is said: ㄅㄆㄇㄈ
+// take ㄛ and ㄥ without ㄨ (ㄈㄨㄥ is ㄈㄥ), and ㄐㄑㄒ, and ㄋㄌ before ㄝ, take ㄩ where ㄨ was typed
+// (ㄒㄨㄝ is ㄒㄩㄝ). Empty when the keys are none of these.
+inline Text standardSpelling(const Text& keys){
+    if(keys.size()<2 || keys[1]!=L'j')return {};
+    const wchar_t first=keys[0],third=keys.size()>2?keys[2]:L'\0';
+    Text fixed=keys;
+    if(std::wcschr(L"1qaz",first)){
+        if(third!=L'i' && third!=L'/')return {};
+        fixed.erase(1,1);
+        return fixed;
+    }
+    if(!std::wcschr(L"rfv",first) && !(std::wcschr(L"sx",first) && third==L','))return {};
+    fixed[1]=L'm';
+    return fixed;
+}
 struct Dictionary {
     std::map<wchar_t, Text> keys;
     std::map<Text, std::vector<Text>> byCode;
@@ -738,6 +754,11 @@ class Input {
         auto at=dict.byCode.lower_bound(keys);
         return at!=dict.byCode.end() && at->first.compare(0,keys.size(),keys)==0;
     }
+    // True when the keys begin a syllable once a spelling no syllable has is written the usual way.
+    bool startsRespelled(const Text& keys) const {
+        const Text fixed=standardSpelling(keys);
+        return !fixed.empty() && startsCode(fixed);
+    }
     // True when `keys`, typed at the start, may be the first keys of an earlier sentence.
     bool recallsFrom(const Text& keys) const {
         if(!sentences || !syllables.empty())return false;
@@ -759,11 +780,15 @@ class Input {
     }
     // With `settle` false, as when a tone has just been typed, keys that spell nothing yet do not ask
     // back a key given to the syllable before: the tone may have come a key early, and the next key tells.
-    bool finishSyllable(bool settle=true) {
+    // With `whole` true, as when the next key ends the syllable rather than Space or a tone, keys that
+    // are only a symbol of their own, such as a lone ㄐ, are not taken for a syllable.
+    bool finishSyllable(bool settle=true,bool whole=false) {
         if(raw.empty())return false;
         if(!spoken(raw)){
+            // A spelling no syllable has becomes the one that is said: ㄈㄨㄥ is ㄈㄥ, ㄒㄨㄝˊ is ㄒㄩㄝˊ.
+            if(const Text fixed=standardSpelling(raw);spoken(fixed))raw=fixed;
             // Keys typed out of order, or after a syllable that was ended too soon, are put in reading order.
-            if(const Text ordered=syllableOrder(raw);ordered!=raw && spoken(ordered))raw=ordered;
+            else if(const Text ordered=syllableOrder(raw);ordered!=raw && spoken(ordered))raw=ordered;
             else for(size_t count=loose;count>0;--count)
                 if(const Text joined=takenBack(count,raw);spoken(joined)){takeBack(count,joined);loose-=count;break;}
             // A key given to the syllable before goes to this one when only that makes it a syllable:
@@ -771,7 +796,7 @@ class Input {
             if(settle && !spoken(raw) && owed && !caret && !syllables.empty() && !owner(syllables.size()-1))
                 if(const Text joined=syllableOrder(Text(1,owed->key)+raw);spoken(joined)){syllables.back()=owed->syllable;raw=joined;}
         }
-        if(!dict.byCode.count(raw)) return false;
+        if(!dict.byCode.count(raw) || (whole && !spoken(raw))) return false;
         insertSyllable(raw); raw.clear(); return true;
     }
     // Keeps the characters around a choice as they are shown, so fixing one character in the middle
@@ -1161,7 +1186,7 @@ public:
             // follows them in reading order, so a first-tone syllable typed without Space still ends there.
             if(!toneKey && syllableOrder(raw)==raw && !recallsFrom(raw+ch)){
                 const int place=syllablePart(ch);
-                const bool said=spoken(raw);
+                const bool said=spoken(raw) || spoken(standardSpelling(raw));
                 bool filled=false,forward=true;
                 for(const wchar_t k:raw){const int at=syllablePart(k);if(at==place)filled=true;if(at>place)forward=false;}
                 const bool toned=toneOf(raw.back());
@@ -1171,7 +1196,8 @@ public:
                 };
                 if(!filled){
                     const Text joined=syllableOrder(raw+ch);
-                    if(forward?(startsCode(joined) || (!said && dict.reachable(joined))):(!said && dict.reachable(joined))){keep(joined);return {};}
+                    // ㄈㄨ then ㄥ, or ㄐ then ㄨ, is on its way to a syllable under its usual spelling.
+                    if(forward?(startsCode(joined) || startsRespelled(joined) || (!said && dict.reachable(joined))):(!said && dict.reachable(joined))){keep(joined);return {};}
                 } else if(!said && !toned){
                     // A second key for a part that is already filled replaces the first, as when the wrong
                     // initial was pressed: ㄉ then ㄊ is ㄊ.
@@ -1192,12 +1218,19 @@ public:
             // spell a first-tone syllable, as when Space was left out between two syllables.
             if(!toneKey && !startsCode(raw+ch) && !recallsFrom(raw+ch)){
                 const size_t before=syllables.size();
-                if(reattach() || finishSyllable()){
+                if(reattach() || finishSyllable(true,true)){
                     if(syllables.size()>before){implied=loose+1;lent.reset();}
                     raw=Text(1,ch);
                     return {};
                 }
             }
+        }
+        // Keys ended by a tone that still spell no syllable stay in the sentence as they were typed, so
+        // the keys after them begin the next syllable instead of piling up behind them.
+        if(!raw.empty() && toneOf(raw.back()) && !toneKey && !recallsFrom(raw+ch) && syllables.size()<128){
+            Text shown;
+            for(const wchar_t k:raw)if(const auto symbolOf=dict.keys.find(k);symbolOf!=dict.keys.end())shown+=symbolOf->second;
+            if(!shown.empty()){insertSyllable(Text(1,symbolMark)+shown);raw=Text(1,ch);return {};}
         }
         // A syllable is at most a few keys; a run of first keys recalling a sentence may be longer.
         if(raw.size()>=(syllables.empty()?size_t(16):size_t(5)) || syllables.size()>=128) return {};
