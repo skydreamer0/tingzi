@@ -140,11 +140,53 @@ pub fn reshape(app: &AppHandle, layout: Layout) {
 }
 
 /// Shortens the pill while a dictation is recorded or recognised, and lengthens it again for the result.
+/// A dictation that starts while the pill or the editor is open folds them first; see `shrink_for_work`.
 pub fn shorten(app: &AppHandle, short: bool) {
-    let refit = app.state::<Mutex<Place>>().lock().map(|mut place| std::mem::replace(&mut place.short, short) != short && place.layout == Layout::Bar).unwrap_or(false);
-    if refit {
-        place(app, Layout::Bar);
+    let changed = app.state::<Mutex<Place>>().lock().ok().and_then(|mut place| (std::mem::replace(&mut place.short, short) != short).then_some(place.layout));
+    let Some(layout) = changed else { return };
+    // Any change stops a shrink that is still waiting for its fold.
+    SHRINK.fetch_add(1, Ordering::SeqCst);
+    match layout {
+        Layout::Bar | Layout::Editor if short => shrink_for_work(app, layout),
+        Layout::Bar => place(app, Layout::Bar),
+        _ => {}
     }
+}
+
+/// How long the page takes to roll the editor card back into the pill: `motion.fast` in
+/// assets/design/tokens.json, which app.js and style.css read too.
+const CARD_MS: u64 = 140;
+
+/// Counts the shrinks for a dictation; a newer one, or the dictation ending, makes an older one stand down.
+static SHRINK: AtomicU64 = AtomicU64::new(0);
+/// The shrink still waiting for the page's fold, or 0.
+static PENDING: AtomicU64 = AtomicU64::new(0);
+
+/// Whether the window is waiting for the page to fold before it shrinks for a dictation.
+pub fn shrinking() -> bool {
+    let pending = PENDING.load(Ordering::SeqCst);
+    pending != 0 && pending == SHRINK.load(Ordering::SeqCst)
+}
+
+/// Shrinks the open pill, or the editor, to the short pill of a dictation. The page rolls the card up and
+/// folds the pill's far end back to the short length first, then the window shrinks behind them.
+fn shrink_for_work(app: &AppHandle, from: Layout) {
+    let round = SHRINK.fetch_add(1, Ordering::SeqCst) + 1;
+    PENDING.store(round, Ordering::SeqCst);
+    let wait = if from == Layout::Editor { CARD_MS + FOLD_MS } else { FOLD_MS };
+    let _ = app.emit("shorten", Layout::Bar.size(true).0);
+    let app = app.clone();
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(wait));
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let _ = PENDING.compare_exchange(round, 0, Ordering::SeqCst, Ordering::SeqCst);
+            let still = handle.state::<Mutex<Place>>().lock().map(|place| place.short && place.layout == from).unwrap_or(false);
+            if still && SHRINK.load(Ordering::SeqCst) == round {
+                place(&handle, Layout::Bar);
+            }
+        });
+    });
 }
 
 /// Whether the pill is open only for a dictation from the keycap, and so folds back by itself.
@@ -352,6 +394,12 @@ mod tests {
     fn the_fold_takes_as_long_as_the_page_plays_it() {
         let tokens: serde_json::Value = serde_json::from_str(include_str!("../../../assets/design/tokens.json")).unwrap();
         assert_eq!(tokens["motion"]["base"].as_u64(), Some(FOLD_MS));
+    }
+
+    #[test]
+    fn the_card_rolls_up_as_fast_as_the_page_plays_it() {
+        let tokens: serde_json::Value = serde_json::from_str(include_str!("../../../assets/design/tokens.json")).unwrap();
+        assert_eq!(tokens["motion"]["fast"].as_u64(), Some(CARD_MS));
     }
 
     #[test]

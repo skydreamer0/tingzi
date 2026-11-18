@@ -141,6 +141,8 @@ fn show(app: &AppHandle, state: &'static str, message: impl Into<String>, text: 
         "done" if expand => layout::reshape(app, Layout::Editor),
         // A dictation started from the keycap opens the pill for as long as it runs.
         "recording" | "working" if now != Layout::Editor => layout::open_for_work(app),
+        // The editor rolls up into the short pill first; the window shrinks once that has played.
+        "recording" | "working" if layout::shrinking() => {}
         // A problem keeps the pill open until the user deals with it.
         "error" | "retry" if now != Layout::Editor => layout::reshape(app, Layout::Bar),
         _ if now == Layout::Editor => layout::reshape(app, Layout::Bar),
