@@ -601,6 +601,29 @@ class Input {
     }
     // Text to the left of a syllable. Preferences read their own left context, so they ask without them.
     Text leftOf(size_t pos,bool withPreferences=true) const {return pos?cut(pos,false,withPreferences):Text();}
+    // True when some syllable is spelled by keys that begin with `keys`.
+    bool startsCode(const Text& keys) const {
+        auto at=dict.byCode.lower_bound(keys);
+        return at!=dict.byCode.end() && at->first.compare(0,keys.size(),keys)==0;
+    }
+    // True when `keys`, typed at the start, may be the first keys of an earlier sentence.
+    bool recallsFrom(const Text& keys) const {
+        if(!sentences || !syllables.empty())return false;
+        return std::any_of(sentences->begin(),sentences->end(),[&](const Sentence& said){return said.codes.rfind(keys,0)==0;});
+    }
+    // A single key left over after a toned syllable, and followed straight away by the next syllable,
+    // is the last key of that syllable typed after its tone: ㄨˇ then ㄛ is ㄨㄛˇ. Typed with its own
+    // Space or tone, the key stays a syllable of its own, as in ㄨˇ ㄢ.
+    bool reattach() {
+        if(raw.size()!=1 || caret || syllables.empty() || symbol(syllables.back()) || owner(syllables.size()-1))return false;
+        const Text& last=syllables.back();
+        const wchar_t tone=last.back();
+        if(!(tone==L'3'||tone==L'4'||tone==L'6'||tone==L'7'))return false;
+        const Text joined=last.substr(0,last.size()-1)+raw+tone;
+        if(!dict.byCode.count(joined))return false;
+        syllables.back()=joined;raw.clear();
+        return true;
+    }
     bool finishSyllable() {
         if(raw.empty() || !dict.byCode.count(raw)) return false;
         insertSyllable(raw); raw.clear(); return true;
@@ -974,10 +997,26 @@ public:
             return scripted(result);
         }
         wchar_t ch=codeKey(key,layout);
+        const bool toneKey=ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7';
+        if(!raw.empty() && syllables.size()<128){
+            // A tone pressed a moment before the syllable's last key, as fast typing does: the last key
+            // goes before the tone that is already waiting.
+            const wchar_t last=raw.back();
+            if(!toneKey && (last==L'3'||last==L'4'||last==L'6'||last==L'7')){
+                const Text swapped=raw.substr(0,raw.size()-1)+ch+last;
+                if(dict.byCode.count(swapped)){raw=swapped;finishSyllable();return {};}
+            }
+            // A key that cannot continue the syllable starts the next one when the keys so far already
+            // spell a first-tone syllable, as when Space was left out between two syllables.
+            if(!toneKey && !startsCode(raw+ch) && !recallsFrom(raw+ch) && (reattach() || finishSyllable())){
+                raw=Text(1,ch);
+                return {};
+            }
+        }
         // A syllable is at most a few keys; a run of first keys recalling a sentence may be longer.
         if(raw.size()>=(syllables.empty()?size_t(16):size_t(5)) || syllables.size()>=128) return {};
         raw+=ch;
-        if(ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7') finishSyllable();
+        if(toneKey) finishSyllable();
         return {};
     }
 };

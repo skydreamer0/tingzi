@@ -120,6 +120,19 @@ int wmain(int argc,wchar_t** argv) {
     enter("W83");input.press(VK_DOWN);input.press(VK_TAB);options=input.choices();
     expect(std::any_of(options.begin(),options.end(),[](const Choice& c){return c.text==L"打";}),"near sounds include a key beside the one pressed");
     input.clear();
+    // Fast typing: keys a moment out of order, or a first-tone Space left out.
+    enter("J3I");enter("CL3");
+    expect(input.preview()==L"我好","a final typed just after its tone joins the syllable before");
+    input.clear();
+    enter("S3U");
+    expect(input.preview()==L"你","a tone pressed before the last key waits for it");
+    input.clear();
+    enter("RUPWU0 ");
+    expect(input.preview()==L"今天","a key that cannot continue a first-tone syllable starts the next one");
+    input.clear();
+    enter("J30 ");
+    expect(input.preview()==L"午安","a final typed with its own Space stays a syllable of its own");
+    input.clear();
 
     enter("SU3CL3");input.press(VK_DOWN);
     options=input.choices();

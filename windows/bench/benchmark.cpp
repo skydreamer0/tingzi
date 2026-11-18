@@ -56,16 +56,22 @@ std::vector<Piece> pieces(const Text& reading){
     std::vector<Piece> out;
     for(const auto& token:fields(reading,L' ')){
         if(token.empty())continue;
-        const bool latin=!zhuyin(token[0]);
+        const bool latin=!zhuyin(token[0]) && !(token.size()>1 && token[0]==L'^' && zhuyin(token[1]));
         if(latin || out.empty() || out.back().latin)out.push_back({latin,{},{}});
         if(latin)out.back().text=token;else out.back().syllables.push_back(token);
     }
     return out;
 }
 // The keys for one syllable on the standard layout; a syllable without a tone mark ends with Space.
-std::vector<WPARAM> keysFor(const Dictionary& d,const Text& syllable,bool& known){
+// Two marks describe fast typing: a leading ^ presses the tone before the syllable's last key, and a
+// trailing ! leaves out the Space that ends a first-tone syllable.
+std::vector<WPARAM> keysFor(const Dictionary& d,Text syllable,bool& known){
     static std::map<Text,wchar_t> byName;
     if(byName.empty())for(const auto& [key,name]:d.keys)byName[name]=key;
+    const bool early=!syllable.empty() && syllable.front()==L'^';
+    const bool noSpace=!syllable.empty() && syllable.back()==L'!';
+    if(early)syllable.erase(0,1);
+    if(noSpace)syllable.pop_back();
     std::vector<WPARAM> keys;
     for(wchar_t ch:syllable){
         auto found=byName.find(Text(1,ch));
@@ -81,7 +87,9 @@ std::vector<WPARAM> keysFor(const Dictionary& d,const Text& syllable,bool& known
         if(vk)keys.push_back(vk);
     }
     const wchar_t last=syllable.empty()?0:syllable.back();
-    if(last!=L'ˊ' && last!=L'ˇ' && last!=L'ˋ' && last!=L'˙')keys.push_back(VK_SPACE);
+    const bool toned=last==L'ˊ' || last==L'ˇ' || last==L'ˋ' || last==L'˙';
+    if(!toned && !noSpace)keys.push_back(VK_SPACE);
+    if(early && toned && keys.size()>=3)std::swap(keys[keys.size()-1],keys[keys.size()-2]);
     return keys;
 }
 std::vector<WPARAM> keysFor(const Dictionary& d,const std::vector<Text>& syllables,bool& known){
