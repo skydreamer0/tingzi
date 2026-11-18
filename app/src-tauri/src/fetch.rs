@@ -36,6 +36,9 @@ struct Item {
     url: &'static str,
     size: u64,
     sha256: &'static str,
+    /// The release a program comes from, kept beside it so a newer one in this list can be offered.
+    /// Empty for models, which do not change once downloaded.
+    version: &'static str,
     place: Place,
 }
 
@@ -51,6 +54,7 @@ const MODELS: &[Item] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-small.bin",
         size: 487_601_967,
         sha256: "1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b",
+        version: "",
         place: Place::Model("ggml-small.bin"),
     },
     Item {
@@ -62,6 +66,7 @@ const MODELS: &[Item] = &[
         url: "https://huggingface.co/alan314159/Breeze-ASR-25-whispercpp/resolve/c7f120183c8e8ad932f315e04e3d0359d839702d/ggml-model-q8_0.bin",
         size: 1_656_129_708,
         sha256: "669eb226a0e23b42465a6d2f60ce1902fbd534e19faab59511730420eb25e90d",
+        version: "",
         place: Place::Model("ggml-breeze-asr-25-q8_0.bin"),
     },
     Item {
@@ -73,6 +78,7 @@ const MODELS: &[Item] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-large-v3-turbo-q5_0.bin",
         size: 574_041_195,
         sha256: "394221709cd5ad1f40c46e6031ca61bce88931e6e088c188294c6d5a55ffa7e2",
+        version: "",
         place: Place::Model("ggml-large-v3-turbo-q5_0.bin"),
     },
     Item {
@@ -84,6 +90,7 @@ const MODELS: &[Item] = &[
         url: "https://huggingface.co/ggerganov/whisper.cpp/resolve/5359861c739e955e79d9a303bcbc70fb988958b1/ggml-base.bin",
         size: 147_951_465,
         sha256: "60ed5bc3dd14eea856493d334349b405782ddcaf0028d4b5df4088345fba2efe",
+        version: "",
         place: Place::Model("ggml-base.bin"),
     },
 ];
@@ -103,6 +110,7 @@ const PROGRAMS: &[Item] = &[
         url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-x64.zip",
         size: 8_928_640,
         sha256: "6ba69e3482d7826214f90a6a9c84ca07782aec1e1d0c6a7c30c994fd5d816ccb",
+        version: "b5454",
         place: Place::Program(CPU_FOLDER),
     },
     Item {
@@ -114,9 +122,48 @@ const PROGRAMS: &[Item] = &[
         url: "https://github.com/ggml-org/whisper.cpp/releases/download/b5454/whisper-bin-win-cuda-12.4.0-x64.zip",
         size: 684_913_404,
         sha256: "afef0b881c500958921c3f5523b50e59ee2ec9b6f5cbd25b324c51ed308a957a",
+        version: "b5454",
         place: Place::Program(GPU_FOLDER),
     },
 ];
+
+/// The file in a program's folder that names its release.
+const VERSION_FILE: &str = "tingzi-version.txt";
+/// Programs downloaded before the release was written down came from the first one listed.
+const FIRST_VERSION: &str = "b5454";
+
+/// The release of the program in `folder` under `root`; None when it is not there.
+fn installed_version(root: &Path, folder: &str) -> Option<String> {
+    let home = root.join(folder);
+    if !home.join("Release").join("whisper-cli.exe").is_file() {
+        return None;
+    }
+    let named = std::fs::read_to_string(home.join(VERSION_FILE)).ok().map(|text| text.trim().to_string()).filter(|text| !text.is_empty());
+    Some(named.unwrap_or_else(|| FIRST_VERSION.to_string()))
+}
+
+/// A newer program in the list than the one on this computer.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ProgramUpdate {
+    id: &'static str,
+    title: &'static str,
+    from: String,
+    to: &'static str,
+    size: String,
+}
+
+/// The programs in the app's own folder that this list has a newer release of.
+fn updates(root: &Path) -> Vec<ProgramUpdate> {
+    let programs = if cfg!(windows) { PROGRAMS } else { &[] };
+    programs
+        .iter()
+        .filter_map(|item| {
+            let Place::Program(folder) = item.place else { return None };
+            let from = installed_version(root, folder).filter(|from| from != item.version)?;
+            Some(ProgramUpdate { id: item.id, title: item.title, from, to: item.version, size: human(item.size) })
+        })
+        .collect()
+}
 
 fn item(id: &str) -> Option<&'static Item> {
     let programs = if cfg!(windows) { PROGRAMS } else { &[] };
@@ -164,6 +211,8 @@ pub struct LocalState {
     gpu_offer: Option<String>,
     /// The item being downloaded now.
     busy: Option<String>,
+    /// Programs with a newer release in this list.
+    updates: Vec<ProgramUpdate>,
 }
 
 #[tauri::command(async)]
@@ -187,6 +236,7 @@ pub fn local_state(fetching: State<'_, Fetching>) -> LocalState {
         gpu_ready,
         gpu_offer: item(GPU_ID).filter(|_| offered).map(|item| human(item.size)),
         busy: fetching.0.lock().unwrap().as_ref().map(|(id, _)| id.clone()),
+        updates: updates(&recognise::own_root()),
         files,
     }
 }
@@ -226,11 +276,18 @@ pub fn local_fetch(app: AppHandle, fetching: State<'_, Fetching>, id: String) ->
         _ => {}
     }
     plan.push(wanted);
-    let mut question = format!("要下載「{}」嗎？\n\n來源：{}\n大小：{}\n授權：{}", wanted.title, wanted.source, human(wanted.size), wanted.licence);
+    let update = updates(&recognise::own_root()).into_iter().find(|update| update.id == wanted.id);
+    let mut question = match &update {
+        Some(update) => format!(
+            "要把「{}」從 {} 更新到 {} 嗎？\n\n來源：{}\n大小：{}\n授權：{}\n\n已下載的模型照常使用，不用重新下載。",
+            wanted.title, update.from, update.to, wanted.source, human(wanted.size), wanted.licence
+        ),
+        None => format!("要下載「{}」嗎？\n\n來源：{}\n大小：{}\n授權：{}", wanted.title, wanted.source, human(wanted.size), wanted.licence),
+    };
     if let [program, _] = plan[..] {
         question += &format!("\n\n第一次使用還會下載{}（{}，{}，{}）。", program.title, human(program.size), program.source, program.licence);
     }
-    question += "\n\n下載後會核對檔案並試跑一次，通過才會使用。";
+    question += if update.is_some() { "\n\n下載後會核對檔案並用已下載的模型試跑一次，通過才會換成新版；沒通過時繼續使用目前的版本。" } else { "\n\n下載後會核對檔案並試跑一次，通過才會使用。" };
     if !crate::sys::confirm(crate::sys::owner(app.get_webview_window("settings")), &question) {
         return Ok(false);
     }
@@ -335,22 +392,28 @@ fn get(item: &'static Item, root: &Path, cancelled: &dyn Fn() -> bool, tell: &dy
             step("unpack", item.size);
             let fresh = root.join(format!("{folder}.new"));
             let outcome = unpack(&part, &fresh).and_then(|program| {
+                let model = recognise::local_parts(Settings::load().local_model.as_deref(), false).map(|parts| parts.model);
                 if folder != GPU_FOLDER {
-                    return Ok(());
+                    // A newer program is tried with the model already here, so that model keeps working.
+                    let Some(model) = model else { return Ok(()) };
+                    step("trial", item.size);
+                    return match recognise::trial(&Parts { program, model, gpu: false }, cancelled) {
+                        Ok(_) => Ok(()),
+                        Err(reason) if reason == CANCELLED => Err(reason),
+                        Err(_) => Err("新版辨識程式用目前的模型試跑沒有成功，沒有更新；繼續使用目前的版本。".into()),
+                    };
                 }
                 step("trial", item.size);
-                let model = recognise::local_parts(Settings::load().local_model.as_deref(), false).ok_or("請先下載一個模型，再下載顯示卡加速。")?.model;
+                let model = model.ok_or("請先下載一個模型，再下載顯示卡加速。")?;
                 match recognise::trial(&Parts { program, model, gpu: true }, cancelled) {
                     Ok(true) => Ok(()),
                     Err(reason) if reason == CANCELLED => Err(reason),
                     _ => Err("這台電腦的顯示卡試跑沒有成功，沒有保留；本機辨識仍使用 CPU。請更新 NVIDIA 驅動程式後再試。".into()),
                 }
             });
-            let placed = outcome.and_then(|()| {
-                let home = root.join(folder);
-                let _ = std::fs::remove_dir_all(&home);
-                std::fs::rename(&fresh, &home).map_err(|_| "無法存放下載的程式。".to_string())
-            });
+            let placed = outcome
+                .and_then(|()| std::fs::write(fresh.join(VERSION_FILE), item.version).map_err(|_| "無法存放下載的程式。".to_string()))
+                .and_then(|()| replace(&fresh, &root.join(folder)));
             let _ = std::fs::remove_dir_all(&fresh);
             // A cancelled trial keeps the checked archive, so the next try does not download it again.
             if !matches!(&placed, Err(reason) if reason == CANCELLED) {
@@ -359,6 +422,25 @@ fn get(item: &'static Item, root: &Path, cancelled: &dyn Fn() -> bool, tell: &dy
             placed
         }
     }
+}
+
+/// Puts `fresh` where `home` was. The old folder is moved aside first and put back if that fails,
+/// so a program that is running, which Windows will not let go of, stays as it was.
+fn replace(fresh: &Path, home: &Path) -> Result<(), String> {
+    if !home.exists() {
+        return std::fs::rename(fresh, home).map_err(|_| "無法存放下載的程式。".to_string());
+    }
+    let aside = home.with_extension("old");
+    let _ = std::fs::remove_dir_all(&aside);
+    if std::fs::rename(home, &aside).is_err() {
+        return Err("辨識程式正在使用中，請等這一句辨識完再試一次。".into());
+    }
+    if std::fs::rename(fresh, home).is_err() {
+        let _ = std::fs::rename(&aside, home);
+        return Err("無法存放下載的程式。".into());
+    }
+    let _ = std::fs::remove_dir_all(&aside);
+    Ok(())
 }
 
 /// Unpacks a zip of the Whisper program into an empty `folder` and returns the program inside it.
@@ -510,6 +592,40 @@ mod tests {
         }
         // A model address names a revision, so a later change upstream cannot break the download.
         assert!(MODELS.iter().all(|item| item.url.contains("/resolve/") && !item.url.contains("/resolve/main/")));
+    }
+
+    #[test]
+    fn a_program_from_an_older_release_is_offered_again() {
+        let root = scratch("updates").parent().unwrap().to_path_buf();
+        assert_eq!(installed_version(&root, CPU_FOLDER), None);
+        let release = root.join(CPU_FOLDER).join("Release");
+        std::fs::create_dir_all(&release).unwrap();
+        std::fs::write(release.join("whisper-cli.exe"), b"").unwrap();
+        // Downloaded before releases were written down.
+        assert_eq!(installed_version(&root, CPU_FOLDER).as_deref(), Some(FIRST_VERSION));
+        std::fs::write(root.join(CPU_FOLDER).join(VERSION_FILE), "b0001\n").unwrap();
+        assert_eq!(installed_version(&root, CPU_FOLDER).as_deref(), Some("b0001"));
+        if cfg!(windows) {
+            let offered = updates(&root);
+            assert_eq!(offered.len(), 1);
+            assert_eq!((offered[0].id, offered[0].from.as_str()), ("cpu", "b0001"));
+        }
+        std::fs::write(root.join(CPU_FOLDER).join(VERSION_FILE), item("cpu").map_or("b5454", |item| item.version)).unwrap();
+        assert!(updates(&root).is_empty());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn replacing_a_program_keeps_the_old_one_until_the_new_one_is_in_place() {
+        let root = scratch("replace").parent().unwrap().to_path_buf();
+        let (home, fresh) = (root.join("engine"), root.join("engine.new"));
+        std::fs::create_dir_all(&home).unwrap();
+        std::fs::write(home.join("old.txt"), b"old").unwrap();
+        std::fs::create_dir_all(&fresh).unwrap();
+        std::fs::write(fresh.join("new.txt"), b"new").unwrap();
+        replace(&fresh, &home).unwrap();
+        assert!(home.join("new.txt").is_file() && !home.join("old.txt").exists() && !fresh.exists() && !root.join("engine.old").exists());
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

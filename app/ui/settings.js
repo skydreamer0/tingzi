@@ -179,6 +179,7 @@ function showEngine() {
   byId('engine-note').textContent = engineNotes[engine]();
   byId('local-model-row').hidden = engine !== 'local';
   byId('gpu-row').hidden = engine !== 'local' || !(local.gpu_ready || local.gpu_offer);
+  byId('update-row').hidden = engine !== 'local' || !local.updates.length;
   for (const row of document.querySelectorAll('.model-row')) row.hidden = engine !== 'local';
   for (const id of ['api-url-row', 'api-model-row', 'api-key-row']) byId(id).hidden = engine !== 'api';
 }
@@ -221,6 +222,14 @@ function showLocal() {
   byId('gpu-note').textContent = local.gpu_ready
     ? '用顯示卡辨識，大的模型也不用久等。顯示卡出問題時，那一句會自動改用 CPU。'
     : '這台電腦有 NVIDIA 顯示卡。下載加速元件後，大的模型也不用久等。';
+
+  // One newer program at a time; the next one shows once this one is done.
+  const update = local.updates[0];
+  if (update) {
+    byId('update-note').textContent = `「${update.title}」目前是 ${update.from}，可以更新到 ${update.to}。已下載的模型照常使用，不用重新下載。`;
+    byId('update-get').textContent = `更新（${update.size}）`;
+    byId('update-get').disabled = Boolean(local.busy);
+  }
 
   for (const row of document.querySelectorAll('.model-row')) row.remove();
   for (const model of local.models) {
@@ -277,6 +286,7 @@ async function fetchItem(id) {
   }
 }
 byId('gpu-get').addEventListener('click', () => fetchItem('gpu'));
+byId('update-get').addEventListener('click', () => local.updates[0] && fetchItem(local.updates[0].id));
 byId('fetch-cancel').addEventListener('click', () => {
   byId('fetch-cancel').disabled = true;
   byId('fetch-note').textContent = '正在取消…';
@@ -293,11 +303,14 @@ listen('local-fetch', async ({ payload }) => {
     if (!byId('fetch-cancel').disabled) byId('fetch-note').textContent = fetchSteps[stage] || `下載中 ${megabytes(done)} / ${megabytes(total)} MB`;
     return;
   }
+  // Whether the program just finished was an update, known before the list is read again.
+  const updated = local.updates.some(update => update.id === id);
   await readLocal();
   if (stage === 'failed') return say(note);
   if (stage === 'cancelled') return say('已取消。已下載的部分會保留，再按一次「下載」會接續。');
   // What was just downloaded is put to use at once.
   const model = local.models.find(model => model.id === id);
+  if (updated) return say(`「${title}」已更新並通過試跑，現在開始使用。`, true);
   if (model) {
     byId('local-model').value = model.file;
     store(byId('local-model'));
