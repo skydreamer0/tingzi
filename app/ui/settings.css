@@ -77,7 +77,7 @@ select, input[type="text"], input[type="password"] {
   background: var(--input);
 }
 select.wide, input.wide { flex: none; width: 250px; }
-/* The one multi-line field, the AI refinement note; it grows downward only. */
+/* Multi-line fields, the AI refinement note and the problem report; they grow downward only. */
 textarea {
   padding: 6px 10px;
   border: 1px solid var(--border);
@@ -184,6 +184,9 @@ dialog::backdrop { background: rgb(10 12 30 / 0.45); }
 #words-status, .said { min-height: 20px; margin: 8px 0 12px; font-size: var(--font-sm); color: var(--muted); }
 /* The choices of a per-program rule; the tone takes a whole row. */
 #rule-program { margin-bottom: 8px; }
+/* The problem report fills the dialog so the whole record can be read and edited. */
+#report { width: min(700px, calc(100vw - 48px)); }
+#report-text { flex: 1; min-height: 200px; width: 100%; box-sizing: border-box; font-family: ui-monospace, Consolas, monospace; font-size: var(--font-sm); white-space: pre; }
 .choices { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 12px; }
 .choices label { display: flex; flex-direction: column; gap: 4px; font-size: var(--font-sm); color: var(--muted); }
 .choices select, .choices input { color: var(--text); }

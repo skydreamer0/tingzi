@@ -308,7 +308,10 @@ pub fn local_fetch(app: AppHandle, fetching: State<'_, Fetching>, id: String) ->
         let (stage, note) = match outcome {
             Ok(()) => ("done", String::new()),
             Err(reason) if reason == CANCELLED => ("cancelled", String::new()),
-            Err(reason) => ("failed", reason),
+            Err(reason) => {
+                crate::report::note(format!("下載「{}」失敗：{reason}", wanted.title));
+                ("failed", reason)
+            }
         };
         tell(Progress { id: wanted.id, stage, title: wanted.title, done: 0, total: 0, note });
     });

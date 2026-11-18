@@ -255,8 +255,8 @@
             <div class="what"><span class="name">專案首頁</span><p>原始碼、說明文件與更新紀錄。</p></div>
             <button id="open-home" type="button" class="button" aria-label="開啟專案首頁">開啟</button></div>
           <div class="row">
-            <div class="what"><span class="name">回報問題</span><p>在 GitHub 提出錯誤或建議。</p></div>
-            <button id="open-issues" type="button" class="button" aria-label="開啟問題回報頁">開啟</button></div>
+            <div class="what"><span class="name">回報問題</span><p>整理好版本、系統、設定和最近的操作記錄，先給你看過，再到 GitHub 送出。不含辨識的文字、錄音和金鑰。</p></div>
+            <div class="group"><button id="open-issues" type="button" class="button" aria-label="查看已回報的問題">查看已回報的</button><button id="open-report" type="button" class="button primary">回報問題…</button></div></div>
         </div>
         <h2>授權</h2>
         <div class="card">
@@ -371,6 +371,20 @@
     <div class="group end">
       <button id="learned-remove" type="button" class="button">刪除選取</button>
       <button id="learned-close" type="button" class="button">關閉</button>
+    </div>
+  </dialog>
+
+  <dialog id="report" aria-labelledby="report-title">
+    <h1 id="report-title">回報問題</h1>
+    <p class="note">下面是要附在回報裡的內容：聽字版本、系統、你的設定，以及最近的操作記錄（何時辨識、花了多久、哪裡失敗）。裡面沒有你說的話或打的字、錄音和金鑰，資料夾裡的使用者名稱也已換掉。送出前可以直接在框裡刪改。</p>
+    <textarea id="report-text" rows="14" spellcheck="false" aria-label="回報內容"></textarea>
+    <p class="note">按「到 GitHub 回報」會複製這些內容，並在瀏覽器開啟已填好的回報頁；請補上發生了什麼事、怎麼操作的，再按送出。回報會公開在 GitHub 上。沒有 GitHub 帳號的話，可以存成檔案再寄給別人幫忙。</p>
+    <p id="report-status" class="said" role="status" aria-live="polite"></p>
+    <div class="group end">
+      <button id="report-save" type="button" class="button">存成檔案</button>
+      <button id="report-copy" type="button" class="button">複製</button>
+      <button id="report-send" type="button" class="button primary">到 GitHub 回報</button>
+      <button id="report-close" type="button" class="button">關閉</button>
     </div>
   </dialog>
   <script src="settings.js"></script>

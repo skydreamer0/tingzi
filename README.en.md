@@ -120,6 +120,8 @@ With AI refinement on, Tingzi sends the recognized **text** (not the audio), wit
 
 While automatic updates are on (關於 About page), Tingzi asks GitHub at most once a day whether a new version exists, sending only the current version number. With them off, it doesn't connect on its own.
 
+Tingzi keeps an activity record, `tingzi-log.txt`, in your personal folder, to help with problem reports. It notes when and how a recording started (shortcut, window button or menu), which program the text was for, which method was used, how long it took, and what failed or crashed. It holds nothing you said or typed, no audio and no keys, and stays on your computer; past 256 KB it starts a new file and keeps only one older one. Press 回報問題… (Report a problem) on the 關於 (About) page or in the tray menu to see what a report would include and edit it. Only 到 GitHub 回報 (Report on GitHub) opens the issue page in your browser, and you decide whether to submit it.
+
 ## Documentation
 
 The documents below are in Traditional Chinese.
@@ -134,7 +136,7 @@ The documents below are in Traditional Chinese.
 
 ## Contributing
 
-Bug reports and changes are welcome. When reporting a problem, include the Tingzi version, the Windows version, the steps you took, and what you expected and saw. Use made-up examples instead of real recordings or private word lists. See the [contributing guide](CONTRIBUTING.md) for the process. Please don't report security issues in public; follow the [security policy](SECURITY.md) instead.
+Bug reports and changes are welcome. The easiest way to report a problem is 回報問題… (Report a problem) on the 關於 (About) settings page: Tingzi gathers the version, system, settings and recent activity record, and you add the steps you took and what you expected and saw. Use made-up examples instead of real recordings or private word lists. See the [contributing guide](CONTRIBUTING.md) for the process. Please don't report security issues in public; follow the [security policy](SECURITY.md) instead.
 
 Tingzi has two parts. `windows/` is the Windows text service (the Zhuyin input method), written in C++. `app/` is the voice window and settings, written in Rust with Tauri 2. With Rust and the Visual Studio C++ tools installed on Windows, you can start by running the voice window's tests:
 

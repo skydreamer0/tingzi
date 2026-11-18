@@ -287,6 +287,21 @@ pub fn in_codex_message_box(process: u32) -> bool {
     }
 }
 
+/// The Windows edition and release as people know it, such as `Windows 11 24H2（組建 26100）`.
+pub fn system_version() -> String {
+    let key = RegKey::predef(winreg::enums::HKEY_LOCAL_MACHINE).open_subkey(r"SOFTWARE\Microsoft\Windows NT\CurrentVersion");
+    let read = |name: &str| key.as_ref().ok().and_then(|key| key.get_value::<String, _>(name).ok()).unwrap_or_default();
+    let build = read("CurrentBuild");
+    // Windows 11 still calls itself Windows 10 in ProductName; its builds start at 22000.
+    let name = if build.parse::<u32>().is_ok_and(|number| number >= 22000) { "Windows 11" } else { "Windows 10" };
+    let release = read("DisplayVersion");
+    match (release.is_empty(), build.is_empty()) {
+        (_, true) => "Windows".into(),
+        (true, false) => format!("{name}（組建 {build}）"),
+        (false, false) => format!("{name} {release}（組建 {build}）"),
+    }
+}
+
 // ---- Dialogs
 
 /// The product's name on this system, for window titles and dialogs.
