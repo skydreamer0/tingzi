@@ -120,6 +120,17 @@ int wmain(int argc,wchar_t** argv) {
     enter("W83");input.press(VK_DOWN);input.press(VK_TAB);options=input.choices();
     expect(std::any_of(options.begin(),options.end(),[](const Choice& c){return c.text==L"打";}),"near sounds include a key beside the one pressed");
     input.clear();
+    auto nearHas=[&](const char* keys,const wchar_t* wanted){
+        enter(keys);input.press(VK_DOWN);input.press(VK_TAB);
+        const auto list=input.choices();
+        input.clear();
+        return std::any_of(list.begin(),list.end(),[&](const Choice& c){return c.text==wanted;});
+    };
+    expect(nearHas("CJ8 ",L"發") && nearHas("Z8 ",L"花"),"near sounds pair ㄏㄨ before a final with ㄈ");
+    expect(nearHas("2JI ",L"都"),"near sounds pair ㄡ with ㄨㄛ");
+    expect(nearHas("HJ ",L"吃") && nearHas("G ",L"蘇"),"near sounds pair ㄘㄨ and ㄙㄨ with ㄔ and ㄕ");
+    expect(nearHas("EK ",L"勾"),"near sounds pair ㄜ with ㄡ");
+    input.clear();
     // Fast typing: keys a moment out of order, or a first-tone Space left out.
     enter("J3I");enter("CL3");
     expect(input.preview()==L"我好","a final typed just after its tone joins the syllable before");

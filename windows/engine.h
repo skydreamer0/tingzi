@@ -579,12 +579,21 @@ class Input {
         Text base=code; wchar_t tone=0;
         if(!base.empty() && std::wcschr(L"3467",base.back())){tone=base.back();base.pop_back();}
         std::vector<Text> bases{base};
-        static constexpr const wchar_t* pairs[]={L"5y",L"th",L"gn",L"sx",L"zc",L"bx",L"p/",L"0;"};
-        for(size_t p=0;p<8 && !base.empty();++p) for(int d=0;d<2;++d){
+        static constexpr const wchar_t* pairs[]={L"5y",L"th",L"gn",L"sx",L"zc",L"bx",L"p/",L"0;",L"k."};
+        for(size_t p=0;p<9 && !base.empty();++p) for(int d=0;d<2;++d){
             Text variant=base;
             wchar_t& slot=p<6?variant.front():variant.back();
             if(slot==pairs[p][d]){slot=pairs[p][1-d];bases.push_back(variant);}
         }
+        // Confusions that change more than one symbol: ㄏㄨ before a final and ㄈ (ㄏㄨㄚ, ㄈㄚ), ㄡ and ㄨㄛ
+        // after an initial (ㄉㄡ, ㄉㄨㄛ), and ㄘㄨ, ㄙㄨ said for ㄔ, ㄕ.
+        const size_t size=base.size();
+        if(size>=3 && base[0]==L'c' && base[1]==L'j')bases.push_back(L"z"+base.substr(2));
+        if(size>=2 && base[0]==L'z' && syllablePart(base[1])==2)bases.push_back(L"cj"+base.substr(1));
+        if(size>=1 && base.back()==L'.' && (size==1 || syllablePart(base[size-2])==0))bases.push_back(base.substr(0,size-1)+L"ji");
+        if(size>=2 && base.compare(size-2,2,L"ji")==0)bases.push_back(base.substr(0,size-2)+L".");
+        static constexpr const wchar_t* whole[][2]={{L"hj",L"t"},{L"nj",L"g"}};
+        for(const auto& pair:whole) for(int d=0;d<2;++d)if(base==pair[d])bases.push_back(pair[1-d]);
         std::vector<Text> codes;
         for(const auto& stem:bases) for(wchar_t mark:{tone,L'\0',L'6',L'3',L'4',L'7'}){
             Text candidate=mark?stem+mark:stem;
