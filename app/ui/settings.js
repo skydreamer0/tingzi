@@ -1033,6 +1033,32 @@ for (const [id, which] of [['welcome-editor', 'practice'], ['welcome-keyboard', 
   });
 }
 
+// Problem report: built on this computer, shown to the user to read and edit, and only sent by them.
+const reportDialog = byId('report');
+const reportText = byId('report-text');
+const reportStatus = byId('report-status');
+async function startReport() {
+  reportStatus.textContent = '';
+  reportText.value = '正在整理…';
+  if (!reportDialog.open) reportDialog.showModal();
+  reportText.value = await invoke('report_build');
+}
+byId('open-report').addEventListener('click', startReport);
+byId('report-close').addEventListener('click', () => reportDialog.close());
+byId('report-copy').addEventListener('click', async () => {
+  reportStatus.textContent = await invoke('report_copy', { text: reportText.value }) ? '已複製。' : '剪貼簿忙碌，請再試一次。';
+});
+byId('report-save').addEventListener('click', async () => {
+  const saved = await invoke('report_save', { text: reportText.value });
+  if (saved !== null) reportStatus.textContent = saved ? '已存檔。' : '無法存檔，請換一個位置。';
+});
+byId('report-send').addEventListener('click', async () => {
+  reportStatus.textContent = await invoke('report_send', { text: reportText.value })
+    ? '已在瀏覽器開啟回報頁，內容也已複製。補上發生了什麼事，再按送出。'
+    : '無法開啟瀏覽器。內容已複製，請到專案首頁的 Issues 回報。';
+});
+listen('report', startReport);
+
 // Updates
 let update = null;
 function showUpdate(state) {
@@ -1091,6 +1117,7 @@ invoke('load_settings').then(async loaded => {
   for (const control of document.querySelectorAll('.pages select, .pages input, .pages textarea')) accepted.set(control.id, valueOf(control));
   showUpdate(await invoke('update_state'));
   if (await invoke('take_welcome')) startWelcome();
+  else if (await invoke('take_report')) startReport();
   if (!panel.has_learning) return void (byId('learning-note').textContent = '找不到本機學習工具，請安裝完整套件。');
   const on = await invoke('learning_state');
   learning.checked = on === true;

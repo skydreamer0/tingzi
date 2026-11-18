@@ -66,7 +66,7 @@ body:
     id: logs
     attributes:
       label: 記錄或截圖
-      description: 選填。貼上前請先移除私人內容。
+      description: 選填。從設定「關於」頁的「回報問題…」開啟這一頁時，這裡會自動填入版本、設定與最近的操作記錄。貼上前請先移除私人內容。
   - type: checkboxes
     id: privacy
     attributes:

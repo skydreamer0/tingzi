@@ -6,7 +6,7 @@ use crate::replace::{self, Replacement};
 use crate::settings::Settings;
 use crate::sys::{set_login_start, starts_at_login};
 use crate::words::{self, Entry};
-use crate::{audio, paths};
+use crate::{audio, paths, report};
 use std::ffi::OsStr;
 use serde::{Deserialize, Serialize};
 use std::process::{Command, Stdio};
@@ -289,6 +289,49 @@ pub fn welcome_first_run(app: &AppHandle) {
 #[tauri::command]
 pub fn take_welcome() -> bool {
     WELCOME.swap(false, Ordering::SeqCst)
+}
+
+/// Set when the settings window should open on the problem report; the page takes it once.
+static REPORT: AtomicBool = AtomicBool::new(false);
+
+/// Opens the settings window on the problem report, from the tray menu.
+pub fn ask_report(app: &AppHandle) {
+    REPORT.store(true, Ordering::SeqCst);
+    // A window that is open already hears it now; a new one takes the flag when it loads.
+    let _ = app.emit_to("settings", "report", ());
+    open(app);
+}
+
+/// Whether the settings page should start with the problem report. True at most once per request.
+#[tauri::command]
+pub fn take_report() -> bool {
+    REPORT.swap(false, Ordering::SeqCst)
+}
+
+/// The problem report for the user to read and edit before anything leaves this computer.
+#[tauri::command(async)]
+pub fn report_build() -> String {
+    report::build(&Settings::load())
+}
+
+/// Copies the report, as the user left it, and opens a new GitHub issue with it filled in.
+/// Nothing is sent by the app; the user sees the issue in the browser and decides whether to submit it.
+#[tauri::command(async)]
+pub fn report_send(text: String) -> bool {
+    report::note("開啟 GitHub 問題回報頁");
+    let _ = crate::deliver::copy(&text);
+    dialogs::open(&report::issue_address(&text, &report::version_line()))
+}
+
+#[tauri::command(async)]
+pub fn report_copy(text: String) -> bool {
+    crate::deliver::copy(&text)
+}
+
+/// Saves the report to a file the user names, to send some other way. None means the user closed the dialog.
+#[tauri::command(async)]
+pub fn report_save(app: AppHandle, text: String) -> Option<bool> {
+    dialogs::pick(owner(&app), Kind::Text, Some("tingzi-report.txt")).map(|file| std::fs::write(file, text).is_ok())
 }
 
 #[tauri::command]

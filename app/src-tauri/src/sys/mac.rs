@@ -249,6 +249,13 @@ pub fn in_codex_message_box(process: u32) -> bool {
     program(process).is_some_and(|name| name.eq_ignore_ascii_case("Codex.app"))
 }
 
+/// The macOS release, such as `macOS 15.1`.
+pub fn system_version() -> String {
+    let answer = Command::new("sw_vers").arg("-productVersion").output();
+    let version = answer.map(|output| String::from_utf8_lossy(&output.stdout).trim().to_string()).unwrap_or_default();
+    if version.is_empty() { "macOS".into() } else { format!("macOS {version}") }
+}
+
 // ---- Dialogs
 
 /// The product's name on this system, where it has no Zhuyin input method.

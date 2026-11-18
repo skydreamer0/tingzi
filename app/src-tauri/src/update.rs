@@ -183,7 +183,10 @@ pub fn start(app: &AppHandle) {
 
 fn look(app: &AppHandle, asked: &mut Option<String>) {
     let earlier = load().latest.map(|release| release.version);
-    let state = if due(load().checked, now()) { check_now().unwrap_or_else(|_| state()) } else { state() };
+    let state = if due(load().checked, now()) { check_now().unwrap_or_else(|reason| {
+        crate::report::note(format!("自動檢查更新失敗：{reason}"));
+        state()
+    }) } else { state() };
     let Some(offered) = state.offered.clone() else { return };
     if earlier.as_deref() != Some(&offered.version) {
         let _ = app.emit("update", &state);
@@ -311,9 +314,12 @@ pub fn update_install(app: AppHandle) -> Result<String, String> {
     }
     let ready = fetch_installer(&app, &installer);
     INSTALLING.store(false, Ordering::SeqCst);
-    if !run_installer(&ready?, false) {
+    let ready = ready.inspect_err(|reason| crate::report::note(format!("下載新版 {} 失敗：{reason}", offered.version)))?;
+    if !run_installer(&ready, false) {
+        crate::report::note("無法啟動安裝程式");
         return Err("無法啟動安裝程式。".into());
     }
+    crate::report::note(format!("開啟新版 {} 的安裝程式", offered.version));
     Ok("安裝程式已開啟。依畫面完成安裝後，語音浮窗會自動換成新版。".into())
 }
 

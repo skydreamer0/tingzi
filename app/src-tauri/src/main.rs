@@ -18,6 +18,7 @@ mod paths;
 mod recognise;
 mod refine;
 mod replace;
+mod report;
 mod secret;
 mod settings;
 mod sys;
@@ -216,6 +217,15 @@ fn rule_for(target: Option<Spot>) -> Option<apps::AppRule> {
     apps::find(&apps::load(&apps::own_file()), &program).cloned()
 }
 
+/// The recogniser's name in the problem report's record.
+fn report_engine(engine: Engine) -> &'static str {
+    match engine {
+        Engine::Local => "本機辨識",
+        Engine::Codex => "Codex 辨識",
+        Engine::Api => "雲端辨識",
+    }
+}
+
 enum Sound {
     Recording(audio::Recorder),
     Wav(Vec<u8>),
@@ -244,9 +254,15 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             Sound::Recording(recorder) => recorder.finish(),
             Sound::Wav(wav) => Ok(wav),
         };
+        let started = Instant::now();
         let heard = wav.clone().and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
         if cancelled() {
+            report::note(format!("{}：已取消", report_engine(engine)));
             return;
+        }
+        match &heard {
+            Ok(heard) => report::note(format!("{}：辨識完成，{} 字，{} ms", report_engine(engine), heard.chars().count(), started.elapsed().as_millis())),
+            Err(reason) => report::note(format!("{}：辨識失敗，{reason}", report_engine(engine))),
         }
         // Refinement goes between tidying and the user's own words, so their words win over the model's.
         // What the text would have been without the model is kept with a refined dictation, to compare and get back.
@@ -257,6 +273,9 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             let (text, status) = refined(&app, run, cleaned.clone(), &prefs, main.refine);
             if matches!(status, Some(refine::Status::Refined(_))) {
                 before = Some(finish(&cleaned));
+            }
+            if let Some(status) = &status {
+                report::note(format!("潤稿結果{}", status.suffix()));
             }
             refinement = status;
             finish(&text)
@@ -277,6 +296,9 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                     return;
                 }
                 let settles = outcome.settles();
+                let program = target.filter(|spot| spot.process != 0).and_then(|spot| apps::program(spot.process)).unwrap_or_else(|| "無".into());
+                let mode = if target.is_some() { prefs.mode() } else { Mode::Preview };
+                report::note(format!("送出：{mode:?}，程式 {program}，插入 {}，複製 {}，{}", outcome.inserted, outcome.copied, outcome.message));
                 let Outcome { message, expand, inserted, .. } = outcome;
                 if prefs.keep_history {
                     history::add(&text, before.filter(|before| *before != text), inserted);
@@ -349,11 +371,17 @@ fn rewrite_with(app: &AppHandle, run: u64, sound: Sound, engine: Engine, target:
                         ("done", format!("已照「{command}」改寫・{}", outcome.message), text, outcome.expand)
                     }
                 }
-                Err(failure) => ("error", format!("沒有改寫：{}", failure.sentence()), String::new(), false),
+                Err(failure) => {
+                    report::note(format!("改寫選取文字失敗：{failure:?}"));
+                    ("error", format!("沒有改寫：{}", failure.sentence()), String::new(), false)
+                }
             }
         }
         Ok(_) => ("error", "沒有聽到要怎麼改，選取的文字沒有變動".to_string(), String::new(), false),
-        Err(reason) => ("error", reason, String::new(), false),
+        Err(reason) => {
+            report::note(format!("改寫選取文字：{}辨識失敗，{reason}", report_engine(engine)));
+            ("error", reason, String::new(), false)
+        }
     };
     deliver::end();
     session.working.store(false, Ordering::SeqCst);
@@ -441,6 +469,7 @@ fn toggle(app: &AppHandle) {
             stop_at_limit(app.clone(), run);
         }
         Err(reason) => {
+            report::note(format!("無法開始錄音：{reason}"));
             deliver::end();
             show(app, "error", reason, "", false);
         }
@@ -805,6 +834,8 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
             &item("history", "最近的辨識紀錄…")?,
             &item("copy", "複製辨識文字")?,
             &item("convert", "剪貼簿文字簡繁互轉")?,
+            &line()?,
+            &item("report", "回報問題…")?,
         ],
     )?;
     // The Zhuyin input method and its learning tool are part of the Windows package only.
@@ -846,6 +877,7 @@ fn build_tray(app: &tauri::App) -> tauri::Result<()> {
                 copy_preview_text(app);
             }
             "convert" => convert_clipboard(app),
+            "report" => panel::ask_report(app),
             // Without an argument the tool also adds Tingzi to this user's keyboards first, in case it is not there yet.
             "zhuyin" => run_tool(app, "TingziKeyboard.exe", None),
             "learn-on" => run_tool(app, "TingziLearning.exe", Some("on")),
@@ -916,6 +948,7 @@ fn main() {
         std::process::exit(refine_text(&arguments[1..].join(" ")));
     }
     let Some(asked) = instance::parse(&arguments) else { std::process::exit(2) };
+    report::note_crashes();
     // A second launch hands its request to the copy already running, then leaves.
     if !instance::first() {
         std::process::exit(if instance::forward(&asked.unwrap_or(Request::Show)) { 0 } else { 4 });
@@ -961,6 +994,11 @@ fn main() {
             facts,
             panel::open_settings,
             panel::take_welcome,
+            panel::take_report,
+            panel::report_build,
+            panel::report_send,
+            panel::report_copy,
+            panel::report_save,
             panel::close_settings,
             panel::capture_shortcut,
             panel::load_settings,
@@ -1009,6 +1047,7 @@ fn main() {
             }
         })
         .setup(move |app| {
+            report::note(format!("聽字 {} 啟動，{}", env!("CARGO_PKG_VERSION"), sys::system_version()));
             sys::prepare(app);
             deliver::watch();
             layout::keep(app.handle().clone());
@@ -1016,6 +1055,7 @@ fn main() {
             *app.state::<Session>().state.lock().unwrap() = "idle";
             // Another program may already hold the shortcut; the mic button still works.
             if !app.state::<Keys>().rebind(app.handle(), &Settings::load()) {
+                report::note("錄音快捷鍵被其他程式占用");
                 show(app.handle(), "error", "錄音快捷鍵被其他程式占用，請點圖示錄音或到設定更換", "", false);
             }
             // Another program may hold this one; pasting the last dictation is then only in the window.
