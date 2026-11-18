@@ -48,11 +48,27 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     Dictionary& dictionary() {
         static Dictionary data;
         static const bool loaded=data.load(folder(module));
-        static const bool extended=(data.loadUser(userPhraseFile()),data.loadTemplates(userTemplateFile()),data.loadPairs(folder(module)+L"pairs.txt"),true);
-        static const bool learned=([]{for(const auto& word:Learning().learnedWords())data.addUser(word.reading,word.text);}(),true);
-        (void)learned;
-        (void)extended;
-        (void)loaded;return data;
+        static const bool extended=(data.loadPairs(folder(module)+L"pairs.txt"),true);
+        static const bool user=(refreshUserWords(data,Learning().learnedWords()),true);
+        (void)user;(void)extended;(void)loaded;return data;
+    }
+    // Words added in the settings page, kept with Shift+Enter or Ctrl and a digit, or learned from
+    // picks reach programs that are already open: each new composition checks whether they changed.
+    static void refreshUserWords(Dictionary& data,const std::vector<NewWord>& learned){
+        struct Seen {
+            std::filesystem::file_time_type phrases,templates; std::vector<std::pair<Text,Text>> learned;
+            bool operator==(const Seen& o) const {return phrases==o.phrases && templates==o.templates && learned==o.learned;}
+        };
+        static std::optional<Seen> last;
+        auto stamp=[](const Text& file){std::error_code error;auto at=std::filesystem::last_write_time(std::filesystem::path(file),error);return error?std::filesystem::file_time_type{}:at;};
+        Seen now{stamp(userPhraseFile()),stamp(userTemplateFile()),{}};
+        for(const auto& word:learned)now.learned.push_back({word.reading,word.text});
+        if(last && *last==now)return;
+        last=std::move(now);
+        auto words=Dictionary::readUser(userPhraseFile());
+        for(auto& word:Dictionary::readTemplates(userTemplateFile()))words.push_back(std::move(word));
+        for(const auto& word:learned)words.push_back({word.reading,word.text,userPhraseScore});
+        data.setUserWords(words);
     }
     std::unique_ptr<Input> input;
     bool chinese=true, shiftPending=false;
@@ -390,11 +406,13 @@ public:
                 layoutCookie=TF_INVALID_COOKIE;
         } else {hr=composition->GetRange(&range);if(FAILED(hr))return hr;}
         bool allowed=learnable(c,ec,range.Get(),activationFlags);
-        if(!allowed){next.setPreferences(nullptr);next.setSentences(nullptr);learningStatus=1;}
+        if(!allowed){next.setPreferences(nullptr);next.setFavorites(nullptr);next.setSentences(nullptr);learningStatus=1;}
         else if(!input->active()){
             Learning store;
             bool enabled=store.enabled();learningStatus=enabled?3:2;
+            refreshUserWords(dictionary(),store.learnedWords());
             next.setPreferences(enabled?std::make_shared<const Preferences>(store.ranks()):nullptr);
+            next.setFavorites(enabled?std::make_shared<const Favorites>(store.favorites()):nullptr);
             next.setSentences(enabled?std::make_shared<const std::vector<Sentence>>(store.sentences()):nullptr);
         }
         auto edits=next.corrections();

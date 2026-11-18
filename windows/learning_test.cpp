@@ -31,6 +31,10 @@ int wmain(int argc,wchar_t** argv){
     type(other,"CL3SU3");other.press(VK_END);
     check(other.choices().front().text==L"你","different context unchanged");
     {
+        auto picks=reopened.favorites();
+        check(picks.size()==1 && picks[L"ㄋㄧˇ"].size()==1 && picks[L"ㄋㄧˇ"][0]==std::make_pair(Text(L"妳"),2),"picks are counted by sound for the candidate list");
+    }
+    {
         std::vector<NewWord> word{{L"ㄒㄧㄠˇ-ㄇㄧㄥˊ",L"曉明"}};
         check(reopened.saveWords(word) && reopened.learnedWords().empty() && reopened.allWords().size()==1,"a new word waits for a second use");
         check(reopened.saveWords(word) && reopened.allWords().size()==1 && reopened.allWords()[0].hits==2,"using it again counts, without a second entry");
@@ -62,6 +66,6 @@ int wmain(int argc,wchar_t** argv){
     check(edits.size()==1 && edits[0].key.first==L"我愛" && edits[0].choice==L"妳","whole phrase stores just changed character");
     phrase.press(VK_BACK);
     check(phrase.corrections().empty(),"undo selection before commit");
-    check(reopened.enable(false) && reopened.ranks().empty(),"off ignores existing preferences");
+    check(reopened.enable(false) && reopened.ranks().empty() && reopened.favorites().empty(),"off ignores existing preferences");
     return 0;
 }

@@ -218,6 +218,44 @@ int wmain(int argc,wchar_t** argv) {
     input.press('1'+second%9);
     auto opening=input.corrections();
     expect(opening.size()==1 && opening[0].key.first==L"^" && opening[0].choice==L"妳","choosing the first character records a correction for the start");
+    // Characters picked before, in any sentence, come first among the single characters in the list.
+    input.clear();input.setPreferences(std::make_shared<const Preferences>());
+    enter("SU3");input.press(VK_DOWN);
+    options=input.choices();
+    const Text rare=options.size()>4?options[4].text:Text();
+    expect(options.size()>4 && options[4].count==1 && rare!=L"你","the list has a less common character to pick");
+    input.press(VK_ESCAPE);input.clear();
+    input.setFavorites(std::make_shared<const Favorites>(Favorites{{L"ㄋㄧˇ",{{rare,1}}}}));
+    enter("SU3");
+    expect(input.preview()==L"你","one pick does not change the character shown");
+    input.press(VK_DOWN);options=input.choices();
+    expect(options.size()>1 && options[0].text==L"你" && options[1].text==rare,"a character picked once comes right after the first one in the list");
+    input.press('2');
+    auto again=input.corrections();
+    expect(again.size()==1 && again[0].choice==rare,"picking it from its new place still counts as a pick");
+    input.clear();
+    input.setFavorites(std::make_shared<const Favorites>(Favorites{{L"ㄋㄧˇ",{{rare,2}}}}));
+    enter("SU3");
+    expect(input.preview()==L"你","picks in other sentences do not change the sentence, only the list");
+    input.clear();input.setFavorites(nullptr);
+    // Words the user adds while a program is open replace the ones added before, and removing one brings back the bundled word.
+    d.setUserWords({{L"ㄋㄧˇ-ㄏㄠˇ",L"妳好",userPhraseScore}});
+    enter("SU3CL3");
+    expect(input.preview()==L"妳好","a word added while the program runs is used at once");
+    input.clear();
+    d.setUserWords({{L"ㄋㄧˇ-ㄏㄠˇ",L"你好",userPhraseScore}});
+    enter("SU3CL3");
+    expect(input.preview()==L"你好","replacing the added words drops the ones left out");
+    input.clear();
+    d.setUserWords({});
+    {
+        auto bucket=d.phrases.find(L"ㄋㄧˇ-ㄏㄠˇ");
+        auto count=[&](const Text& text){return bucket==d.phrases.end()?0:std::count_if(bucket->second.begin(),bucket->second.end(),[&](const Term& t){return t.text==text && t.score!=userPhraseScore;});};
+        expect(count(L"你好")==1 && count(L"妳好")==1 && bucket->second.front().text==L"你好","removing added words that were also bundled keeps the bundled ones as they were");
+    }
+    enter("SU3CL3");
+    expect(input.preview()==L"你好","and the sentence is as before");
+    input.clear();
     input.clear();input.setPreferences(nullptr);
     enter("SU3CL3A87");
     expect(input.wants(controlKey|'2') && !input.wants(controlKey|'4') && input.press(controlKey|'2').empty()

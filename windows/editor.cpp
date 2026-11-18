@@ -45,6 +45,7 @@ void press(WPARAM key){
     if(!input.active()){
         Learning store;
         input.setPreferences(store.enabled()?std::make_shared<const Preferences>(store.ranks()):nullptr);
+        input.setFavorites(store.enabled()?std::make_shared<const Favorites>(store.favorites()):nullptr);
         input.setSentences(store.enabled()?std::make_shared<const std::vector<Sentence>>(store.sentences()):nullptr);
     }
     auto edits=input.corrections();

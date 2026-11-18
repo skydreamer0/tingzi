@@ -16,6 +16,9 @@ namespace tingzi {
 using Text=std::wstring;
 using LearnKey=std::pair<Text,Text>;
 using Preferences=std::map<LearnKey,Text>;
+// For each reading, the characters the user picked over the one offered first, with how many times,
+// most picked first.
+using Favorites=std::map<Text,std::vector<std::pair<Text,int>>>;
 struct Correction { LearnKey key; Text choice; };
 struct NewWord { Text reading, text; };
 // A learned word with how many times it has been committed.
@@ -93,6 +96,17 @@ public:
             }
         }
         sqlite3_finalize(s);return ranks;
+    }
+    Favorites favorites() const {
+        Favorites found;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,choice,SUM(hits) AS picks FROM choices WHERE (SELECT enabled FROM settings)=1 GROUP BY reading,choice ORDER BY reading,picks DESC,choice",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW){
+                auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
+                found[col(0)].push_back({col(1),sqlite3_column_int(s,2)});
+            }
+        }
+        sqlite3_finalize(s);return found;
     }
     bool save(const std::vector<Correction>& edits){
         if(edits.empty())return true;
