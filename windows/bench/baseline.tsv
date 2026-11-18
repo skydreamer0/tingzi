@@ -1,10 +1,12 @@
 # segmenter	category	sentences right	characters right	wrong characters on the first page
+path	fast	16	202	2
 path	general	25	269	5
 path	homophone	23	206	2
 path	long	1	96	2
 path	medical	20	253	7
 path	mixed	16	228	4
 path	typo	1	221	36
+staged	fast	16	202	2
 staged	general	25	269	5
 staged	homophone	20	203	5
 staged	long	1	95	3
