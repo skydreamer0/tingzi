@@ -14,6 +14,9 @@ let mode = '';
 let recordingSince = 0, clock = 0, noticeTimer = 0;
 const key = mic.querySelector('.key');
 const still = matchMedia('(prefers-reduced-motion: reduce)');
+// Animation times from tokens.css; the numbers after them only stand in if the sheet failed to load.
+const motion = (name, fallback) => parseFloat(getComputedStyle(document.documentElement).getPropertyValue(`--motion-${name}`)) || fallback;
+const CARD_MS = motion('fast', 140), PILL_MS = motion('base', 200);
 // Latest microphone level (square-rooted) and what the bars currently show.
 let heard = 0, shown = 0, frame = 0, tapTimer = 0;
 
@@ -40,7 +43,7 @@ function tap() {
   if (still.matches) return;
   clearTimeout(tapTimer);
   mic.classList.add('tap');
-  tapTimer = setTimeout(() => mic.classList.remove('tap'), 140);
+  tapTimer = setTimeout(() => mic.classList.remove('tap'), CARD_MS);
 }
 
 function elapsed() {
@@ -123,8 +126,8 @@ function setSide(side) {
 }
 
 // Everything folds back the way it came: the card into the pill, then the pill into the keycap.
-// The window only shrinks once the fold has played, so these times match style.css and layout.rs.
-const CARD_MS = 140, PILL_MS = 200;
+// The window only shrinks once the fold has played. Both times come from tokens.css, which style.css
+// animates with too; layout.rs checks that its own copy of the pill's time matches.
 const wait = ms => new Promise(done => setTimeout(done, ms));
 const timers = { grow: 0, card: 0 };
 // Counts the put-aways asked for; a newer one, a new dictation or typing makes an older one stand down.

@@ -118,7 +118,7 @@ textarea.wide { flex: none; width: 250px; min-height: 72px; }
   background: var(--input);
   cursor: pointer;
   position: relative;
-  transition: background 120ms ease;
+  transition: background var(--motion-fast) ease;
 }
 .switch::after {
   content: "";
@@ -129,13 +129,13 @@ textarea.wide { flex: none; width: 250px; min-height: 72px; }
   height: 18px;
   border-radius: 50%;
   background: var(--muted);
-  transition: transform 120ms ease, background 120ms ease;
+  transition: transform var(--motion-fast) ease, background var(--motion-fast) ease;
 }
 .switch:checked { border-color: var(--accent); background: var(--accent); }
 .switch:checked::after { transform: translateX(20px); background: var(--on-accent); }
 
 .meter { width: 120px; height: 8px; border-radius: var(--radius-pill); background: var(--border); overflow: hidden; }
-#mic-level, #fetch-level { display: block; height: 100%; width: 0; background: var(--accent); transition: width 60ms linear; }
+#mic-level, #fetch-level { display: block; height: 100%; width: 0; background: var(--accent); transition: width var(--motion-meter) linear; }
 
 footer {
   flex: none;
