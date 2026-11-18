@@ -51,6 +51,8 @@ inline Text localLearningDir(){
 #endif
     CoTaskMemFree(path);return dir;
 }
+// How many committed uses make a picked run of characters a word.
+inline constexpr int wordConfirmations=2;
 class Learning {
     sqlite3* db=nullptr;
     static void bind(sqlite3_stmt* s,int i,const Text& t){
@@ -118,7 +120,8 @@ public:
         sqlite3_finalize(s);
         if(!has)exec("ALTER TABLE words ADD COLUMN at INTEGER NOT NULL DEFAULT 0");
     }
-    // Characters the user picked one after another become a word the first time the run is committed.
+    // Characters the user picked one after another are counted each time the run is committed; the
+    // word is offered as a candidate from its wordConfirmations-th time, so one slip is not learned.
     bool saveWords(const std::vector<NewWord>& words){
         if(words.empty())return true;
         if(!enabled())return false;
@@ -135,7 +138,8 @@ public:
     std::vector<NewWord> learnedWords() const {
         std::vector<NewWord> words;
         sqlite3_stmt* s=nullptr;
-        if(db && sqlite3_prepare_v2(db,"SELECT reading,text FROM words WHERE (SELECT enabled FROM settings)=1",-1,&s,nullptr)==SQLITE_OK){
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,text FROM words WHERE hits>=? AND (SELECT enabled FROM settings)=1",-1,&s,nullptr)==SQLITE_OK){
+            sqlite3_bind_int(s,1,wordConfirmations);
             while(sqlite3_step(s)==SQLITE_ROW){
                 auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
                 words.push_back({col(0),col(1)});

@@ -114,6 +114,12 @@ int wmain(int argc,wchar_t** argv) {
     input.press(VK_TAB);
     expect(input.listTitle()==L"注音選字" && input.choices().front().text==L"你","Tab again returns to the same sound");
     input.clear();
+    enter("YK4RU04");input.press(VK_DOWN);input.press(VK_TAB);
+    expect(input.choices().front().text==L"這","a near sound that makes a word with its neighbour comes first");
+    input.clear();
+    enter("W83");input.press(VK_DOWN);input.press(VK_TAB);options=input.choices();
+    expect(std::any_of(options.begin(),options.end(),[](const Choice& c){return c.text==L"打";}),"near sounds include a key beside the one pressed");
+    input.clear();
 
     enter("SU3CL3");input.press(VK_DOWN);
     options=input.choices();
