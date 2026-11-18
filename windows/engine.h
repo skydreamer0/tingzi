@@ -10,6 +10,7 @@
 #include <sstream>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <memory>
 #include <optional>
@@ -123,6 +124,25 @@ inline Text folder(HMODULE module) {
     DWORD len = GetModuleFileNameW(module, path, 32768);
     return Text(path, len).substr(0, Text(path, len).find_last_of(L"\\/") + 1);
 }
+// Which part of a syllable a key fills: 0 initial, 1 medial, 2 final, 3 tone; -1 for no Zhuyin key.
+inline int syllablePart(wchar_t key){
+    static constexpr wchar_t order[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
+    const wchar_t* at=key?std::wcschr(order,key):nullptr;
+    if(!at)return -1;
+    const size_t i=size_t(at-order);
+    return i<21?0:i<24?1:i<37?2:3;
+}
+// The keys of one syllable in reading order, initial, medial, final then tone, as the word list spells
+// them; empty when two keys fill the same part.
+inline Text syllableOrder(const Text& keys){
+    Text parts[4];
+    for(const wchar_t key:keys){
+        const int at=syllablePart(key);
+        if(at<0 || !parts[at].empty())return {};
+        parts[at]=Text(1,key);
+    }
+    return parts[0]+parts[1]+parts[2]+parts[3];
+}
 struct Dictionary {
     std::map<wchar_t, Text> keys;
     std::map<Text, std::vector<Text>> byCode;
@@ -130,6 +150,10 @@ struct Dictionary {
     // How common each character is under each of its readings.
     std::map<std::pair<Text,Text>,double> charScore;
     size_t longestPhrase = 1;
+    // Every set of keys some syllable contains, in reading order: the keys typed so far can still
+    // become a syllable, whatever order the rest arrive in, when they are one of these.
+    std::unordered_set<Text> shapes;
+    bool reachable(const Text& ordered) const {return !ordered.empty() && shapes.count(ordered)!=0;}
     struct Applied { Text reading, text; std::optional<double> previous; };
     std::vector<Applied> userLayer;
     // Words that occur together more often than chance: for each second word, the first words that favour it
@@ -198,6 +222,14 @@ struct Dictionary {
         for (auto& [code, characters] : byCode) {
             const Text sound = reading(code);
             std::stable_sort(characters.begin(), characters.end(), [&](const Text& a, const Text& b){ return scoreOf(sound, a) > scoreOf(sound, b); });
+        }
+        for (const auto& [code, characters] : byCode) {
+            if (code.size() > 4 || syllableOrder(code) != code) continue;
+            for (unsigned mask = 1; mask < (1u << code.size()); ++mask) {
+                Text kept;
+                for (size_t i = 0; i < code.size(); ++i) if (mask & (1u << i)) kept += code[i];
+                shapes.insert(kept);
+            }
         }
         return !byCode.empty() && !keys.empty();
     }
@@ -370,6 +402,14 @@ class Input {
     size_t firstLimit=0;
     std::optional<NewWord> added;
     std::optional<NewWord> typed;
+    // How many syllables at the end were ended by the next key rather than by Space or a tone, so
+    // later keys may still show they belong together. `loose` is the count the current key started with.
+    size_t implied=0, loose=0;
+    // The syllable before, as it was before it took the key typed after its tone, and that key; set
+    // while the keys after it may still show the key began the next syllable. `owed` is `lent` as the
+    // current key found it.
+    struct Loan { Text syllable; wchar_t key=0; };
+    std::optional<Loan> lent, owed;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
     void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;}
     // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
@@ -655,24 +695,34 @@ class Input {
     }
     // Text to the left of a syllable. Preferences read their own left context, so they ask without them.
     Text leftOf(size_t pos,bool withPreferences=true) const {return pos?cut(pos,false,withPreferences):Text();}
-    // Which part of a syllable a key fills: 0 initial, 1 medial, 2 final, 3 tone; -1 for no Zhuyin key.
-    static int part(wchar_t key){
-        static constexpr wchar_t order[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
-        const wchar_t* at=key?std::wcschr(order,key):nullptr;
-        if(!at)return -1;
-        const size_t i=size_t(at-order);
-        return i<21?0:i<24?1:i<37?2:3;
+    static bool toneOf(wchar_t key){return key==L'3'||key==L'4'||key==L'6'||key==L'7';}
+    // True when the keys spell a syllable someone would say. A lone initial or tone is in the character
+    // table only as its own symbol, except ㄓㄔㄕㄖㄗㄘㄙ, which are syllables by themselves.
+    bool spoken(const Text& code) const {
+        if(!dict.byCode.count(code))return false;
+        if(code.size()!=1)return true;
+        const int at=syllablePart(code[0]);
+        return at==1 || at==2 || (at==0 && std::wcschr(L"5tgbyhn",code[0]));
     }
-    // The keys of one syllable in reading order, initial, medial, final then tone, as the word list spells
-    // them; empty when two keys fill the same part.
-    static Text inOrder(const Text& keys){
-        Text parts[4];
-        for(const wchar_t key:keys){
-            const int at=part(key);
-            if(at<0 || !parts[at].empty())return {};
-            parts[at]=Text(1,key);
+    // The `count` syllables before the caret were ended only because the next key could not join them.
+    // When they and `keys` together are the keys of one syllable, in any order, returns that syllable's keys.
+    Text takenBack(size_t count,const Text& keys) const {
+        const size_t end=caret.value_or(syllables.size());
+        if(count==0 || count>end)return {};
+        Text all;
+        for(size_t at=end-count;at<end;++at){
+            if(symbol(syllables[at]) || owner(at))return {};
+            all+=syllables[at];
         }
-        return parts[0]+parts[1]+parts[2]+parts[3];
+        return syllableOrder(all+keys);
+    }
+    void takeBack(size_t count,const Text& joined){
+        for(size_t i=0;i<count;++i){
+            const size_t gone=caret.value_or(syllables.size())-1;
+            if(caret)caret=gone;
+            removeSyllable(gone);
+        }
+        raw=joined;
     }
     // True when some syllable is spelled by keys that begin with `keys`.
     bool startsCode(const Text& keys) const {
@@ -694,11 +744,25 @@ class Input {
         if(!(tone==L'3'||tone==L'4'||tone==L'6'||tone==L'7'))return false;
         const Text joined=last.substr(0,last.size()-1)+raw+tone;
         if(!dict.byCode.count(joined))return false;
+        lent=Loan{last,raw[0]};
         syllables.back()=joined;raw.clear();
         return true;
     }
-    bool finishSyllable() {
-        if(raw.empty() || !dict.byCode.count(raw)) return false;
+    // With `settle` false, as when a tone has just been typed, keys that spell nothing yet do not ask
+    // back a key given to the syllable before: the tone may have come a key early, and the next key tells.
+    bool finishSyllable(bool settle=true) {
+        if(raw.empty())return false;
+        if(!spoken(raw)){
+            // Keys typed out of order, or after a syllable that was ended too soon, are put in reading order.
+            if(const Text ordered=syllableOrder(raw);ordered!=raw && spoken(ordered))raw=ordered;
+            else for(size_t count=loose;count>0;--count)
+                if(const Text joined=takenBack(count,raw);spoken(joined)){takeBack(count,joined);loose-=count;break;}
+            // A key given to the syllable before goes to this one when only that makes it a syllable:
+            // ㄋㄧˇ ㄠ ㄏ ˇ is ㄋㄧˇ ㄏㄠˇ, not ㄋㄧㄠˇ and a ㄏˇ that spells nothing.
+            if(settle && !spoken(raw) && owed && !caret && !syllables.empty() && !owner(syllables.size()-1))
+                if(const Text joined=syllableOrder(Text(1,owed->key)+raw);spoken(joined)){syllables.back()=owed->syllable;raw=joined;}
+        }
+        if(!dict.byCode.count(raw)) return false;
         insertSyllable(raw); raw.clear(); return true;
     }
     // Keeps the characters around a choice as they are shown, so fixing one character in the middle
@@ -897,6 +961,7 @@ public:
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
         added.reset();committed.reset();typed.reset();
+        loose=implied;implied=0;owed=lent;lent.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
         if(key&controlKey){
@@ -1082,40 +1147,53 @@ public:
         wchar_t ch=codeKey(key,layout);
         const bool toneKey=ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7';
         if(!raw.empty() && syllables.size()<128){
-            // A tone pressed a moment before the syllable's last key, as fast typing does: the last key
-            // goes before the tone that is already waiting.
-            const wchar_t last=raw.back();
-            if(!toneKey && (last==L'3'||last==L'4'||last==L'6'||last==L'7')){
-                const Text swapped=raw.substr(0,raw.size()-1)+ch+last;
-                if(dict.byCode.count(swapped)){raw=swapped;finishSyllable();return {};}
-            }
-            // A key that belongs earlier in a syllable, typed after a later one, takes its place there. The
-            // rule below has by then ended the initial on its own, as ㄉ before ㄛ, so a lone initial before
-            // the waiting keys takes them back: ㄉ ㄛ then ㄨ is ㄉㄨㄛ.
-            if(!toneKey && !caret && !syllables.empty() && !startsCode(raw+ch)){
-                const Text& last=syllables.back();
-                if(last.size()==1 && part(last[0])==0 && !owner(syllables.size()-1)){
-                    const Text ordered=inOrder(last+raw+ch);
-                    if(!ordered.empty() && startsCode(ordered)){
-                        removeSyllable(syllables.size()-1);
-                        raw=ordered;
-                        const wchar_t tone=raw.back();
-                        if(tone==L'3'||tone==L'4'||tone==L'6'||tone==L'7')finishSyllable();
+            // The keys of one syllable may come in any order: each takes its own place, initial, medial,
+            // final, then tone. Keys that already spell a syllable are left as they are unless the new key
+            // follows them in reading order, so a first-tone syllable typed without Space still ends there.
+            if(!toneKey && syllableOrder(raw)==raw && !recallsFrom(raw+ch)){
+                const int place=syllablePart(ch);
+                const bool said=spoken(raw);
+                bool filled=false,forward=true;
+                for(const wchar_t k:raw){const int at=syllablePart(k);if(at==place)filled=true;if(at>place)forward=false;}
+                const bool toned=toneOf(raw.back());
+                auto keep=[&](const Text& keys){
+                    raw=keys;implied=loose;lent=owed;
+                    if(toned && dict.byCode.count(raw) && finishSyllable(false)){implied=0;lent.reset();}
+                };
+                if(!filled){
+                    const Text joined=syllableOrder(raw+ch);
+                    if(forward?(startsCode(joined) || (!said && dict.reachable(joined))):(!said && dict.reachable(joined))){keep(joined);return {};}
+                } else if(!said && !toned){
+                    // A second key for a part that is already filled replaces the first, as when the wrong
+                    // initial was pressed: ㄉ then ㄊ is ㄊ.
+                    Text changed=raw;
+                    for(wchar_t& k:changed)if(syllablePart(k)==place)k=ch;
+                    if(dict.reachable(changed)){keep(changed);return {};}
+                }
+                // Syllables ended only by the keys after them are taken back when this key shows they were
+                // one syllable all along: ㄕ ㄛ then ㄨ is ㄕㄨㄛ.
+                for(size_t count=loose;count>0;--count)
+                    if(const Text joined=takenBack(count,raw+ch);dict.reachable(joined)){
+                        takeBack(count,joined);implied=loose-count;
+                        if(toneOf(raw.back()) && dict.byCode.count(raw) && finishSyllable(false))implied=0;
                         return {};
                     }
-                }
             }
             // A key that cannot continue the syllable starts the next one when the keys so far already
             // spell a first-tone syllable, as when Space was left out between two syllables.
-            if(!toneKey && !startsCode(raw+ch) && !recallsFrom(raw+ch) && (reattach() || finishSyllable())){
-                raw=Text(1,ch);
-                return {};
+            if(!toneKey && !startsCode(raw+ch) && !recallsFrom(raw+ch)){
+                const size_t before=syllables.size();
+                if(reattach() || finishSyllable()){
+                    if(syllables.size()>before){implied=loose+1;lent.reset();}
+                    raw=Text(1,ch);
+                    return {};
+                }
             }
         }
         // A syllable is at most a few keys; a run of first keys recalling a sentence may be longer.
         if(raw.size()>=(syllables.empty()?size_t(16):size_t(5)) || syllables.size()>=128) return {};
-        raw+=ch;
-        if(toneKey) finishSyllable();
+        raw+=ch;implied=loose;lent=owed;
+        if(toneKey && finishSyllable(false)){implied=0;lent.reset();}
         return {};
     }
 };
