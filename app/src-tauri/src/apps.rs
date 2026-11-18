@@ -21,7 +21,14 @@ pub struct AppRule {
     /// Whether text is refined here: false keeps a terminal's or code editor's text away from the service;
     /// true refines here only when the main settings have the service filled in.
     pub refine: Option<bool>,
+    /// What refinement is asked to do here besides tidying, such as the tone: casual for a chat, formal for mail.
+    pub refine_note: String,
+    /// The language refined text comes out in here; None follows the main settings. Codes as in the main settings.
+    pub refine_language: Option<String>,
 }
+
+/// The most characters a program's note may have.
+pub const LONGEST_NOTE: usize = 200;
 
 pub fn own_file() -> PathBuf {
     crate::paths::data().join("app-rules.json")
@@ -33,6 +40,8 @@ fn cleaned(rules: Vec<AppRule>) -> Vec<AppRule> {
     for mut rule in rules {
         rule.program = rule.program.trim().to_string();
         rule.delivery_mode = rule.delivery_mode.filter(|mode| *mode <= 2);
+        rule.refine_note = rule.refine_note.trim().chars().take(LONGEST_NOTE).collect();
+        rule.refine_language = rule.refine_language.filter(|code| crate::settings::REFINE_LANGUAGES.contains(&code.as_str()));
         if rule.program.is_empty() {
             continue;
         }
@@ -74,6 +83,8 @@ pub fn effective(prefs: &Settings, rule: Option<&AppRule>) -> Settings {
         simplified: rule.simplified.unwrap_or(prefs.simplified),
         delivery_mode: rule.delivery_mode.or(prefs.delivery_mode),
         refine: rule.refine.unwrap_or(prefs.refine),
+        refine_language: rule.refine_language.clone().unwrap_or_else(|| prefs.refine_language.clone()),
+        refine_app_note: rule.refine_note.clone(),
         ..prefs.clone()
     }
 }
@@ -125,6 +136,19 @@ mod tests {
         assert_eq!((changed.tidy, changed.simplified, changed.delivery_mode), (false, true, Some(1)));
         assert_eq!(changed.mode(), crate::deliver::Mode::Copy);
         assert!(!changed.keep_history);
+    }
+
+    #[test]
+    fn a_rule_sets_the_tone_and_language_of_refinement() {
+        let prefs = Settings { refine_note: "用詞正式".into(), refine_language: "".into(), ..Settings::default() };
+        let chat = AppRule { refine_note: "口語、輕鬆".into(), refine_language: Some("en".into()), ..rule("LINE.exe") };
+        let here = effective(&prefs, Some(&chat));
+        assert_eq!((here.refine_note.as_str(), here.refine_app_note.as_str(), here.refine_language.as_str()), ("用詞正式", "口語、輕鬆", "en"));
+        let english = Settings { refine_language: "en".into(), ..Settings::default() };
+        assert_eq!(effective(&english, Some(&rule("Code.exe"))).refine_language, "en");
+        // An unknown language follows the main settings, and a long note is cut to size.
+        let odd = cleaned(vec![AppRule { refine_language: Some("klingon".into()), refine_note: "長".repeat(300), ..rule("a.exe") }]);
+        assert_eq!((odd[0].refine_language.clone(), odd[0].refine_note.chars().count()), (None, LONGEST_NOTE));
     }
 
     #[test]

@@ -168,7 +168,7 @@ fn refined(app: &AppHandle, run: u64, cleaned: String, prefs: &Settings, chosen:
     }
     working(app, run, refine::WORKING);
     let started = std::time::Instant::now();
-    match refine::refine(&cleaned, &prefs.refine_url, &prefs.refine_model, &prefs.refine_note) {
+    match refine::refine(&cleaned, &prefs.refine_url, &prefs.refine_model, &refine::Ask::of(prefs)) {
         // The model may answer in Simplified characters; the user's words are matched in Traditional.
         Ok(text) => (deliver::convert_script(&text, false), Some(refine::Status::Refined(started.elapsed()))),
         Err(failure) => (cleaned, Some(refine::Status::Failed(failure))),
@@ -778,7 +778,7 @@ fn refine_text(text: &str) -> i32 {
         return 1;
     }
     let started = std::time::Instant::now();
-    match refine::refine(text, &prefs.refine_url, &prefs.refine_model, &prefs.refine_note) {
+    match refine::refine(text, &prefs.refine_url, &prefs.refine_model, &refine::Ask::of(&prefs)) {
         Ok(refined) => println!("{}", deliver::convert_script(&refined, false)),
         Err(failure) => {
             eprintln!("{}", failure.sentence());

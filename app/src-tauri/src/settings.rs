@@ -41,6 +41,15 @@ fn lenient_note<'de, D: Deserializer<'de>>(source: D) -> Result<String, D::Error
     Ok(value.as_ref().and_then(serde_json::Value::as_str).map(short_note).unwrap_or_default())
 }
 
+/// The languages refined text may come out in; anything else reads as "as spoken".
+pub const REFINE_LANGUAGES: [&str; 3] = ["", "en", "zh-TW"];
+
+fn lenient_language<'de, D: Deserializer<'de>>(source: D) -> Result<String, D::Error> {
+    let value = Option::<serde_json::Value>::deserialize(source)?;
+    let code = value.as_ref().and_then(serde_json::Value::as_str).unwrap_or_default();
+    Ok(if REFINE_LANGUAGES.contains(&code) { code.to_string() } else { String::new() })
+}
+
 /// Keys that are not a shortcut this version understands are read as unset, so the rest of the user's choices still load.
 fn lenient_hotkey<'de, D: Deserializer<'de>>(source: D) -> Result<Option<Hotkey>, D::Error> {
     let value = Option::<serde_json::Value>::deserialize(source)?;
@@ -102,6 +111,13 @@ pub struct Settings {
     /// What the user adds to the instructions for the refinement service, at most 500 characters.
     #[serde(deserialize_with = "lenient_note")]
     pub refine_note: String,
+    /// The language refined text comes out in: "" as spoken, "en" English, "zh-TW" Taiwanese Traditional Chinese.
+    #[serde(deserialize_with = "lenient_language")]
+    pub refine_language: String,
+    /// What the rule for the program being dictated into adds to the instructions, such as a tone. Comes only from
+    /// the rule, so it is never saved with the main settings.
+    #[serde(skip)]
+    pub refine_app_note: String,
     /// Whether GitHub is asked once a day for a newer version. Off means no request is made unless the user presses the button.
     pub check_updates: bool,
 }
@@ -136,6 +152,8 @@ impl Default for Settings {
             refine_url: DEFAULT_REFINE_URL.into(),
             refine_model: String::new(),
             refine_note: String::new(),
+            refine_language: String::new(),
+            refine_app_note: String::new(),
             check_updates: true,
         }
     }
@@ -273,6 +291,19 @@ mod tests {
         assert!(saved.use_replacements);
         let preview: Settings = serde_json::from_str(r#"{"AutoInsert":false}"#).unwrap();
         assert_eq!(preview.mode(), Mode::Preview);
+    }
+
+    #[test]
+    fn the_output_language_is_kept_and_an_unknown_one_reads_as_spoken() {
+        let english: Settings = serde_json::from_str(r#"{"RefineLanguage":"en"}"#).unwrap();
+        assert_eq!(english.refine_language, "en");
+        let odd: Settings = serde_json::from_str(r#"{"RefineLanguage":"klingon"}"#).unwrap();
+        assert_eq!(odd.refine_language, "");
+        let older: Settings = serde_json::from_str("{}").unwrap();
+        assert_eq!(older.refine_language, "");
+        // A program's note is never written to the settings file.
+        let with_note = Settings { refine_app_note: "口語".into(), ..Settings::default() };
+        assert!(!serde_json::to_string(&with_note).unwrap().contains("口語"));
     }
 
     #[test]

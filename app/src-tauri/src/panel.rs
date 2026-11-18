@@ -211,12 +211,13 @@ pub fn clear_refine_key() -> bool {
 /// Refines the fixed sample with what the page has filled in and the stored key, whether or not Refine is on.
 /// Saves nothing. The reason for a failure is a whole sentence that never repeats what the server sent.
 #[tauri::command(async)]
-pub fn refine_test(url: String, model: String, note: String) -> Result<String, String> {
+pub fn refine_test(url: String, model: String, note: String, language: Option<String>) -> Result<String, String> {
     if let Some(problem) = crate::refine::problem(&url, &model, crate::secret::refine_exists()) {
         return Err(format!("{problem}。"));
     }
     // The blocking client must not run, or be dropped, on the runtime async commands use, so it gets its own thread.
-    let asked = std::thread::spawn(move || crate::refine::refine(crate::refine::SAMPLE, &url, &model, &note));
+    let ask = crate::refine::Ask { note, app_note: String::new(), language: crate::refine::Language::from_code(&language.unwrap_or_default()) };
+    let asked = std::thread::spawn(move || crate::refine::refine(crate::refine::SAMPLE, &url, &model, &ask));
     match asked.join() {
         // A dictation turns the answer into Traditional characters, so the test shows it the same way.
         Ok(Ok(text)) => Ok(crate::deliver::convert_script(&text, false)),
