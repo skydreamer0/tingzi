@@ -27,6 +27,9 @@
   --size-control: 36px;
   --motion-fast: 140ms;
   --motion-base: 200ms;
+  --motion-meter: 60ms;
+  --motion-wave: 900ms;
+  --motion-linger: 1800ms;
   --preview-size: 20px;
 }
 @media (prefers-color-scheme: dark) {

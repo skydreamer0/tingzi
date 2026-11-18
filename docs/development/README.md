@@ -25,7 +25,7 @@
 | `windows/standalone-data/pairs.txt`、`windows/tools/build_pairs.py` | 詞語搭配統計與產生它的腳本。腳本讀詞庫和一份語料（維基百科分卷或純文字檔），輸出常一起出現的詞對；語料本身不放進專案。授權見 `pairs-NOTICE.txt`。 |
 | `assets/icons/` | 介面圖示集的 SVG 原稿；規範見[圖示集說明](../../assets/icons/README.md)。 |
 | `assets/brand/` | 橫耳鍵品牌素材。Windows 建置使用 `windows/tingzi.svg` 與 `windows/tingzi.ico`。 |
-| `assets/design/tokens.json`、`build_tokens.py` | 所有視窗共用的顏色、圓角、字級與動畫時間。改 `tokens.json` 後執行 `python assets/design/build_tokens.py`，會重寫浮窗與設定頁用的 `app/ui/tokens.css`，以及候選窗與輸入行用的 `windows/palette.h`；加 `--check` 只檢查兩個檔是否最新。 |
+| `assets/design/tokens.json`、`build_tokens.py` | 所有視窗共用的顏色、圓角、字級與動畫時間。改 `tokens.json` 後執行 `python assets/design/build_tokens.py`，會重寫浮窗與設定頁用的 `app/ui/tokens.css`，以及候選窗與輸入行用的 `windows/palette.h`；加 `--check` 只檢查兩個檔是否最新。CSS 與 `app.js` 的動畫時間一律用 `--motion-*`，不要寫死毫秒數；`layout.rs` 的 `FOLD_MS` 有測試確認等於 `motion.base`。 |
 | `docs/specs/` | 產品識別與待實作規格。 |
 
 目前沒有根目錄 `source/`、`tests/` 或 `tools/` 的統一建置架構。重整須先依規格確認相對路徑和發行依賴。

@@ -51,7 +51,7 @@ def build_css(tokens):
     shared += [f"  --radius-{key}: {value}px;" for key, value in tokens["radius"].items()]
     shared += [f"  --font-{key}: {value}px;" for key, value in tokens["font"].items()]
     shared += [f"  --size-{key}: {value}px;" for key, value in tokens["size"].items()]
-    shared += [f"  --motion-{key}: {value}ms;" for key, value in tokens["motion"].items()]
+    shared += [f"  --motion-{key}: {value}ms;" for key, value in tokens["motion"].items() if key != "about"]
     dark = css_block(tokens, "dark")
     return (
         "/* Written by assets/design/build_tokens.py from assets/design/tokens.json; edit that file instead. */\n"

@@ -152,7 +152,8 @@ fn borrowed(app: &AppHandle) -> bool {
     app.state::<Mutex<Place>>().lock().map(|place| place.layout == Layout::Bar && place.home == Layout::Docked).unwrap_or(false)
 }
 
-/// How long the page takes to fold the pill into the keycap; app.js plays it in the same time.
+/// How long the page takes to fold the pill into the keycap: `motion.base` in assets/design/tokens.json,
+/// which app.js and style.css read too.
 const FOLD_MS: u64 = 200;
 
 /// Counts the folds asked for; a newer dictation or fold makes an older one stand down.
@@ -346,6 +347,12 @@ mod tests {
     use super::*;
 
     const SCREEN: Area = Area { left: 0, top: 0, right: 1920, bottom: 1040 };
+
+    #[test]
+    fn the_fold_takes_as_long_as_the_page_plays_it() {
+        let tokens: serde_json::Value = serde_json::from_str(include_str!("../../../assets/design/tokens.json")).unwrap();
+        assert_eq!(tokens["motion"]["base"].as_u64(), Some(FOLD_MS));
+    }
 
     #[test]
     fn docked_keycap_hugs_the_right_edge() {

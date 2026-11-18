@@ -61,17 +61,17 @@ html, body { background: transparent; }
   display: block;
   pointer-events: none;
 }
-.key-base { fill: var(--key-base); transition: fill 150ms ease; }
+.key-base { fill: var(--key-base); transition: fill var(--motion-fast) ease; }
 .key-top { fill: var(--key-top); }
 .key-ink { fill: none; stroke: var(--key-ink); stroke-linecap: round; stroke-linejoin: round; }
 /* The base is ~5 units taller than the face: that is the key's travel. */
-.key-face { transition: transform 90ms ease-out; }
+.key-face { transition: transform var(--motion-fast) ease-out; }
 .mic:hover .key-face { transform: translateY(1px); }
 .mic:active .key-face, .mic.tap .key-face { transform: translateY(3px); }
 
 /* The four upright strokes double as level bars, growing from the lower horizontal (y=38).
    Origins are in SVG user units; --k gives each bar its own response, --max keeps it inside the face. */
-.key-bar { transform-box: view-box; transition: transform 200ms ease-out; }
+.key-bar { transform-box: view-box; transition: transform var(--motion-base) ease-out; }
 .key-bar.b1 { transform-origin: 16.3px 38px; --k: 0.9; --max: 1.28; }
 .key-bar.b2 { transform-origin: 27px 38px; --k: 1.5; --max: 1.55; }
 .key-bar.b3 { transform-origin: 36px 38px; --k: 1.2; --max: 1.55; }
@@ -80,12 +80,12 @@ html, body { background: transparent; }
 /* app.js sets --level (0..1, already smoothed) every frame while recording. */
 [data-state="recording"] .key-bar {
   transform: scaleY(min(var(--max), calc(0.35 + var(--level, 0) * var(--k))));
-  transition: transform 60ms linear;
+  transition: transform var(--motion-meter) linear;
 }
-[data-state="working"] .key-bar { animation: wave 900ms ease-in-out infinite; }
-[data-state="working"] .key-bar.b2 { animation-delay: 120ms; }
-[data-state="working"] .key-bar.b3 { animation-delay: 240ms; }
-[data-state="working"] .key-bar.b4 { animation-delay: 360ms; }
+[data-state="working"] .key-bar { animation: wave var(--motion-wave) ease-in-out infinite; }
+[data-state="working"] .key-bar.b2 { animation-delay: calc(var(--motion-wave) * 2 / 15); }
+[data-state="working"] .key-bar.b3 { animation-delay: calc(var(--motion-wave) * 4 / 15); }
+[data-state="working"] .key-bar.b4 { animation-delay: calc(var(--motion-wave) * 6 / 15); }
 @keyframes wave {
   0%, 100% { transform: scaleY(0.5); }
   50% { transform: scaleY(1.15); }
@@ -110,7 +110,7 @@ html, body { background: transparent; }
   opacity: 0;
 }
 .done-badge .glyph { width: 14px; height: 14px; stroke-width: 2.6; }
-[data-layout="docked"][data-state="done"] .done-badge { display: grid; animation: badge 1.8s ease forwards; }
+[data-layout="docked"][data-state="done"] .done-badge { display: grid; animation: badge var(--motion-linger) ease forwards; }
 @keyframes badge {
   0% { opacity: 0; transform: scale(0.6); }
   10% { opacity: 1; transform: scale(1); }
@@ -157,7 +157,7 @@ html, body { background: transparent; }
   height: 100%;
   width: 0;
   background: var(--accent);
-  transition: width 60ms linear;
+  transition: width var(--motion-meter) linear;
 }
 
 /* Tools wait until the pointer is on the pill; a result's own tools show straight away. */
@@ -253,7 +253,7 @@ html, body { background: transparent; }
 .capsule.opening .bar { animation: pill-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
 .capsule.closing .bar { animation: pill-close var(--motion-base) cubic-bezier(0.4, 0, 1, 1) forwards; }
 /* The words and tools fade first, so the fold does not look like it cuts through them. */
-.capsule.closing .body, .capsule.closing .tools { opacity: 0; transition: opacity 100ms ease-in; }
+.capsule.closing .body, .capsule.closing .tools { opacity: 0; transition: opacity var(--motion-fast) ease-in; }
 @keyframes pill-open { from { clip-path: var(--start); } to { clip-path: var(--whole); } }
 @keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--start); } }
 
