@@ -32,8 +32,9 @@ int wmain(int argc,wchar_t** argv){
     check(other.choices().front().text==L"你","different context unchanged");
     {
         std::vector<NewWord> word{{L"ㄒㄧㄠˇ-ㄇㄧㄥˊ",L"曉明"}};
-        check(reopened.saveWords(word) && reopened.learnedWords().size()==1 && reopened.learnedWords()[0].text==L"曉明","a new word is kept from its first use");
+        check(reopened.saveWords(word) && reopened.learnedWords().empty() && reopened.allWords().size()==1,"a new word waits for a second use");
         check(reopened.saveWords(word) && reopened.allWords().size()==1 && reopened.allWords()[0].hits==2,"using it again counts, without a second entry");
+        check(reopened.learnedWords().size()==1 && reopened.learnedWords()[0].text==L"曉明","a word used twice is offered");
         check(!reopened.forgetWord(L"ㄒㄧㄠˇ-ㄇㄧㄥˊ",L"小明") && reopened.forgetWord(L"ㄒㄧㄠˇ-ㄇㄧㄥˊ",L"曉明") && reopened.allWords().empty(),"one learned word can be removed");
         check(reopened.saveWords(word),"and learned again");
         check(reopened.saveSentence({L"sca",L"你好嗎"}) && reopened.saveSentence({L"jb",L"我們"}) && reopened.saveSentence({L"sca",L"你好嗎"}),"sentences are kept");

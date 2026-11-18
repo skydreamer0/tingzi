@@ -496,6 +496,20 @@ class Input {
             Text candidate=mark?stem+mark:stem;
             if(candidate!=code && std::find(codes.begin(),codes.end(),candidate)==codes.end())codes.push_back(candidate);
         }
+        // A key touching the intended one on the standard layout, keeping the tone, when that spells a syllable.
+        // Each row sits half a key to the right of the one above it.
+        static const Text rows[]={L"1234567890-",L"qwertyuiop",L"asdfghjkl;",L"zxcvbnm,./"};
+        for(size_t i=0;i<base.size();++i) for(int r=0;r<4;++r){
+            const size_t c=rows[r].find(base[i]);
+            if(c==Text::npos)continue;
+            const std::pair<int,int> touching[]={{r,int(c)-1},{r,int(c)+1},{r-1,int(c)},{r-1,int(c)+1},{r+1,int(c)},{r+1,int(c)-1}};
+            for(auto [row,column]:touching){
+                if(row<0 || row>3 || column<0 || column>=int(rows[row].size()))continue;
+                Text candidate=base;candidate[i]=rows[row][size_t(column)];
+                if(tone)candidate+=tone;
+                if(candidate!=code && dict.byCode.count(candidate) && std::find(codes.begin(),codes.end(),candidate)==codes.end())codes.push_back(candidate);
+            }
+        }
         return codes;
     }
     // Phrase scores are log10 frequencies from about -8 to -2; eight steps per unit keeps
@@ -666,13 +680,31 @@ public:
             static const std::vector<Text> none;
             auto same=dict.byCode.find(syllables[pos]);
             const auto& exact=same==dict.byCode.end()?none:same->second;
+            // A character that makes a word with the one shown beside it comes first; otherwise the more common one.
+            const Text before=leftOf(pos),after=cut(pos+1,true);
+            auto partOfWord=[&](const Text& code,const Text& text){
+                double best=-100;
+                auto look=[&](const Text& reading,const Text& word){
+                    auto found=dict.phrases.find(reading);
+                    if(found==dict.phrases.end())return;
+                    for(const auto& term:found->second)if(term.text==word)best=(std::max)(best,term.score);
+                };
+                const Text sound=dict.reading(code);
+                if(pos && !before.empty() && !symbol(syllables[pos-1]))look(dict.reading(syllables[pos-1])+L"-"+sound,before.substr(before.size()-1)+text);
+                if(pos+1<syllables.size() && !after.empty() && !symbol(syllables[pos+1]))look(sound+L"-"+dict.reading(syllables[pos+1]),text+after.substr(0,1));
+                return best;
+            };
             for(const auto& code:nearCodes(syllables[pos])){
                 auto it=dict.byCode.find(code);
                 if(it==dict.byCode.end())continue;
                 for(const auto& text:it->second)
                     if(std::find(exact.begin(),exact.end(),text)==exact.end() &&
-                       std::none_of(result.begin(),result.end(),[&](const Choice& item){return item.text==text;}))result.push_back({text,1});
+                       std::none_of(result.begin(),result.end(),[&](const Choice& item){return item.text==text;})){
+                        const double word=partOfWord(code,text);
+                        result.push_back({text,1,word>-100?100+word:dict.scoreOf(dict.reading(code),text)});
+                    }
             }
+            std::stable_sort(result.begin(),result.end(),[](const Choice& a,const Choice& b){return a.score>b.score;});
             return result;
         }
         if(owner(pos)){

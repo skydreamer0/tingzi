@@ -196,8 +196,8 @@ int wmain(int argc,wchar_t** argv){
 
     if(!writeTo.empty()){
         std::ofstream out(writeTo,std::ios::binary);
-        out<<"# segmenter\tcategory\tsentences right\tcharacters right\n";
-        for(const auto& [key,t]:tallies)out<<key.first<<'\t'<<key.second<<'\t'<<t.sentences<<'\t'<<t.correctCharacters<<'\n';
+        out<<"# segmenter\tcategory\tsentences right\tcharacters right\twrong characters on the first page\n";
+        for(const auto& [key,t]:tallies)out<<key.first<<'\t'<<key.second<<'\t'<<t.sentences<<'\t'<<t.correctCharacters<<'\t'<<t.reachable<<'\n';
     }
     bool ok=at(0.95)<=typicalKeyLimitMs && keyTimes.back()<=slowestKeyLimitMs;
     if(!ok)std::cout<<"FAIL keys took longer than "<<typicalKeyLimitMs<<" ms at the 95th percentile or "<<slowestKeyLimitMs<<" ms at the slowest\n";
@@ -207,17 +207,17 @@ int wmain(int argc,wchar_t** argv){
         while(std::getline(in,line)){
             if(!line.empty() && line.back()=='\r')line.pop_back();
             if(line.empty() || line[0]=='#')continue;
-            std::istringstream row(line);std::string mode,category;size_t sentences=0,characters=0;
-            std::getline(row,mode,'\t');std::getline(row,category,'\t');row>>sentences>>characters;
+            std::istringstream row(line);std::string mode,category;size_t sentences=0,characters=0,reach=0;
+            std::getline(row,mode,'\t');std::getline(row,category,'\t');row>>sentences>>characters>>reach;
             const auto found=tallies.find({mode,category});
             if(found==tallies.end()){std::cout<<"FAIL "<<mode<<" "<<category<<" is in the baseline but has no cases\n";ok=false;continue;}
             const auto& t=found->second;
-            if(t.sentences<sentences || t.correctCharacters<characters){
-                std::cout<<"FAIL "<<mode<<" "<<category<<": "<<t.sentences<<" sentences and "<<t.correctCharacters
-                         <<" characters right, the baseline has "<<sentences<<" and "<<characters<<"\n";
+            if(t.sentences<sentences || t.correctCharacters<characters || t.reachable<reach){
+                std::cout<<"FAIL "<<mode<<" "<<category<<": "<<t.sentences<<" sentences, "<<t.correctCharacters<<" characters and "<<t.reachable
+                         <<" fixes on the first page, the baseline has "<<sentences<<", "<<characters<<" and "<<reach<<"\n";
                 ok=false;
-            } else if(t.sentences>sentences || t.correctCharacters>characters)
-                std::cout<<"BETTER "<<mode<<" "<<category<<": update baseline.tsv to "<<t.sentences<<" and "<<t.correctCharacters<<"\n";
+            } else if(t.sentences>sentences || t.correctCharacters>characters || t.reachable>reach)
+                std::cout<<"BETTER "<<mode<<" "<<category<<": update baseline.tsv to "<<t.sentences<<", "<<t.correctCharacters<<" and "<<t.reachable<<"\n";
         }
     }
     return ok?0:1;
