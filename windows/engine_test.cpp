@@ -234,6 +234,14 @@ int wmain(int argc,wchar_t** argv) {
     auto again=input.corrections();
     expect(again.size()==1 && again[0].choice==rare,"picking it from its new place still counts as a pick");
     input.clear();
+    const Text later=options.size()>6?options[6].text:Text();
+    input.setFavorites(std::make_shared<const Favorites>(Favorites{{L"ㄋㄧˇ",{{later,1},{rare,3}}}}));
+    enter("SU3");input.press(VK_DOWN);options=input.choices();
+    expect(options.size()>2 && options[1].text==later && options[2].text==rare,"the latest pick comes first, then earlier ones");
+    input.press('1');
+    auto back=input.corrections();
+    expect(back.size()==1 && back[0].choice==L"你","going back to the usual character counts too, so the earlier pick was a slip");
+    input.clear();
     input.setFavorites(std::make_shared<const Favorites>(Favorites{{L"ㄋㄧˇ",{{rare,2}}}}));
     enter("SU3");
     expect(input.preview()==L"你","picks in other sentences do not change the sentence, only the list");

@@ -17,7 +17,7 @@ using Text=std::wstring;
 using LearnKey=std::pair<Text,Text>;
 using Preferences=std::map<LearnKey,Text>;
 // For each reading, the characters the user picked over the one offered first, with how many times,
-// most picked first.
+// the latest pick first.
 using Favorites=std::map<Text,std::vector<std::pair<Text,int>>>;
 struct Correction { LearnKey key; Text choice; };
 struct NewWord { Text reading, text; };
@@ -75,8 +75,17 @@ public:
             exec("CREATE TABLE IF NOT EXISTS settings(enabled INTEGER NOT NULL)");
             exec("CREATE UNIQUE INDEX IF NOT EXISTS one_setting ON settings((1))");
             exec("INSERT OR IGNORE INTO settings VALUES(0)");
-            exec("CREATE TABLE IF NOT EXISTS choices(context TEXT NOT NULL,reading TEXT NOT NULL,choice TEXT NOT NULL,hits INTEGER NOT NULL,PRIMARY KEY(context,reading)) WITHOUT ROWID");
+            exec("CREATE TABLE IF NOT EXISTS choices(context TEXT NOT NULL,reading TEXT NOT NULL,choice TEXT NOT NULL,hits INTEGER NOT NULL,at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(context,reading)) WITHOUT ROWID");
         }
+        choicesTable();
+    }
+    // Choices gained a column for when they were last picked; older files get it here.
+    void choicesTable(){
+        sqlite3_stmt* s=nullptr;bool table=false,has=false;
+        if(sqlite3_prepare_v2(db,"SELECT name FROM pragma_table_info('choices')",-1,&s,nullptr)==SQLITE_OK)
+            while(sqlite3_step(s)==SQLITE_ROW){table=true;if(std::string(reinterpret_cast<const char*>(sqlite3_column_text(s,0)))=="at")has=true;}
+        sqlite3_finalize(s);
+        if(table && !has)exec("ALTER TABLE choices ADD COLUMN at INTEGER NOT NULL DEFAULT 0");
     }
     Learning(const Learning&)=delete;
     ~Learning(){if(db)sqlite3_close(db);}
@@ -100,7 +109,7 @@ public:
     Favorites favorites() const {
         Favorites found;
         sqlite3_stmt* s=nullptr;
-        if(db && sqlite3_prepare_v2(db,"SELECT reading,choice,SUM(hits) AS picks FROM choices WHERE (SELECT enabled FROM settings)=1 GROUP BY reading,choice ORDER BY reading,picks DESC,choice",-1,&s,nullptr)==SQLITE_OK){
+        if(db && sqlite3_prepare_v2(db,"SELECT reading,choice,SUM(hits) AS picks FROM choices WHERE (SELECT enabled FROM settings)=1 GROUP BY reading,choice ORDER BY reading,MAX(at) DESC,picks DESC,choice",-1,&s,nullptr)==SQLITE_OK){
             while(sqlite3_step(s)==SQLITE_ROW){
                 auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
                 found[col(0)].push_back({col(1),sqlite3_column_int(s,2)});
@@ -113,13 +122,13 @@ public:
         if(!exec("BEGIN IMMEDIATE"))return false;
         bool ok=enabled();
         sqlite3_stmt* s=nullptr;
-        const char* sql="INSERT INTO choices VALUES(?,?,?,1) ON CONFLICT(context,reading) DO UPDATE SET hits=CASE WHEN choice=excluded.choice THEN MIN(hits+1,2) ELSE 1 END,choice=excluded.choice";
+        const char* sql="INSERT INTO choices(context,reading,choice,hits,at) VALUES(?,?,?,1,?) ON CONFLICT(context,reading) DO UPDATE SET hits=CASE WHEN choice=excluded.choice THEN MIN(hits+1,2) ELSE 1 END,choice=excluded.choice,at=excluded.at";
         ok=ok && sqlite3_prepare_v2(db,sql,-1,&s,nullptr)==SQLITE_OK;
         // A given context counts once per committed composition.
         Preferences distinct;for(const auto& edit: edits)distinct[edit.key]=edit.choice;
         for(const auto& [key,choice]:distinct){
             if(!ok)break;
-            bind(s,1,key.first);bind(s,2,key.second);bind(s,3,choice);
+            bind(s,1,key.first);bind(s,2,key.second);bind(s,3,choice);sqlite3_bind_int64(s,4,secondsNow());
             ok=sqlite3_step(s)==SQLITE_DONE;sqlite3_reset(s);
         }
         sqlite3_finalize(s);
@@ -241,7 +250,7 @@ public:
         std::ifstream in(path,std::ios::binary);
         if(!db || !in || !exec("BEGIN IMMEDIATE"))return false;
         sqlite3_stmt* s=nullptr;
-        bool ok=sqlite3_prepare_v2(db,"INSERT INTO choices VALUES(?,?,?,?) ON CONFLICT(context,reading) DO UPDATE SET choice=excluded.choice,hits=excluded.hits",-1,&s,nullptr)==SQLITE_OK;
+        bool ok=sqlite3_prepare_v2(db,"INSERT INTO choices(context,reading,choice,hits) VALUES(?,?,?,?) ON CONFLICT(context,reading) DO UPDATE SET choice=excluded.choice,hits=excluded.hits",-1,&s,nullptr)==SQLITE_OK;
         std::string line;bool first=true;
         while(ok && std::getline(in,line)){
             if(!line.empty() && line.back()=='\r')line.pop_back();

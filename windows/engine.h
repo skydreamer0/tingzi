@@ -397,24 +397,24 @@ class Input {
         auto it=preferences->find({place(left),dict.reading(syllables[pos])});
         return it==preferences->end()?Text():it->second;
     }
-    // What the user picked for this syllable before, in any sentence, most picked first.
+    // What the user picked for this syllable before, in any sentence, the latest pick first.
     const std::vector<std::pair<Text,int>>* favored(size_t pos) const {
         if(!favorites || pos>=syllables.size() || symbol(syllables[pos]))return nullptr;
         auto found=favorites->find(dict.reading(syllables[pos]));
         return found==favorites->end()?nullptr:&found->second;
     }
-    // Moves the characters the user picked before ahead of the other single characters from `from` on.
+    // Moves the characters the user picked before for this sound, latest first, to `from`, ahead of
+    // every other entry after it, so they are on the first page whatever words follow.
     void favor(std::vector<Choice>& list,size_t pos,size_t from) const {
         const auto* picks=favored(pos);
-        if(!picks)return;
-        auto rank=[&](const Choice& c){
-            for(size_t i=0;i<picks->size();++i)if((*picks)[i].first==c.text)return i;
-            return picks->size();
-        };
-        std::vector<size_t> slots;std::vector<Choice> singles;
-        for(size_t i=from;i<list.size();++i)if(list[i].count==1){slots.push_back(i);singles.push_back(list[i]);}
-        std::stable_sort(singles.begin(),singles.end(),[&](const Choice& a,const Choice& b){return rank(a)<rank(b);});
-        for(size_t k=0;k<slots.size();++k)list[slots[k]]=singles[k];
+        if(!picks || from>list.size())return;
+        std::vector<Choice> front;
+        for(const auto& [text,count]:*picks){
+            (void)count;
+            auto at=std::find_if(list.begin()+from,list.end(),[&](const Choice& c){return c.count==1 && c.text==text;});
+            if(at!=list.end()){front.push_back(*at);list.erase(at);}
+        }
+        list.insert(list.begin()+from,front.begin(),front.end());
     }
     const Segment* owner(size_t pos) const {
         for(const auto& seg:settled)if(pos>=seg.at && pos<seg.at+seg.count)return &seg;
@@ -942,7 +942,10 @@ public:
                 // A pick counts against the order the dictionary offers, not one the user's earlier picks changed.
                 const auto plain=favorites?choices(false):list;
                 const auto firstSingle=wasSettled?plain.begin():std::find_if(plain.begin(),plain.end(),[](const Choice& item){return item.count==1;});
-                if(preferences && !left.empty() && picked.count==1 && firstSingle!=plain.end() && firstSingle->text!=picked.text)
+                // Picking another character than the one picked last time also counts, so the earlier pick is taken as a slip.
+                const auto* picks=favored(target);
+                const bool changed=(firstSingle!=plain.end() && firstSingle->text!=picked.text) || (picks && !picks->empty() && picks->front().first!=picked.text);
+                if(preferences && !left.empty() && picked.count==1 && changed)
                     edit=Correction{{left,dict.reading(syllables[target])},picked.text};
                 if(preferences && picked.count>1 && picked.text.size()==picked.count){
                     Text baseline=list.front().text.substr(0,picked.count);
