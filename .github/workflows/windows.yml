@@ -23,6 +23,12 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test
         run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
+      - name: Test the Zhuyin engine and word choice
+        shell: cmd
+        run: windows\test_engine.cmd
+      - name: Show the word-choice results on the run's summary
+        if: always()
+        run: if (Test-Path .build/engine-test/benchmark.md) { Get-Content .build/engine-test/benchmark.md -Encoding utf8 | Add-Content $env:GITHUB_STEP_SUMMARY -Encoding utf8 }
       - name: Build
         shell: cmd
         run: windows\build.cmd

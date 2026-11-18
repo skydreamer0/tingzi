@@ -1,0 +1,13 @@
+# segmenter	category	sentences right	characters right
+path	general	25	269
+path	homophone	23	206
+path	long	1	96
+path	medical	20	253
+path	mixed	16	228
+path	typo	1	221
+staged	general	25	269
+staged	homophone	20	203
+staged	long	1	95
+staged	medical	17	250
+staged	mixed	16	228
+staged	typo	1	218
