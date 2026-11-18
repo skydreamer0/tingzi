@@ -134,7 +134,7 @@ int wmain(int argc,wchar_t** argv) {
     expect(input.preview()==L"午安","a final typed with its own Space stays a syllable of its own");
     input.clear();
     enter("2I");
-    expect(input.displayRuns().active==L"ㄛ","an initial and a final that spell nothing are split for now");
+    expect(input.displayRuns().active==L"ㄉㄛ","an initial and a final wait for the medial between them");
     enter("J");
     runs=input.displayRuns();
     expect(runs.before.empty() && runs.active==L"ㄉㄨㄛ","a medial typed after the final goes back between them");
@@ -152,6 +152,48 @@ int wmain(int argc,wchar_t** argv) {
     input.clear();
     enter("CJ8 ");
     expect(input.preview().size()==1,"keys typed in order are left alone");
+    input.clear();
+    // The keys of one syllable in any order.
+    enter("2JI ");
+    const Text many=input.preview();
+    input.clear();
+    for(const char* keys:{"2IJ ","J2I ","JI2 ","IJ2 "}){
+        enter(keys);
+        expect(input.preview()==many,"the keys of one syllable are accepted in any order");
+        input.clear();
+    }
+    enter("LC3");
+    expect(input.preview()==L"好","a final typed before its initial joins it at the tone");
+    input.clear();
+    enter("US3LC3");
+    expect(input.press(VK_RETURN)==L"你好","each syllable of a sentence may be typed out of order");
+    input.clear();
+    enter("J2I3");
+    expect(input.preview().size()==1,"keys out of order keep the tone typed after them");
+    input.clear();
+    enter("WJI ");
+    const Text drag=input.preview();
+    input.clear();
+    enter("2WJI ");
+    expect(input.preview()==drag,"a second initial replaces the first");
+    input.clear();
+    enter("2IK6");
+    expect(input.preview()==L"得","a second final replaces the first while the keys spell nothing yet");
+    input.clear();
+    enter("2I ");
+    expect(input.displayRuns().active==L"ㄉㄛ" && input.displayRuns().before.empty(),"keys that spell no syllable stay as typed");
+    input.clear();
+    enter("UWU0 ");
+    expect(input.preview()==L"一天","a first-tone syllable without Space still ends before the next initial");
+    input.clear();
+    enter("8U6");
+    expect(input.preview()==L"阿姨","and before a syllable that begins with a medial");
+    input.clear();
+    enter("C8J ");
+    expect(input.preview().size()==2,"a medial after a finished syllable begins the next one");
+    input.clear();
+    enter("SU3");input.press(VK_LEFT);enter("LC3");
+    expect(input.preview()==L"好你","and so may a syllable typed in the middle of a sentence");
     input.clear();
 
     enter("SU3CL3");input.press(VK_DOWN);
