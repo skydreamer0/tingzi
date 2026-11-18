@@ -206,6 +206,44 @@ int wmain(int argc,wchar_t** argv) {
     enter("SU3");input.press(VK_LEFT);enter("LC3");
     expect(input.preview()==L"好你","and so may a syllable typed in the middle of a sentence");
     input.clear();
+    // Spellings no syllable has are read as the syllable that is said.
+    auto type=[&](std::initializer_list<WPARAM> keys){for(const WPARAM key:keys)input.press(key);};
+    auto shows=[&](std::initializer_list<WPARAM> typed,std::initializer_list<WPARAM> usual){
+        type(usual);
+        const Text wanted=input.preview();
+        input.clear();
+        type(typed);
+        const bool same=!wanted.empty() && input.preview()==wanted && input.displayRuns().active.empty();
+        input.clear();
+        return same;
+    };
+    expect(shows({'Z','J',VK_OEM_2,VK_SPACE},{'Z',VK_OEM_2,VK_SPACE}),"a medial that the syllable is not spelled with is dropped");
+    expect(shows({'1','J','I',VK_SPACE},{'1','I',VK_SPACE}),"and so before the other final it never precedes");
+    expect(shows({'A','J',VK_OEM_2,'4'},{'A',VK_OEM_2,'4'}),"and with a tone");
+    expect(shows({'V','J',VK_OEM_COMMA,'6'},{'V','M',VK_OEM_COMMA,'6'}),"the rounded medial is read where the plain one cannot follow the initial");
+    expect(shows({'R','J','0','4'},{'R','M','0','4'}),"with any final");
+    expect(shows({'F','J','4'},{'F','M','4'}),"or none");
+    expect(shows({'X','J',VK_OEM_COMMA,'4'},{'X','M',VK_OEM_COMMA,'4'}),"and after an initial that takes both medials, before the final only one of them has");
+    expect(shows({'S','U','3','V','J',VK_OEM_COMMA,'6'},{'S','U','3','V','M',VK_OEM_COMMA,'6'}),"in the middle of a sentence too");
+    expect(shows({'Z','J',VK_OEM_2,'S','U','3'},{'Z',VK_OEM_2,VK_SPACE,'S','U','3'}),"and when the next syllable ends it");
+    enter("ZJ ");
+    expect(input.preview().size()==1 && input.preview()!=L"ㄈ","a spelling that is a syllable is left alone");
+    input.clear();
+    // Keys that are no syllable are not broken into a symbol and a character.
+    enter("RK");
+    expect(input.displayRuns().active==L"ㄐㄜ" && input.displayRuns().before.empty(),"an initial no key can follow is not taken for a symbol");
+    enter("3");
+    expect(input.displayRuns().active==L"ㄐㄜˇ" && input.displayRuns().before.empty(),"and the keys stay as typed at the tone");
+    enter("SU3");
+    expect(input.preview()==L"ㄐㄜˇ你" && input.displayRuns().active.empty(),"and do not hold back the syllable typed after them");
+    input.press(VK_BACK);input.press(VK_BACK);
+    expect(!input.active(),"one Backspace removes them");
+    enter("S3U");
+    expect(input.preview()==L"你","a tone typed a key early is still put back");
+    input.clear();
+    enter("R ");
+    expect(input.preview()==L"ㄐ","a lone initial ended with Space is still its own symbol");
+    input.clear();
 
     enter("SU3CL3");input.press(VK_DOWN);
     options=input.choices();
