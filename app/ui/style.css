@@ -82,7 +82,8 @@ html, body { background: transparent; }
   transform: scaleY(min(var(--max), calc(0.35 + var(--level, 0) * var(--k))));
   transition: transform var(--motion-meter) linear;
 }
-[data-state="working"] .key-bar { animation: wave var(--motion-wave) ease-in-out infinite; }
+/* The later bars hold the wave's first value while they wait their turn, rather than rising and then dropping. */
+[data-state="working"] .key-bar { animation: wave var(--motion-wave) ease-in-out infinite backwards; }
 [data-state="working"] .key-bar.b2 { animation-delay: calc(var(--motion-wave) * 2 / 15); }
 [data-state="working"] .key-bar.b3 { animation-delay: calc(var(--motion-wave) * 4 / 15); }
 [data-state="working"] .key-bar.b4 { animation-delay: calc(var(--motion-wave) * 6 / 15); }
@@ -152,13 +153,17 @@ html, body { background: transparent; }
   display: none;
 }
 [data-state="recording"] .meter { display: block; }
+/* Scaled rather than resized, so following the microphone does not lay the pill out again many times a second. */
 #level {
   display: block;
   height: 100%;
-  width: 0;
   background: var(--accent);
-  transition: width var(--motion-meter) linear;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--motion-meter) linear;
 }
+/* It fills from the keycap's side, the way the pill grows. */
+[data-side="right"] #level { transform-origin: right; }
 
 /* Tools wait until the pointer is on the pill; a result's own tools show straight away. */
 .tools { flex: none; display: flex; gap: 2px; }
@@ -176,6 +181,12 @@ html, body { background: transparent; }
   cursor: pointer;
 }
 .tool:hover { background: var(--input); color: var(--text); }
+/* Tools fade in and slide a little away from the keycap, the way the pill grows, rather than pop up.
+   They go at once, so they never linger after the pointer. --out is the pill's direction: 1 rightwards, -1 leftwards. */
+.capsule { --out: 1; }
+.capsule[data-side="right"] { --out: -1; }
+.tools .tool { transition: opacity var(--motion-fast) ease-out, transform var(--motion-fast) ease-out; }
+@starting-style { .tools .tool { opacity: 0; transform: translateX(calc(var(--out) * -6px)); } }
 .tool .glyph { width: 20px; height: 20px; }
 .tools .for-text, .tools .for-retry { display: none; }
 [data-state="done"] .tools .for-text { display: grid; }
@@ -254,6 +265,9 @@ html, body { background: transparent; }
 .capsule.closing .bar { animation: pill-close var(--motion-base) cubic-bezier(0.4, 0, 1, 1) forwards; }
 /* The words and tools fade first, so the fold does not look like it cuts through them. */
 .capsule.closing .body, .capsule.closing .tools { opacity: 0; transition: opacity var(--motion-fast) ease-in; }
+/* A dictation that starts with the pill open folds only the pill's far end, back to the short pill's length;
+   the clock beside the keycap stays readable, so nothing fades. */
+.capsule.shortening .bar { animation: pill-close var(--motion-base) cubic-bezier(0.4, 0, 1, 1) forwards; }
 @keyframes pill-open { from { clip-path: var(--start); } to { clip-path: var(--whole); } }
 @keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--start); } }
 
@@ -267,10 +281,11 @@ html, body { background: transparent; }
 
 /* Reduced motion: no travel, no wave, static bars; colour still tells the state. */
 @media (prefers-reduced-motion: reduce) {
-  #level, .key-face, .key-bar { transition: none; }
+  #level, .key-face, .key-bar, .tools .tool { transition: none; }
+  .tools .tool { transform: none; }
   .mic:hover .key-face, .mic:active .key-face, .mic.tap .key-face { transform: none; }
   [data-state] .key-bar { transform: none; animation: none; }
-  .capsule.opening .bar, .capsule.closing .bar, .capsule.card-opening .editor, .capsule.card-closing .editor { animation: none; }
+  .capsule.opening .bar, .capsule.closing .bar, .capsule.shortening .bar, .capsule.card-opening .editor, .capsule.card-closing .editor { animation: none; }
   [data-layout="docked"][data-state="done"] .done-badge { animation-name: badge-fade; }
 }
 @keyframes badge-fade {

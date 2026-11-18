@@ -65,11 +65,16 @@ function render() {
   mic.setAttribute('aria-pressed', String(state === 'recording'));
   mic.setAttribute('aria-label', micLabels[state] || '開始錄音');
   mic.title = mic.getAttribute('aria-label');
-  if (state !== 'recording') level.style.width = '0';
+  if (state !== 'recording') level.style.transform = '';
 }
+
+const dictating = state => state === 'recording' || state === 'working';
+const bars = [...key.querySelectorAll('.key-bar')];
 
 function receive(next) {
   const was = voice.state;
+  // Recognition is over: the bars ease back from wherever the wave left them, rather than jump.
+  const held = was === 'working' && next.state !== 'working' && !still.matches ? bars.map(bar => getComputedStyle(bar).transform) : null;
   if (next.state === 'recording' && was !== 'recording') {
     recordingSince = Date.now();
     clock = setInterval(render, 500);
@@ -82,13 +87,20 @@ function receive(next) {
   }
   if (next.state !== 'done') stopSettling();
   // A new dictation stops a fold that was under way, and one the page was about to start.
-  if (next.state === 'recording' || next.state === 'working') {
+  if (dictating(next.state) && !dictating(was)) {
     round++;
     capsule.classList.remove('closing', 'card-closing');
   }
+  // A dictation that ends before its pill has shortened gives the pill back whole.
+  if (!dictating(next.state)) capsule.classList.remove('shortening');
   voice = next;
   editor.value = next.text;
   render();
+  if (held) {
+    bars.forEach((bar, index) => { bar.style.transform = held[index]; });
+    void key.getBoundingClientRect();
+    requestAnimationFrame(() => bars.forEach(bar => bar.style.removeProperty('transform')));
+  }
 }
 
 // A short confirmation, such as "copied", that gives the line back afterwards.
@@ -149,6 +161,20 @@ async function fold(to) {
   }
 }
 
+// A dictation started with the pill or the editor open: the card rolls up into the pill, then the pill's far end
+// folds back to `width`, the short pill's length. The Rust side shrinks the window once both have played.
+async function shorten(width) {
+  if (still.matches) return;
+  capsule.classList.remove('opening', 'card-opening');
+  if (capsule.dataset.layout === 'editor') {
+    capsule.classList.add('card-closing');
+    await wait(CARD_MS);
+    if (!dictating(voice.state)) return;
+  }
+  capsule.style.setProperty('--shown', `${width}px`);
+  capsule.classList.add('shortening');
+}
+
 // Folds the window back to `to`, after `delay` so a confirmation such as "copied" can be read.
 async function putAway(to, delay = 0) {
   stopSettling();
@@ -169,8 +195,10 @@ let width = innerWidth;
 addEventListener('resize', () => {
   const from = width;
   width = innerWidth;
+  // The window has shrunk to the folded pill, which now fills it.
+  if (innerWidth < from) capsule.classList.remove('shortening');
   if (innerWidth <= from || still.matches) return;
-  capsule.classList.remove('closing', 'card-closing', 'opening');
+  capsule.classList.remove('closing', 'card-closing', 'opening', 'shortening');
   capsule.style.setProperty('--shown', `${from}px`);
   void capsule.offsetWidth;
   capsule.classList.add('opening');
@@ -260,12 +288,13 @@ listen('notice', event => notice(event.payload));
 listen('layout', event => setLayout(event.payload));
 listen('side', event => setSide(event.payload));
 listen('closing', () => fold('docked'));
+listen('shorten', event => shorten(Number(event.payload)));
 listen('look', event => applyLook(event.payload));
 listen('mode', event => { mode = event.payload; render(); });
 // Square root keeps quiet speech visible on the meter.
 listen('level', event => {
   heard = Math.sqrt(Math.min(1, Math.max(0, Number(event.payload) || 0)));
-  level.style.width = Math.round(heard * 100) + '%';
+  level.style.transform = `scaleX(${heard.toFixed(3)})`;
 });
 
 function applyLook(look) {
