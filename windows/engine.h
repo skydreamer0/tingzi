@@ -655,6 +655,25 @@ class Input {
     }
     // Text to the left of a syllable. Preferences read their own left context, so they ask without them.
     Text leftOf(size_t pos,bool withPreferences=true) const {return pos?cut(pos,false,withPreferences):Text();}
+    // Which part of a syllable a key fills: 0 initial, 1 medial, 2 final, 3 tone; -1 for no Zhuyin key.
+    static int part(wchar_t key){
+        static constexpr wchar_t order[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
+        const wchar_t* at=key?std::wcschr(order,key):nullptr;
+        if(!at)return -1;
+        const size_t i=size_t(at-order);
+        return i<21?0:i<24?1:i<37?2:3;
+    }
+    // The keys of one syllable in reading order, initial, medial, final then tone, as the word list spells
+    // them; empty when two keys fill the same part.
+    static Text inOrder(const Text& keys){
+        Text parts[4];
+        for(const wchar_t key:keys){
+            const int at=part(key);
+            if(at<0 || !parts[at].empty())return {};
+            parts[at]=Text(1,key);
+        }
+        return parts[0]+parts[1]+parts[2]+parts[3];
+    }
     // True when some syllable is spelled by keys that begin with `keys`.
     bool startsCode(const Text& keys) const {
         auto at=dict.byCode.lower_bound(keys);
@@ -1069,6 +1088,22 @@ public:
             if(!toneKey && (last==L'3'||last==L'4'||last==L'6'||last==L'7')){
                 const Text swapped=raw.substr(0,raw.size()-1)+ch+last;
                 if(dict.byCode.count(swapped)){raw=swapped;finishSyllable();return {};}
+            }
+            // A key that belongs earlier in a syllable, typed after a later one, takes its place there. The
+            // rule below has by then ended the initial on its own, as ㄉ before ㄛ, so a lone initial before
+            // the waiting keys takes them back: ㄉ ㄛ then ㄨ is ㄉㄨㄛ.
+            if(!toneKey && !caret && !syllables.empty() && !startsCode(raw+ch)){
+                const Text& last=syllables.back();
+                if(last.size()==1 && part(last[0])==0 && !owner(syllables.size()-1)){
+                    const Text ordered=inOrder(last+raw+ch);
+                    if(!ordered.empty() && startsCode(ordered)){
+                        removeSyllable(syllables.size()-1);
+                        raw=ordered;
+                        const wchar_t tone=raw.back();
+                        if(tone==L'3'||tone==L'4'||tone==L'6'||tone==L'7')finishSyllable();
+                        return {};
+                    }
+                }
             }
             // A key that cannot continue the syllable starts the next one when the keys so far already
             // spell a first-tone syllable, as when Space was left out between two syllables.
