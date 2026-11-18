@@ -77,6 +77,7 @@ function receive(next) {
     if (was === 'recording') { stopBars(); tap(); }
     else if (next.state === 'done' && was !== 'done') tap();
   }
+  if (next.state !== 'done') stopSettling();
   // A new dictation stops a fold that was under way, and one the page was about to start.
   if (next.state === 'recording' || next.state === 'working') {
     round++;
@@ -147,6 +148,7 @@ async function fold(to) {
 
 // Folds the window back to `to`, after `delay` so a confirmation such as "copied" can be read.
 async function putAway(to, delay = 0) {
+  stopSettling();
   const mine = ++round;
   if (delay) await wait(delay);
   if (mine !== round || capsule.dataset.layout === to) return;
@@ -187,6 +189,30 @@ function setLayout(shape) {
   if (shape === 'editor') { loadRecent(); editor.focus(); }
 }
 
+// When the preview opened over text that was already inserted, it folds back by itself once the user has
+// left it alone for a while. Using the window (pointing, typing, scrolling, the recent list) starts the
+// wait again; the Rust side says how long it is, and only for text that was inserted.
+let settleMs = 0, settleTimer = 0, pointerInside = false;
+function settleLater() {
+  clearTimeout(settleTimer);
+  if (settleMs) settleTimer = setTimeout(settle, settleMs);
+}
+function settle() {
+  if (!settleMs || voice.state !== 'done' || capsule.dataset.layout !== 'editor') return stopSettling();
+  // Still being read or chosen from: wait another round.
+  if (pointerInside || document.activeElement === recent) return settleLater();
+  goHome();
+}
+function stopSettling() {
+  clearTimeout(settleTimer);
+  settleMs = 0;
+}
+for (const type of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'input', 'change']) {
+  document.addEventListener(type, () => { if (settleMs) settleLater(); }, { capture: true, passive: true });
+}
+document.documentElement.addEventListener('pointerenter', () => { pointerInside = true; });
+document.documentElement.addEventListener('pointerleave', () => { pointerInside = false; if (settleMs) settleLater(); });
+
 // Copying is usually the last thing done with the text, so the window then folds back by itself.
 async function copyAndPutAway() {
   if (await invoke('copy_preview')) goHome(700);
@@ -226,6 +252,7 @@ editor.addEventListener('input', () => { round++; voice.text = editor.value; inv
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && capsule.dataset.layout === 'editor') goHome(); });
 
 listen('voice', event => receive(event.payload));
+listen('settle', event => { settleMs = Number(event.payload) * 1000; settleLater(); });
 listen('notice', event => notice(event.payload));
 listen('layout', event => setLayout(event.payload));
 listen('side', event => setSide(event.payload));

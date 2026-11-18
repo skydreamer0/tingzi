@@ -118,7 +118,17 @@ pub struct Outcome {
     pub message: &'static str,
 }
 
+/// How long the preview stays open after text that was inserted, once the user leaves it alone.
+/// Provisional until it has been tried on real computers; see #25.
+pub const SETTLE_SECONDS: u32 = 8;
+
 impl Outcome {
+    /// Whether the preview opened over text that was already inserted, so it may fold back by itself
+    /// once left alone. Text that was not inserted stays open until the user deals with it.
+    pub fn settles(&self) -> bool {
+        self.inserted && self.expand && !self.cancelled
+    }
+
     fn cancelled() -> Self {
         Self { copied: false, inserted: false, cancelled: true, expand: false, message: "已取消" }
     }
@@ -296,6 +306,15 @@ mod tests {
 
     fn never() -> bool {
         false
+    }
+
+    #[test]
+    fn only_a_preview_over_inserted_text_folds_back_by_itself() {
+        let outcome = |inserted, expand| Outcome { copied: true, inserted, cancelled: false, expand, message: "" };
+        assert!(outcome(true, true).settles());
+        assert!(!outcome(false, true).settles());
+        assert!(!outcome(true, false).settles());
+        assert!(!Outcome::cancelled().settles());
     }
 
     #[test]

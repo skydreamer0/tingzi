@@ -241,7 +241,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         }
         // An online failure keeps the recording so it can be tried on this computer.
         let can_retry = engine != Engine::Local && recognise::problem(Engine::Local, &prefs).is_none();
-        let (state, message, text, expand) = match (text, wav) {
+        let (state, message, text, expand, settles) = match (text, wav) {
             (Ok(text), _) if !text.is_empty() => {
                 let outcome = match target {
                     Some(spot) => deliver::deliver(&text, prefs.mode(), &mut Desktop::new(spot), &cancelled),
@@ -250,6 +250,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 if outcome.cancelled || cancelled() {
                     return;
                 }
+                let settles = outcome.settles();
                 let Outcome { message, expand, inserted, .. } = outcome;
                 if prefs.keep_history {
                     history::add(&text, before.filter(|before| *before != text), inserted);
@@ -262,21 +263,25 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 };
                 let learned = learn::take_fresh();
                 let message = if learned.is_empty() { message } else { format!("{message}・已學會「{}」", learned.join("、")) };
-                ("done", message, text, expand)
+                ("done", message, text, expand, settles)
             }
             (failed, Ok(wav)) if can_retry => {
                 *session.kept.lock().unwrap() = Some(wav);
                 let reason = failed.err().unwrap_or_else(|| "線上未回傳文字".into());
-                ("retry", format!("{reason}・點圖示改用本機辨識"), String::new(), false)
+                ("retry", format!("{reason}・點圖示改用本機辨識"), String::new(), false, false)
             }
-            (Ok(_), _) => ("error", "沒有辨識到文字，點圖示重新錄音".to_string(), String::new(), false),
-            (Err(reason), _) => ("error", reason, String::new(), false),
+            (Ok(_), _) => ("error", "沒有辨識到文字，點圖示重新錄音".to_string(), String::new(), false, false),
+            (Err(reason), _) => ("error", reason, String::new(), false, false),
         };
         if state != "retry" {
             deliver::end();
         }
         session.working.store(false, Ordering::SeqCst);
         show(&app, state, message, text, expand);
+        // The page folds the preview back once the user has left it alone for this long.
+        if settles {
+            let _ = app.emit("settle", deliver::SETTLE_SECONDS);
+        }
     });
 }
 
