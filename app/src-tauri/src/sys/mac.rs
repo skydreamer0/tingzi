@@ -516,6 +516,15 @@ pub fn prepare(app: &mut tauri::App) {
     }
 }
 
+/// macOS has no Zhuyin input method, so there are no fixes typed with it.
+pub fn typed_fixes() -> Option<Vec<crate::learn::Fix>> {
+    None
+}
+
+pub fn note_dictation(_text: &str) {}
+
+pub fn forget_dictations() {}
+
 #[cfg(test)]
 mod tests {
     use super::*;

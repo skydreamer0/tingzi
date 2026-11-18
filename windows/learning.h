@@ -3,10 +3,12 @@
 #include <shlobj.h>
 #include <winsqlite/winsqlite3.h>
 #include <algorithm>
+#include <ctime>
 #include <cstdlib>
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -20,6 +22,25 @@ struct NewWord { Text reading, text; };
 struct LearnedWord { Text reading, text; int hits; };
 // A sentence the user committed, with the first key of each syllable, so typing only those keys recalls it.
 struct Sentence { Text codes, text; };
+// What the user typed over part of a dictation: `said` is the part it replaced, empty when the
+// text around it could not be read.
+struct Fix { Text said, typed, reading; };
+// The part of `dictation` that `typed` replaced, when the text around the committed word shows it
+// was typed inside that dictation: `before` must end with the start of the dictation and `after`
+// must begin with the rest of it. Words typed elsewhere, or added without replacing anything, give nothing.
+inline std::optional<Text> replaced(const Text& dictation,const Text& before,const Text& typed,const Text& after){
+    const size_t n=dictation.size();
+    if(n<2 || typed.empty())return {};
+    size_t head=0,tail=0;
+    for(size_t k=std::min(n,before.size());k>0;--k)if(before.compare(before.size()-k,k,dictation,0,k)==0){head=k;break;}
+    for(size_t k=std::min(n,after.size());k>0;--k)if(after.compare(0,k,dictation,n-k,k)==0){tail=k;break;}
+    // Nothing of the dictation is left on either side, or none of it is missing: text was added, not fixed.
+    if(head+tail==0 || head+tail>=n)return {};
+    Text said=dictation.substr(head,n-head-tail);
+    if(said.empty() || said==typed || said.size()>typed.size()*2+2)return {};
+    return said;
+}
+inline long long secondsNow(){return (long long)std::time(nullptr);}
 inline Text localLearningDir(){
     PWSTR path=nullptr;
     if(FAILED(SHGetKnownFolderPath(FOLDERID_LocalAppData,KF_FLAG_NO_PACKAGE_REDIRECTION,nullptr,&path)))return {};
@@ -89,16 +110,24 @@ public:
         if(ok && exec("COMMIT"))return true;
         exec("ROLLBACK");return false;
     }
+    // Words gained a column for when they were last typed; older files get it here.
+    void wordsTable(){
+        exec("CREATE TABLE IF NOT EXISTS words(reading TEXT NOT NULL,text TEXT NOT NULL,hits INTEGER NOT NULL,at INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(reading,text)) WITHOUT ROWID");
+        sqlite3_stmt* s=nullptr;bool has=false;
+        if(sqlite3_prepare_v2(db,"SELECT 1 FROM pragma_table_info('words') WHERE name='at'",-1,&s,nullptr)==SQLITE_OK)has=sqlite3_step(s)==SQLITE_ROW;
+        sqlite3_finalize(s);
+        if(!has)exec("ALTER TABLE words ADD COLUMN at INTEGER NOT NULL DEFAULT 0");
+    }
     // Characters the user picked one after another become a word the first time the run is committed.
     bool saveWords(const std::vector<NewWord>& words){
         if(words.empty())return true;
         if(!enabled())return false;
-        exec("CREATE TABLE IF NOT EXISTS words(reading TEXT NOT NULL,text TEXT NOT NULL,hits INTEGER NOT NULL,PRIMARY KEY(reading,text)) WITHOUT ROWID");
+        wordsTable();
         sqlite3_stmt* s=nullptr;
-        bool ok=sqlite3_prepare_v2(db,"INSERT INTO words VALUES(?,?,1) ON CONFLICT(reading,text) DO UPDATE SET hits=MIN(hits+1,9)",-1,&s,nullptr)==SQLITE_OK;
+        bool ok=sqlite3_prepare_v2(db,"INSERT INTO words(reading,text,hits,at) VALUES(?,?,1,?) ON CONFLICT(reading,text) DO UPDATE SET hits=MIN(hits+1,9),at=excluded.at",-1,&s,nullptr)==SQLITE_OK;
         for(const auto& word:words){
             if(!ok)break;
-            bind(s,1,word.reading);bind(s,2,word.text);
+            bind(s,1,word.reading);bind(s,2,word.text);sqlite3_bind_int64(s,3,secondsNow());
             ok=sqlite3_step(s)==SQLITE_DONE;sqlite3_reset(s);
         }
         sqlite3_finalize(s);return ok;
@@ -155,7 +184,40 @@ public:
         }
         sqlite3_finalize(s);return list;
     }
-    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM words");exec("DELETE FROM sentences");return ok;}
+    // The dictations the voice window inserted in the last ten minutes, newest first. The voice
+    // window writes them, and only while learning is on.
+    std::vector<Text> recentDictations() const {
+        std::vector<Text> list;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT text FROM dictations WHERE at>=? AND (SELECT enabled FROM settings)=1 ORDER BY at DESC LIMIT 5",-1,&s,nullptr)==SQLITE_OK){
+            sqlite3_bind_int64(s,1,secondsNow()-600);
+            while(sqlite3_step(s)==SQLITE_ROW)list.push_back(static_cast<const wchar_t*>(sqlite3_column_text16(s,0)));
+        }
+        sqlite3_finalize(s);return list;
+    }
+    // Keeps the fifty latest fixes for the voice window to learn from.
+    bool saveFix(const Fix& fix){
+        if(fix.typed.empty() || fix.reading.empty() || !enabled())return false;
+        exec("CREATE TABLE IF NOT EXISTS fixes(at INTEGER NOT NULL,said TEXT NOT NULL,typed TEXT NOT NULL,reading TEXT NOT NULL)");
+        sqlite3_stmt* s=nullptr;
+        bool ok=sqlite3_prepare_v2(db,"INSERT INTO fixes VALUES(?,?,?,?)",-1,&s,nullptr)==SQLITE_OK;
+        if(ok){sqlite3_bind_int64(s,1,secondsNow());bind(s,2,fix.said);bind(s,3,fix.typed);bind(s,4,fix.reading);ok=sqlite3_step(s)==SQLITE_DONE;}
+        sqlite3_finalize(s);
+        exec("DELETE FROM fixes WHERE rowid NOT IN (SELECT rowid FROM fixes ORDER BY at DESC,rowid DESC LIMIT 50)");
+        return ok;
+    }
+    std::vector<Fix> fixes() const {
+        std::vector<Fix> list;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT said,typed,reading FROM fixes ORDER BY at DESC,rowid DESC",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW){
+                auto col=[&](int n){return static_cast<const wchar_t*>(sqlite3_column_text16(s,n));};
+                list.push_back({col(0),col(1),col(2)});
+            }
+        }
+        sqlite3_finalize(s);return list;
+    }
+    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM words");exec("DELETE FROM sentences");exec("DELETE FROM fixes");exec("DELETE FROM dictations");return ok;}
     // Reads the file exportTo writes; rows already present are replaced.
     bool importFrom(const std::filesystem::path& path){
         std::ifstream in(path,std::ios::binary);

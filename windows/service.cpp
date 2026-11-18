@@ -337,6 +337,31 @@ public:
            SUCCEEDED(composition->GetRange(&range)))present(ec,c,range.Get());
         return S_OK;
     }
+    // Up to `most` characters on one side of `range`.
+    static Text beside(TfEditCookie ec,ITfRange* range,bool ahead,LONG most){
+        ComPtr<ITfRange> part;
+        if(FAILED(range->Clone(&part)) || FAILED(part->Collapse(ec,ahead?TF_ANCHOR_END:TF_ANCHOR_START)))return {};
+        LONG moved=0;
+        if(FAILED(ahead?part->ShiftEnd(ec,most,&moved,nullptr):part->ShiftStart(ec,-most,&moved,nullptr)))return {};
+        std::vector<wchar_t> buffer(size_t(most)+1);ULONG got=0;
+        if(FAILED(part->GetText(ec,0,buffer.data(),ULONG(most),&got)))return {};
+        return Text(buffer.data(),std::min<ULONG>(got,ULONG(most)));
+    }
+    // When the committed word replaced part of a recent dictation, notes what it replaced for the
+    // voice window to learn from. `range` holds the committed text as it appears in the document.
+    void noteFix(TfEditCookie ec,ITfRange* range,const Text& shown,const NewWord& word){
+        Learning store;
+        if(!store.enabled())return;
+        auto recent=store.recentDictations();
+        if(recent.empty())return;
+        size_t longest=0;for(const auto& said:recent)longest=std::max(longest,said.size());
+        const LONG most=LONG(std::min<size_t>(longest+8,4096));
+        const Text before=beside(ec,range,false,most),after=beside(ec,range,true,most);
+        for(const auto& said:recent)
+            if(auto part=replaced(said,before,shown,after)){store.saveFix({*part,word.text,word.reading});return;}
+        // Some programs do not let an input method read their text; the voice window then compares with its dictations itself.
+        if(before.empty() && after.empty())store.saveFix({L"",word.text,word.reading});
+    }
     HRESULT edit(ITfContext* c,WPARAM key,TfEditCookie ec,std::optional<unsigned long long> expected={}){
         if(expected && *expected!=compositionGeneration)return S_FALSE;
         if(key && losingFocus)return S_FALSE;
@@ -378,6 +403,7 @@ public:
         if(key)commit=next.press(key);else next.clear();
         auto added=next.addedWord();
         auto said=next.committedSentence();
+        auto typed=next.typedWord();
         // A word kept with Ctrl and a digit is saved at once; the sentence is still being typed.
         if(added && allowed)appendUserPhrase(added->reading,added->text);
         Text text=next.active()?next.preview():commit;
@@ -394,6 +420,7 @@ public:
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
         if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
                 if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
+                if(typed)noteFix(ec,range.Get(),commit,*typed);
             }}
         return hr;
     }
