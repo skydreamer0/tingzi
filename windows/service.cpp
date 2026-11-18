@@ -5,10 +5,13 @@
 #include <inputscope.h>
 #include "candidates.h"
 #include "composition_line.h"
+#include "journal.h"
 using namespace tingzi;
 namespace {
 HMODULE module;
 long liveObjects;
+// How often each repeating problem has happened in this program, for the record; see noteOften.
+long keysRefused,keysWhileEnding,staleEdits,endedByProgram,editFailures,activations;
 class Service;
 class KeyEdit final:public ITfEditSession {
     long refs=1;
@@ -257,7 +260,7 @@ public:
         // The standalone keyboard has no voice window to fall back to.
         if(data.byCode.empty())return HRESULT_FROM_WIN32(ERROR_FILE_NOT_FOUND);
 #else
-        if(data.byCode.empty()){startFloat();return S_OK;}
+        if(data.byCode.empty()){note(L"找不到注音詞庫，只開啟語音浮窗");startFloat();return S_OK;}
 #endif
         ComPtr<ITfKeystrokeMgr> keys;
         HRESULT hr=mgr->QueryInterface(IID_PPV_ARGS(&keys));if(FAILED(hr))return hr;
@@ -266,9 +269,14 @@ public:
             ComPtr<ITfSource> source;
             hr=mgr->QueryInterface(IID_PPV_ARGS(&source));
             if(SUCCEEDED(hr))hr=source->AdviseSink(IID_ITfThreadMgrEventSink,static_cast<ITfThreadMgrEventSink*>(this),&focusCookie);
-            if(FAILED(hr)){keys->UnadviseKeyEventSink(id);return hr;}
+            if(FAILED(hr)){keys->UnadviseKeyEventSink(id);note(L"無法接收焦點變化 "+hex(hr));return hr;}
             thread=mgr;client=id;input=std::make_unique<Input>(data);
-        }
+            Text mode;
+            if(flags&TF_TMAE_SECUREMODE)mode+=L"，安全模式";
+            if(flags&TF_TMAE_CONSOLE)mode+=L"，主控台";
+            if(flags&TF_TMAE_COMLESS)mode+=L"，無 COM";
+            noteOften(activations,L"啟用"+mode);
+        } else note(L"無法接收按鍵 "+hex(hr));
         return hr;
     }
     STDMETHODIMP Deactivate() override {
@@ -308,7 +316,11 @@ public:
         *eat=FALSE;if(!typed)return S_OK;
         auto session=new KeyEdit(this,c,typed);HRESULT result=E_FAIL;
         HRESULT hr=c->RequestEditSession(client,session,TF_ES_SYNC|TF_ES_READWRITE,&result);
-        session->Release();*eat=SUCCEEDED(hr)&&result==S_OK;return S_OK;
+        session->Release();*eat=SUCCEEDED(hr)&&result==S_OK;
+        // A key the input method wanted but could not take goes to the program as a plain letter.
+        if(FAILED(hr))noteOften(keysRefused,L"程式沒有讓輸入法處理按鍵 "+hex(hr)+(input && input->active()?L"，正在組字":L"")+L"，這個鍵直接交給程式");
+        else if(result!=S_OK && result!=S_FALSE)noteOften(editFailures,L"處理按鍵失敗 "+hex(result)+L"，這個鍵直接交給程式");
+        return S_OK;
     }
     STDMETHODIMP OnTestKeyUp(ITfContext*,WPARAM k,LPARAM,BOOL* e) override {
         if(!e)return E_POINTER;
@@ -322,7 +334,9 @@ public:
     }
     STDMETHODIMP OnPreservedKey(ITfContext*,REFGUID,BOOL* e) override {*e=FALSE;return S_OK;}
     STDMETHODIMP OnCompositionTerminated(TfEditCookie,ITfComposition* which) override {
-        if(which==composition.Get()){hideCompositionUI();detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(input)input->clear();}return S_OK;
+        if(which==composition.Get()){
+            if(input && input->active())noteOften(endedByProgram,L"程式在組字途中結束了組字，未送出的注音被清掉");
+            hideCompositionUI();detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(input)input->clear();}return S_OK;
     }
     STDMETHODIMP OnLayoutChange(ITfContext* c,TfLayoutCode code,ITfContextView*) override {
         if(c!=composingIn.Get() || !composition || losingFocus)return S_OK;
@@ -363,8 +377,8 @@ public:
         if(before.empty() && after.empty())store.saveFix({L"",word.text,word.reading});
     }
     HRESULT edit(ITfContext* c,WPARAM key,TfEditCookie ec,std::optional<unsigned long long> expected={}){
-        if(expected && *expected!=compositionGeneration)return S_FALSE;
-        if(key && losingFocus)return S_FALSE;
+        if(expected && *expected!=compositionGeneration){if(key)noteOften(staleEdits,L"點選的候選字晚到，那一段組字已經結束，略過");return S_FALSE;}
+        if(key && losingFocus){noteOften(keysWhileEnding,L"還在結束上一段組字時收到按鍵，這個鍵直接交給程式");return S_FALSE;}
         if(key)startFloat();
         if(!input || (composingIn && composingIn.Get()!=c))return S_FALSE;
         if(!key && !composition)return S_FALSE;
@@ -375,12 +389,12 @@ public:
         if(!composition) {
             ComPtr<ITfInsertAtSelection> insert;
             hr=c->QueryInterface(IID_PPV_ARGS(&insert));if(FAILED(hr))return hr;
-            hr=insert->InsertTextAtSelection(ec,TF_IAS_QUERYONLY,nullptr,0,&range);if(FAILED(hr))return hr;
+            hr=insert->InsertTextAtSelection(ec,TF_IAS_QUERYONLY,nullptr,0,&range);if(FAILED(hr)){noteOften(editFailures,L"讀不到游標位置 "+hex(hr));return hr;}
             ComPtr<ITfContextComposition> cc;
             hr=c->QueryInterface(IID_PPV_ARGS(&cc));if(FAILED(hr))return hr;
             HWND parent=nullptr;locate(ec,c,range.Get(),parent);
             hr=cc->StartComposition(ec,range.Get(),this,&composition);
-            if(FAILED(hr) || !composition){hideCompositionUI();return FAILED(hr)?hr:E_FAIL;}
+            if(FAILED(hr) || !composition){noteOften(editFailures,L"無法開始組字 "+hex(hr));hideCompositionUI();return FAILED(hr)?hr:E_FAIL;}
             composingIn=c;
             ++compositionGeneration;
             losingFocus=false;
@@ -407,7 +421,7 @@ public:
         // A word kept with Ctrl and a digit is saved at once; the sentence is still being typed.
         if(added && allowed)appendUserPhrase(added->reading,added->text);
         Text text=next.active()?next.preview():commit;
-        hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr))return hr;
+        hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr)){noteOften(editFailures,L"無法寫入組字區 "+hex(hr));return hr;}
         ComPtr<ITfRange> caret;
         if(SUCCEEDED(range->Clone(&caret))){
             // The application's own caret follows the one inside the sentence.
@@ -418,6 +432,7 @@ public:
         input=std::make_unique<Input>(std::move(next));
         if(input->active()){present(ec,c,range.Get(),true);return S_OK;}
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
+        if(FAILED(hr))noteOften(editFailures,L"無法結束組字 "+hex(hr));
         if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
                 if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
                 if(typed)noteFix(ec,range.Get(),commit,*typed);
