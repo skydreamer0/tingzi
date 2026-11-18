@@ -335,6 +335,7 @@ class Input {
     // Longest first word allowed after Tab forced a break; 0 leaves it to the segmenter.
     size_t firstLimit=0;
     std::optional<NewWord> added;
+    std::optional<NewWord> typed;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
     void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;}
     // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
@@ -743,6 +744,9 @@ public:
     }
     // The word the last key asked to remember, when Shift+Enter committed the composition.
     std::optional<NewWord> addedWord() const {return added;}
+    // What Enter just committed with its reading, before any conversion to Simplified; unset when
+    // it held symbols or more than eight syllables.
+    std::optional<NewWord> typedWord() const {return typed;}
     bool wants(WPARAM key) const {
         if(key&literalKey)return !active();
         if(key&controlKey){
@@ -759,7 +763,7 @@ public:
     }
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
-        added.reset();committed.reset();
+        added.reset();committed.reset();typed.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
         if(key&controlKey){
@@ -910,7 +914,16 @@ public:
         if(key==VK_RETURN) {
             if(!raw.empty() && !finishSyllable()) return {};
             Text result=best(0);
-            std::optional<NewWord> keep;
+            std::optional<NewWord> keep,whole;
+            if(!syllables.empty() && syllables.size()<=8 && result.size()==syllables.size()){
+                Text reading;bool plain=true;
+                for(const auto& syllable:syllables){
+                    if(symbol(syllable)){plain=false;break;}
+                    if(!reading.empty())reading+=L"-";
+                    reading+=dict.reading(syllable);
+                }
+                if(plain)whole=NewWord{reading,result};
+            }
             if(shifted && syllables.size()>=2 && syllables.size()<=8 && result.size()==syllables.size()){
                 Text reading;bool plain=true;
                 for(const auto& syllable:syllables){
@@ -925,7 +938,7 @@ public:
             for(const auto& syllable:syllables)if(!symbol(syllable))codes+=syllable[0];
             std::optional<Sentence> said;
             if(codes.size()>=3 && codes.size()<=16)said=Sentence{codes,result};
-            clear();added=keep;committed=said;
+            clear();added=keep;committed=said;typed=whole;
             return scripted(result);
         }
         wchar_t ch=codeKey(key,layout);

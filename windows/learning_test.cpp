@@ -39,9 +39,17 @@ int wmain(int argc,wchar_t** argv){
         check(reopened.saveSentence({L"sca",L"你好嗎"}) && reopened.saveSentence({L"jb",L"我們"}) && reopened.saveSentence({L"sca",L"你好嗎"}),"sentences are kept");
         auto recent=reopened.sentences();
         check(recent.size()==2 && recent[0].text==L"你好嗎" && recent[1].text==L"我們","the latest sentence comes first, once");
+        check(replaced(L"請理小名回電",L"好，請",L"李曉明",L"回電。")==Text(L"理小名"),"a word typed over part of a dictation is a fix");
+        check(replaced(L"他們來了",L"",L"她",L"們來了")==Text(L"他"),"a fix at the start of a dictation");
+        check(!replaced(L"他們來了",L"今天",L"她們",L"出門"),"a word typed somewhere else is not a fix");
+        check(!replaced(L"我們明天見",L"我們明天見",L"好嗎",L""),"text typed after a dictation is not a fix");
+        check(!replaced(L"我們明天見",L"我們明天",L"後",L"見"),"text added inside a dictation is not a fix");
+        check(!replaced(L"他們來了",L"",L"他",L"們來了"),"typing the same word again is not a fix");
+        check(reopened.saveFix({L"理小名",L"李曉明",L"ㄌㄧˇ-ㄒㄧㄠˇ-ㄇㄧㄥˊ"}) && reopened.fixes().size()==1 && reopened.fixes()[0].said==L"理小名","a fix is kept");
+        check(reopened.recentDictations().empty(),"no dictations until the voice window writes them");
         auto file=std::filesystem::path(argv[2])/L"export.tsv";
         size_t before=reopened.ranks().size();
-        check(before>0 && reopened.exportTo(file) && reopened.clear() && reopened.ranks().empty() && reopened.learnedWords().empty() && reopened.sentences().empty(),"clear removes choices, words and sentences");
+        check(before>0 && reopened.exportTo(file) && reopened.clear() && reopened.ranks().empty() && reopened.learnedWords().empty() && reopened.sentences().empty() && reopened.fixes().empty(),"clear removes choices, words, sentences and fixes");
         check(reopened.importFrom(file) && reopened.ranks().size()==before,"import restores exported choices");
     }
     check(reopened.forget(L"我愛",L"ㄋㄧˇ"),"forget one reading and context");

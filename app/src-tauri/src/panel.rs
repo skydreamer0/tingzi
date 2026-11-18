@@ -178,6 +178,9 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
     }
     // These follow the saved file; a failure here leaves the main choices in place.
     let _ = zhuyin.save();
+    if !(prefs.learn_fixes && prefs.keep_history) {
+        crate::sys::forget_dictations();
+    }
     if startup != starts_at_login() {
         let _ = set_login_start(startup);
     }
@@ -385,13 +388,6 @@ pub fn learned_words() -> Option<Vec<Learned>> {
         (true, output) => Some(parse_learned(&output)),
         _ => None,
     }
-}
-
-/// The words the Zhuyin input method learned, for learning from the user's fixes.
-/// None when its learning cannot be read.
-pub fn typed_words() -> Option<Vec<crate::learn::Typed>> {
-    let words = learned_words()?;
-    Some(words.into_iter().map(|word| crate::learn::Typed { reading: word.reading, text: word.text, hits: word.hits }).collect())
 }
 
 /// The words learned from fixes to dictations, newest last.

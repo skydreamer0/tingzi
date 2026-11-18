@@ -280,6 +280,10 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 let Outcome { message, expand, inserted, .. } = outcome;
                 if prefs.keep_history {
                     history::add(&text, before.filter(|before| *before != text), inserted);
+                    // The Zhuyin input method notes a word typed over part of it, to learn from.
+                    if inserted && prefs.learn_fixes {
+                        crate::sys::note_dictation(&text);
+                    }
                 }
                 // Words learned from the user's fixes since the last dictation are mentioned once.
                 // Whether the text was refined, and why not, is told after the usual message.
@@ -430,7 +434,7 @@ fn toggle(app: &AppHandle) {
             std::thread::spawn(move || {
                 recognise::warm(ahead.engine(), &ahead);
                 if ahead.learn_fixes && ahead.keep_history {
-                    learn::catch_up(panel::typed_words());
+                    learn::catch_up();
                 }
             });
             show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
@@ -658,6 +662,7 @@ fn history_use(app: AppHandle, index: usize, before: Option<bool>) {
 
 #[tauri::command]
 fn history_clear() -> bool {
+    crate::sys::forget_dictations();
     history::clear()
 }
 

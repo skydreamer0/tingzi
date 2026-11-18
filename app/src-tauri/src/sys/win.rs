@@ -583,6 +583,166 @@ pub fn quiet(command: &mut Command) -> &mut Command {
 /// Nothing to prepare on Windows.
 pub fn prepare(_app: &mut tauri::App) {}
 
+/// The Zhuyin input method's learning file, which the voice window shares with it; its tables are
+/// described in `docs/specs/learning-data.md`. Windows' own SQLite is used, as the input method does.
+mod learning {
+    use std::ffi::{c_char, c_int, c_void, CStr, CString};
+
+    #[link(name = "winsqlite3", kind = "raw-dylib")]
+    extern "system" {
+        fn sqlite3_open_v2(name: *const c_char, db: *mut *mut c_void, flags: c_int, vfs: *const c_char) -> c_int;
+        fn sqlite3_close(db: *mut c_void) -> c_int;
+        fn sqlite3_busy_timeout(db: *mut c_void, ms: c_int) -> c_int;
+        fn sqlite3_exec(db: *mut c_void, sql: *const c_char, callback: *const c_void, argument: *mut c_void, error: *mut *mut c_char) -> c_int;
+        fn sqlite3_prepare_v2(db: *mut c_void, sql: *const c_char, bytes: c_int, statement: *mut *mut c_void, tail: *mut *const c_char) -> c_int;
+        fn sqlite3_bind_text(statement: *mut c_void, index: c_int, text: *const c_char, bytes: c_int, destructor: isize) -> c_int;
+        fn sqlite3_bind_int64(statement: *mut c_void, index: c_int, value: i64) -> c_int;
+        fn sqlite3_step(statement: *mut c_void) -> c_int;
+        fn sqlite3_column_int64(statement: *mut c_void, column: c_int) -> i64;
+        fn sqlite3_column_text(statement: *mut c_void, column: c_int) -> *const c_char;
+        fn sqlite3_finalize(statement: *mut c_void) -> c_int;
+    }
+
+    const OK: c_int = 0;
+    const ROW: c_int = 100;
+    const DONE: c_int = 101;
+    const OPEN_READWRITE: c_int = 0x2;
+    /// SQLite copies the text before the call returns.
+    const TRANSIENT: isize = -1;
+
+    pub enum Value<'a> {
+        Number(i64),
+        Text(&'a str),
+    }
+
+    pub struct Db(*mut c_void);
+
+    impl Db {
+        /// Opens the file only when the input method has made it; the voice window never creates it.
+        pub fn open() -> Option<Db> {
+            let file = super::data().join("preferences.sqlite3");
+            if !file.is_file() {
+                return None;
+            }
+            let name = CString::new(file.to_str()?).ok()?;
+            let mut db = std::ptr::null_mut();
+            let opened = unsafe { sqlite3_open_v2(name.as_ptr(), &mut db, OPEN_READWRITE, std::ptr::null()) };
+            let db = Db(db);
+            if opened != OK {
+                return None;
+            }
+            unsafe { sqlite3_busy_timeout(db.0, 350) };
+            Some(db)
+        }
+
+        pub fn exec(&self, sql: &str) -> bool {
+            let Ok(sql) = CString::new(sql) else { return false };
+            unsafe { sqlite3_exec(self.0, sql.as_ptr(), std::ptr::null(), std::ptr::null_mut(), std::ptr::null_mut()) == OK }
+        }
+
+        /// Runs one statement, handing each row's columns to `row`. False when it failed.
+        pub fn query(&self, sql: &str, values: &[Value], mut row: impl FnMut(&Row)) -> bool {
+            let Ok(sql) = CString::new(sql) else { return false };
+            let mut statement = std::ptr::null_mut();
+            if unsafe { sqlite3_prepare_v2(self.0, sql.as_ptr(), -1, &mut statement, std::ptr::null_mut()) } != OK {
+                unsafe { sqlite3_finalize(statement) };
+                return false;
+            }
+            let mut bound = true;
+            for (index, value) in values.iter().enumerate() {
+                let index = index as c_int + 1;
+                let done = match value {
+                    Value::Number(number) => unsafe { sqlite3_bind_int64(statement, index, *number) },
+                    Value::Text(text) => unsafe { sqlite3_bind_text(statement, index, text.as_ptr().cast(), text.len() as c_int, TRANSIENT) },
+                };
+                bound &= done == OK;
+            }
+            let finished = bound
+                && loop {
+                    match unsafe { sqlite3_step(statement) } {
+                        ROW => row(&Row(statement)),
+                        DONE => break true,
+                        _ => break false,
+                    }
+                };
+            unsafe { sqlite3_finalize(statement) };
+            finished
+        }
+    }
+
+    impl Drop for Db {
+        fn drop(&mut self) {
+            unsafe { sqlite3_close(self.0) };
+        }
+    }
+
+    pub struct Row(*mut c_void);
+
+    impl Row {
+        pub fn number(&self, column: c_int) -> i64 {
+            unsafe { sqlite3_column_int64(self.0, column) }
+        }
+
+        pub fn text(&self, column: c_int) -> String {
+            let text = unsafe { sqlite3_column_text(self.0, column) };
+            if text.is_null() {
+                return String::new();
+            }
+            unsafe { CStr::from_ptr(text) }.to_string_lossy().into_owned()
+        }
+    }
+
+    pub fn enabled(db: &Db) -> bool {
+        let mut on = false;
+        db.query("SELECT enabled FROM settings", &[], |row| on = row.number(0) == 1);
+        on
+    }
+}
+
+fn seconds_now() -> i64 {
+    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs() as i64)
+}
+
+/// The words the Zhuyin input method committed over part of a dictation, newest first.
+/// None when its learning file cannot be read or learning is off.
+pub fn typed_fixes() -> Option<Vec<crate::learn::Fix>> {
+    let db = learning::Db::open()?;
+    if !learning::enabled(&db) {
+        return None;
+    }
+    let mut fixes = Vec::new();
+    // No table yet means no fix has been typed yet.
+    db.query("SELECT at,said,typed,reading FROM fixes ORDER BY at DESC", &[], |row| {
+        fixes.push(crate::learn::Fix { at: row.number(0).max(0) as u64, said: row.text(1), typed: row.text(2), reading: row.text(3) })
+    });
+    Some(fixes)
+}
+
+/// Tells the Zhuyin input method about text just dictated into a program, so that a word typed
+/// over part of it can be recognised as a fix. Only the five latest from the last ten minutes are
+/// kept, and nothing while its learning is off.
+pub fn note_dictation(text: &str) {
+    use learning::Value::{Number, Text};
+    let Some(db) = learning::Db::open() else { return };
+    if !learning::enabled(&db) || !db.exec("CREATE TABLE IF NOT EXISTS dictations(at INTEGER NOT NULL,text TEXT NOT NULL)") {
+        return;
+    }
+    let now = seconds_now();
+    db.query("INSERT INTO dictations VALUES(?,?)", &[Number(now), Text(text)], |_| {});
+    db.query(
+        "DELETE FROM dictations WHERE at<? OR rowid NOT IN (SELECT rowid FROM dictations ORDER BY at DESC,rowid DESC LIMIT 5)",
+        &[Number(now - 600)],
+        |_| {},
+    );
+}
+
+/// Forgets the dictations noted for the input method, as when the user stops learning from fixes.
+pub fn forget_dictations() {
+    if let Some(db) = learning::Db::open() {
+        db.exec("DELETE FROM dictations");
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

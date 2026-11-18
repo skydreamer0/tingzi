@@ -85,7 +85,7 @@ bash macos/build.sh
 
 建議或寫死任何第三方模型名稱、API 參數、套件或工具版本之前，先查該服務的官方現行文件，不要憑記憶。模型會被淘汰，參數規則會變（例如 OpenAI 的推理模型會拒絕 `temperature`）。AI 潤稿目前的請求格式與已知的模型差異記在 `docs/specs/ai-refine.md`，改 `refine.rs` 時一起更新它。
 
-下載本機模型的來源、版本與 SHA-256 固定寫在 `app/src-tauri/src/fetch.rs`；換來源時要一併更新雜湊與授權說明。
+下載本機模型的來源、版本與 SHA-256 固定寫在 `app/src-tauri/src/fetch.rs`；換來源時要一併更新雜湊與授權說明。換辨識程式的版本時，同時改 `PROGRAMS` 裡的 `version`：已安裝舊版的使用者會在設定頁看到「辨識程式有新版本」。
 
 ## GitHub 上的文字
 
