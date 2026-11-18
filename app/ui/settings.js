@@ -91,6 +91,8 @@ function fill() {
   byId('refine-url').value = prefs.RefineUrl ?? '';
   byId('refine-model').value = prefs.RefineModel ?? '';
   byId('refine-note').value = prefs.RefineNote ?? '';
+  byId('refine-language').value = prefs.RefineLanguage ?? '';
+  byId('rewrite-selection').checked = Boolean(prefs.RewriteSelection);
   showRefineKey();
   byId('hold').value = prefs.HoldToTalk ? '1' : '0';
   byId('keep-history').checked = prefs.KeepHistory;
@@ -151,6 +153,8 @@ function collect(engineFromPage) {
       RefineUrl: byId('refine-url').value.trim(),
       RefineModel: byId('refine-model').value.trim(),
       RefineNote: byId('refine-note').value.trim(),
+      RefineLanguage: byId('refine-language').value,
+      RewriteSelection: byId('rewrite-selection').checked,
       HoldToTalk: byId('hold').value === '1',
       KeepHistory: byId('keep-history').checked,
       CheckUpdates: byId('check-updates').checked,
@@ -381,10 +385,13 @@ byId('refine-key-clear').addEventListener('click', () => {
       showRefineKey();
       if (switchedOff) {
         byId('refine').checked = false;
+        byId('rewrite-selection').checked = false;
         panel.prefs.Refine = false;
+        panel.prefs.RewriteSelection = false;
         accepted.set('refine', false);
+        accepted.set('rewrite-selection', false);
       }
-      say(switchedOff ? '已刪除潤稿金鑰，並關閉 AI 潤稿。' : '已刪除潤稿金鑰。', true);
+      say(switchedOff ? '已刪除潤稿金鑰，並關閉 AI 潤稿與語音改寫。' : '已刪除潤稿金鑰。', true);
     } catch (reason) {
       say(String(reason));
     }
@@ -402,6 +409,7 @@ refineTest.addEventListener('click', async () => {
       url: byId('refine-url').value.trim(),
       model: byId('refine-model').value.trim(),
       note: byId('refine-note').value.trim(),
+      language: byId('refine-language').value,
     });
   } catch (reason) {
     refineResult.classList.add('failed');
@@ -762,6 +770,8 @@ const tidyNames = { true: '整理口語', false: '不整理口語' };
 const refineNames = { true: 'AI 潤稿', false: '不潤稿' };
 const scriptNames = { true: '簡體', false: '繁體' };
 const deliveryNames = ['自動插入', '只複製', '只顯示預覽'];
+const languageFrom = value => value === '' ? null : value === 'same' ? '' : value;
+const languageNames = { '': '潤稿照說的語言', en: '潤稿成英文', 'zh-TW': '潤稿成中文' };
 const sameProgram = (a, b) => a.trim().toLowerCase() === b.trim().toLowerCase();
 
 function ruleSummary(rule) {
@@ -771,6 +781,8 @@ function ruleSummary(rule) {
   if (rule.Simplified !== null && rule.Simplified !== undefined) parts.push(scriptNames[rule.Simplified]);
   if (rule.DeliveryMode !== null && rule.DeliveryMode !== undefined) parts.push(deliveryNames[rule.DeliveryMode]);
   if (rule.DropFinalStop) parts.push('去掉句尾句號');
+  if (rule.RefineLanguage !== null && rule.RefineLanguage !== undefined) parts.push(languageNames[rule.RefineLanguage] ?? languageNames['']);
+  if (rule.RefineNote) parts.push(`語氣：${rule.RefineNote}`);
   return parts.length ? parts.join('・') : '全部跟隨主要設定';
 }
 
@@ -785,6 +797,8 @@ function showRule(rule) {
   byId('rule-script').value = choiceOf(rule.Simplified);
   byId('rule-delivery').value = choiceOf(rule.DeliveryMode);
   byId('rule-stop').value = rule.DropFinalStop ? '1' : '0';
+  byId('rule-language').value = rule.RefineLanguage === null || rule.RefineLanguage === undefined ? '' : rule.RefineLanguage || 'same';
+  byId('rule-note').value = rule.RefineNote ?? '';
 }
 
 function refillRules() {
@@ -809,7 +823,7 @@ async function keepRules(next) {
 byId('manage-app-rules').addEventListener('click', async () => {
   rulePick = -1;
   rulesStatus.textContent = '';
-  showRule({ Program: '', Tidy: null, Refine: null, Simplified: null, DeliveryMode: null, DropFinalStop: false });
+  showRule({ Program: '', Tidy: null, Refine: null, Simplified: null, DeliveryMode: null, DropFinalStop: false, RefineLanguage: null, RefineNote: '' });
   appRules = await invoke('app_rules_load');
   refillRules();
   rulesDialog.showModal();
@@ -829,6 +843,9 @@ byId('add-app-rule').addEventListener('click', async () => {
     Simplified: flagFrom('rule-script'),
     DeliveryMode: delivery === '' ? null : Number(delivery),
     DropFinalStop: byId('rule-stop').value === '1',
+    // '' follows the main setting; 'same' keeps the language spoken, which the file stores as ''.
+    RefineLanguage: languageFrom(byId('rule-language').value),
+    RefineNote: byId('rule-note').value.trim(),
   };
   // A program has one rule; adding it again updates that rule.
   const existed = appRules.some(have => sameProgram(have.Program, program));

@@ -28,7 +28,7 @@ use windows::Win32::UI::Controls::Dialogs::{
 };
 use windows::Win32::UI::Input::KeyboardAndMouse::{
     GetAsyncKeyState, IsWindowEnabled, SendInput, INPUT, INPUT_0, INPUT_KEYBOARD, KEYBDINPUT, KEYBD_EVENT_FLAGS,
-    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_V,
+    KEYEVENTF_KEYUP, VIRTUAL_KEY, VK_CONTROL, VK_LBUTTON, VK_LWIN, VK_MENU, VK_RWIN, VK_SHIFT, VK_C, VK_V,
 };
 use windows::Win32::UI::Shell::ShellExecuteW;
 use windows::Win32::UI::WindowsAndMessaging::{
@@ -165,7 +165,16 @@ fn key(code: VIRTUAL_KEY, up: bool) -> INPUT {
 
 /// Presses Ctrl+V. False when the keys could not be sent.
 pub fn press_paste() -> bool {
-    let strokes = [key(VK_CONTROL, false), key(VK_V, false), key(VK_V, true), key(VK_CONTROL, true)];
+    press_with_control(VK_V)
+}
+
+/// Presses Ctrl+C, so the program in front copies what is selected. False when the keys could not be sent.
+pub fn press_copy() -> bool {
+    press_with_control(VK_C)
+}
+
+fn press_with_control(letter: VIRTUAL_KEY) -> bool {
+    let strokes = [key(VK_CONTROL, false), key(letter, false), key(letter, true), key(VK_CONTROL, true)];
     // SAFETY: the slice and the element size describe the same array.
     let sent = unsafe { SendInput(&strokes, std::mem::size_of::<INPUT>() as i32) };
     sent as usize == strokes.len()

@@ -137,6 +137,12 @@
             <div class="what"><label for="refine-note">補充說明</label><p>給模型的額外說明，例如想要的格式或常用的專有名詞，最多 500 個字。</p></div>
             <textarea id="refine-note" class="wide" rows="3" maxlength="500" spellcheck="false"></textarea></div>
           <div class="row sub">
+            <div class="what"><label for="refine-language">輸出語言</label><p>選英文時，說中文會得到英文；選繁體中文時，說英文會得到中文。也可以在「依程式設定」為個別程式選。</p></div>
+            <select id="refine-language"><option value="">和說的話相同</option><option value="en">英文</option><option value="zh-TW">繁體中文</option></select></div>
+          <div class="row sub">
+            <div class="what"><label for="rewrite-selection">用語音改寫選取的文字</label><p data-mac="在任何程式裡選取一段文字，按 Control+Option+E 說出要怎麼改（例如「改得客氣一點」「整理成條列」「翻成英文」），再按一次 Control+Option+E，選取的文字就換成改寫後的結果。選取的文字和你說的話會送到上面的潤稿服務；失敗時原文和剪貼簿都不變。">在任何程式裡選取一段文字，按 Ctrl+Alt+E 說出要怎麼改（例如「改得客氣一點」「整理成條列」「翻成英文」），再按一次 Ctrl+Alt+E，選取的文字就換成改寫後的結果。選取的文字和你說的話會送到上面的潤稿服務；失敗時原文和剪貼簿都不變。</p></div>
+            <input id="rewrite-selection" type="checkbox" role="switch" class="switch"></div>
+          <div class="row sub">
             <div class="what"><span class="name">測試潤稿</span><p>用一句固定的範例試試上面填的服務，不會儲存設定。</p><p id="refine-result" role="status" aria-live="polite"></p></div>
             <button id="refine-test" type="button" class="button" aria-label="測試潤稿服務">測試</button></div>
         </div>
@@ -202,7 +208,7 @@
 
       <section id="page-privacy" role="tabpanel" aria-labelledby="tab-privacy" hidden>
         <h1>隱私</h1>
-        <p class="note" data-mac="自訂詞、辨識紀錄和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務。">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務。</p>
+        <p class="note" data-mac="自訂詞、辨識紀錄和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務；開啟「用語音改寫選取的文字」時，你選取的文字也會送去。">注音組字、學習資料、自訂詞和本機語音辨識都在這台電腦上處理。只有在「語音」頁選用線上辨識時，錄音才會送到你選的服務。開啟「AI 潤稿」時，辨識出的文字（不是錄音）會送到你填的潤稿服務；開啟「用語音改寫選取的文字」時，你選取的文字也會送去。</p>
         <h2>這台電腦上的資料</h2>
         <div class="card">
           <div class="row">
@@ -311,6 +317,8 @@
       <label>輸出文字<select id="rule-script"><option value="">跟隨主要設定</option><option value="0">繁體中文</option><option value="1">簡體中文</option></select></label>
       <label>辨識完成後<select id="rule-delivery"><option value="">跟隨主要設定</option><option value="0">自動插入並複製文字</option><option value="1">只複製到剪貼簿</option><option value="2">只顯示預覽</option></select></label>
       <label>句尾句號<select id="rule-stop"><option value="0">保留</option><option value="1">去掉句尾的「。」</option></select></label>
+      <label>潤稿輸出語言<select id="rule-language"><option value="">跟隨主要設定</option><option value="same">和說的話相同</option><option value="en">英文</option><option value="zh-TW">繁體中文</option></select></label>
+      <label class="span">潤稿語氣<input id="rule-note" type="text" maxlength="200" autocomplete="off" placeholder="例如：口語、輕鬆；或：正式、有禮貌"></label>
     </div>
     <p id="app-rules-status" class="said" role="status" aria-live="polite"></p>
     <div class="group end">

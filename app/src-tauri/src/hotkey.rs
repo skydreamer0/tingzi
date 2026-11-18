@@ -32,6 +32,8 @@ const FIRST_FUNCTION: u32 = 0x70;
 pub const DRAFT: Hotkey = Hotkey { modifiers: CONTROL | ALT, key: 0x56 };
 /// Alt+Shift+Z pastes the last dictation again; Option+Shift+Z on macOS.
 pub const LAST: Hotkey = Hotkey { modifiers: ALT | SHIFT, key: 0x5A };
+/// Ctrl+Alt+E rewrites the selected text as the user says, when that is turned on; Control+Option+E on macOS.
+pub const REWRITE: Hotkey = Hotkey { modifiers: CONTROL | ALT, key: 0x45 };
 /// What a new user gets: Ctrl+Alt+R.
 pub const DEFAULT: Hotkey = Hotkey { modifiers: CONTROL | ALT, key: 0x52 };
 /// What the page suggests when the chosen keys are taken, in this order.
@@ -112,15 +114,13 @@ impl Hotkey {
         held.chain(std::iter::once(key.as_str())).collect::<Vec<_>>().join("+")
     }
 
-    /// The shortcut to register; None when off or not usable.
-    pub fn shortcut(&self) -> Option<Shortcut> {
-        if self.problem().is_some() {
-            return None;
-        }
-        let code = match self.kind()? {
-            Kind::Letter(index) => LETTERS[index],
-            Kind::Digit(index) => DIGITS[index],
-            Kind::Function(index) => FUNCTIONS[index],
+    /// The shortcut for keys the app keeps for itself, which `problem` turns away as a recording shortcut.
+    pub fn shortcut_unchecked(&self) -> Shortcut {
+        let code = match self.kind() {
+            Some(Kind::Letter(index)) => LETTERS[index],
+            Some(Kind::Digit(index)) => DIGITS[index],
+            Some(Kind::Function(index)) => FUNCTIONS[index],
+            None => Code::F24,
         };
         let mut modifiers = Modifiers::empty();
         for (bit, flag) in [(ALT, Modifiers::ALT), (CONTROL, Modifiers::CONTROL), (SHIFT, Modifiers::SHIFT), (SUPER, Modifiers::SUPER)] {
@@ -128,7 +128,15 @@ impl Hotkey {
                 modifiers |= flag;
             }
         }
-        Some(Shortcut::new((!modifiers.is_empty()).then_some(modifiers), code))
+        Shortcut::new((!modifiers.is_empty()).then_some(modifiers), code)
+    }
+
+    /// The shortcut to register; None when off or not usable.
+    pub fn shortcut(&self) -> Option<Shortcut> {
+        if self.problem().is_some() || self.kind().is_none() {
+            return None;
+        }
+        Some(self.shortcut_unchecked())
     }
 }
 
@@ -143,6 +151,12 @@ mod tests {
 
     fn keys(modifiers: u32, key: u32) -> Hotkey {
         Hotkey { modifiers, key }
+    }
+
+    #[test]
+    fn the_rewrite_keys_are_ctrl_alt_e() {
+        assert_eq!(REWRITE.shortcut_unchecked(), Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyE));
+        assert_eq!(DRAFT.shortcut_unchecked(), Shortcut::new(Some(Modifiers::CONTROL | Modifiers::ALT), Code::KeyV));
     }
 
     #[test]

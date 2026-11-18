@@ -149,7 +149,7 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
         }
     }
     // Refinement is only turned on with a service it can reach; the page stores a new key first here too.
-    if prefs.refine {
+    if prefs.refine || prefs.rewrite_selection {
         if let Some(problem) = crate::refine::problem(&prefs.refine_url, &prefs.refine_model, crate::secret::refine_exists()) {
             return Err(problem);
         }
@@ -167,8 +167,13 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
             None => format!("{} 已被其他程式或系統占用，請換一組。", taken.label()),
         });
     }
+    if !crate::rewrite_follows(&app, &prefs) {
+        keys.rebind(&app, &before);
+        return Err(format!("{} 已被其他程式占用，暫時無法用語音改寫選取的文字。", crate::hotkey::REWRITE.label()));
+    }
     if prefs.store().is_err() {
         keys.rebind(&app, &before);
+        crate::rewrite_follows(&app, &before);
         return Err("無法儲存設定。".into());
     }
     // These follow the saved file; a failure here leaves the main choices in place.
@@ -204,19 +209,20 @@ pub fn set_refine_key(key: String) -> Result<(), String> {
 pub fn clear_refine_key() -> bool {
     crate::secret::refine_clear();
     let prefs = Settings::load();
-    let stranded = prefs.refine && crate::refine::problem(&prefs.refine_url, &prefs.refine_model, false).is_some();
-    stranded && Settings { refine: false, ..prefs }.store().is_ok()
+    let stranded = (prefs.refine || prefs.rewrite_selection) && crate::refine::problem(&prefs.refine_url, &prefs.refine_model, false).is_some();
+    stranded && Settings { refine: false, rewrite_selection: false, ..prefs }.store().is_ok()
 }
 
 /// Refines the fixed sample with what the page has filled in and the stored key, whether or not Refine is on.
 /// Saves nothing. The reason for a failure is a whole sentence that never repeats what the server sent.
 #[tauri::command(async)]
-pub fn refine_test(url: String, model: String, note: String) -> Result<String, String> {
+pub fn refine_test(url: String, model: String, note: String, language: Option<String>) -> Result<String, String> {
     if let Some(problem) = crate::refine::problem(&url, &model, crate::secret::refine_exists()) {
         return Err(format!("{problem}。"));
     }
     // The blocking client must not run, or be dropped, on the runtime async commands use, so it gets its own thread.
-    let asked = std::thread::spawn(move || crate::refine::refine(crate::refine::SAMPLE, &url, &model, &note));
+    let ask = crate::refine::Ask { note, app_note: String::new(), language: crate::refine::Language::from_code(&language.unwrap_or_default()) };
+    let asked = std::thread::spawn(move || crate::refine::refine(crate::refine::SAMPLE, &url, &model, &ask));
     match asked.join() {
         // A dictation turns the answer into Traditional characters, so the test shows it the same way.
         Ok(Ok(text)) => Ok(crate::deliver::convert_script(&text, false)),
