@@ -6,6 +6,7 @@
 #include <filesystem>
 #include <fstream>
 #include <map>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <unordered_map>
@@ -129,6 +130,8 @@ struct Dictionary {
     // How common each character is under each of its readings.
     std::map<std::pair<Text,Text>,double> charScore;
     size_t longestPhrase = 1;
+    struct Applied { Text reading, text; std::optional<double> previous; };
+    std::vector<Applied> userLayer;
     // Words that occur together more often than chance: for each second word, the first words that favour it
     // and by how many powers of ten. Words are kept as hashes; the table is loaded into every application.
     using Followers=std::vector<std::pair<unsigned long long,float>>;
@@ -198,8 +201,10 @@ struct Dictionary {
         }
         return !byCode.empty() && !keys.empty();
     }
+    struct UserWord { Text reading, text; double score; };
     // Same line format as phrases.txt; only multi-syllable words of one character per syllable.
-    void loadUser(const Text& file) {
+    static std::vector<UserWord> readUser(const Text& file) {
+        std::vector<UserWord> words;
         std::ifstream in(file, std::ios::binary);
         std::string line, key, value;
         while (std::getline(in, line)) {
@@ -208,18 +213,24 @@ struct Dictionary {
             size_t count = 1 + std::count(key.begin(), key.end(), '-');
             Text reading = wide(key), text = wide(value);
             if (reading.empty() || text.size() != count) continue;
-            addUser(reading, text);
+            words.push_back({reading, text, userPhraseScore});
         }
+        return words;
+    }
+    void loadUser(const Text& file) { for (const auto& word : readUser(file)) addUser(word.reading, word.text, word.score); }
+    static void insertTerm(std::vector<Term>& bucket, const Text& text, double score) {
+        auto place = std::find_if(bucket.begin(), bucket.end(), [&](const Term& term){ return term.score < score; });
+        bucket.insert(place, {text, score});
     }
     void addUser(const Text& reading, const Text& text, double score = userPhraseScore) {
         auto& bucket = phrases[reading];
         bucket.erase(std::remove_if(bucket.begin(), bucket.end(), [&](const Term& term){ return term.text == text; }), bucket.end());
-        auto place = std::find_if(bucket.begin(), bucket.end(), [&](const Term& term){ return term.score < score; });
-        bucket.insert(place, {text, score});
+        insertTerm(bucket, text, score);
         longestPhrase = (std::max)(longestPhrase, size_t(1 + std::count(reading.begin(), reading.end(), L'-')));
     }
     // "reading<TAB>text": typing the reading offers the text in the candidate list, never automatically.
-    void loadTemplates(const Text& file) {
+    static std::vector<UserWord> readTemplates(const Text& file) {
+        std::vector<UserWord> words;
         std::ifstream in(file, std::ios::binary);
         std::string line;
         while (std::getline(in, line)) {
@@ -227,7 +238,30 @@ struct Dictionary {
             auto tab = line.find('\t');
             if (tab == std::string::npos || line.find('-') > tab) continue;
             Text reading = wide(line.substr(0, tab)), text = wide(line.substr(tab + 1));
-            if (!reading.empty() && !text.empty()) addUser(reading, text, templateScore);
+            if (!reading.empty() && !text.empty()) words.push_back({reading, text, templateScore});
+        }
+        return words;
+    }
+    void loadTemplates(const Text& file) { for (const auto& word : readTemplates(file)) addUser(word.reading, word.text, word.score); }
+    // Replaces the words given here last time with these, restoring any bundled word one of them
+    // displaced, so words the user adds or removes take effect in programs that are already open.
+    void setUserWords(const std::vector<UserWord>& words) {
+        for (auto it = userLayer.rbegin(); it != userLayer.rend(); ++it) {
+            auto found = phrases.find(it->reading);
+            if (found == phrases.end()) continue;
+            auto& bucket = found->second;
+            bucket.erase(std::remove_if(bucket.begin(), bucket.end(), [&](const Term& term){ return term.text == it->text; }), bucket.end());
+            if (it->previous) insertTerm(bucket, it->text, *it->previous);
+            if (bucket.empty()) phrases.erase(found);
+        }
+        userLayer.clear();
+        for (const auto& word : words) {
+            std::optional<double> previous;
+            auto found = phrases.find(word.reading);
+            if (found != phrases.end())
+                for (const auto& term : found->second) if (term.text == word.text) { previous = term.score; break; }
+            userLayer.push_back({word.reading, word.text, previous});
+            addUser(word.reading, word.text, word.score);
         }
     }
     Text reading(const Text& code) const {
@@ -347,6 +381,7 @@ class Input {
     }
     Text scripted(const Text& text) const {return simplifiedOutput.value_or(configuredSimplifiedOutput())?convertScript(text,true):text;}
     std::shared_ptr<const Preferences> preferences;
+    std::shared_ptr<const Favorites> favorites;
     Segmenter segmenter=configuredSegmenter();
     KeyLayout layout=configuredLayout();
     std::optional<bool> simplifiedOutput;
@@ -361,6 +396,25 @@ class Input {
         if(!preferences)return {};
         auto it=preferences->find({place(left),dict.reading(syllables[pos])});
         return it==preferences->end()?Text():it->second;
+    }
+    // What the user picked for this syllable before, in any sentence, the latest pick first.
+    const std::vector<std::pair<Text,int>>* favored(size_t pos) const {
+        if(!favorites || pos>=syllables.size() || symbol(syllables[pos]))return nullptr;
+        auto found=favorites->find(dict.reading(syllables[pos]));
+        return found==favorites->end()?nullptr:&found->second;
+    }
+    // Moves the characters the user picked before for this sound, latest first, to `from`, ahead of
+    // every other entry after it, so they are on the first page whatever words follow.
+    void favor(std::vector<Choice>& list,size_t pos,size_t from) const {
+        const auto* picks=favored(pos);
+        if(!picks || from>list.size())return;
+        std::vector<Choice> front;
+        for(const auto& [text,count]:*picks){
+            (void)count;
+            auto at=std::find_if(list.begin()+from,list.end(),[&](const Choice& c){return c.count==1 && c.text==text;});
+            if(at!=list.end()){front.push_back(*at);list.erase(at);}
+        }
+        list.insert(list.begin()+from,front.begin(),front.end());
     }
     const Segment* owner(size_t pos) const {
         for(const auto& seg:settled)if(pos>=seg.at && pos<seg.at+seg.count)return &seg;
@@ -647,6 +701,7 @@ class Input {
 public:
     explicit Input(const Dictionary& d):dict(d){}
     void setPreferences(std::shared_ptr<const Preferences> p){preferences=std::move(p);}
+    void setFavorites(std::shared_ptr<const Favorites> f){favorites=std::move(f);}
     void setSentences(std::shared_ptr<const std::vector<Sentence>> list){sentences=std::move(list);}
     // The sentence the last key committed, for the caller to remember; unset for short or symbol-only text.
     std::optional<Sentence> committedSentence() const {return committed;}
@@ -693,7 +748,9 @@ public:
         if(caret)return {cut(*caret,false),dict.reading(raw),cut(*caret,true)};
         return {best(0),dict.reading(raw),{}};
     }
-    std::vector<Choice> choices() const {
+    std::vector<Choice> choices() const {return choices(true);}
+    // With `favoredFirst` false, the order before the user's own picks are moved forward.
+    std::vector<Choice> choices(bool favoredFirst) const {
         std::vector<Choice> result;
         if(recallMode){for(const auto& said:recalled())result.push_back({said.text,0});return result;}
         if(symbolMode){for(const wchar_t* mark:symbolGroups[symbolGroup].marks)result.push_back({mark,0});return result;}
@@ -736,6 +793,7 @@ public:
             result.push_back({current,1});
             for(const auto& word:words(pos))
                 if(word.count==1 && word.text!=current)result.push_back(word);
+            if(favoredFirst)favor(result,pos,1);
             return result;
         }
         // Everything up to the next settled stretch can be taken at once.
@@ -759,6 +817,7 @@ public:
         for(const auto& c:options) {
             if(std::none_of(result.begin(),result.end(),[&](const Choice& item){return c.count==item.count && c.text==item.text;})) result.push_back(c);
         }
+        if(favoredFirst)favor(result,pos,1);
         return result;
     }
     Text menu() const {
@@ -880,8 +939,13 @@ public:
                 std::optional<Correction> edit;
                 const Text before=leftOf(target);
                 auto left=place(before);
-                const auto firstSingle=wasSettled?list.begin():std::find_if(list.begin(),list.end(),[](const Choice& item){return item.count==1;});
-                if(preferences && !left.empty() && picked.count==1 && firstSingle!=list.end() && firstSingle->text!=picked.text)
+                // A pick counts against the order the dictionary offers, not one the user's earlier picks changed.
+                const auto plain=favorites?choices(false):list;
+                const auto firstSingle=wasSettled?plain.begin():std::find_if(plain.begin(),plain.end(),[](const Choice& item){return item.count==1;});
+                // Picking another character than the one picked last time also counts, so the earlier pick is taken as a slip.
+                const auto* picks=favored(target);
+                const bool changed=(firstSingle!=plain.end() && firstSingle->text!=picked.text) || (picks && !picks->empty() && picks->front().first!=picked.text);
+                if(preferences && !left.empty() && picked.count==1 && changed)
                     edit=Correction{{left,dict.reading(syllables[target])},picked.text};
                 if(preferences && picked.count>1 && picked.text.size()==picked.count){
                     Text baseline=list.front().text.substr(0,picked.count);
