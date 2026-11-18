@@ -193,7 +193,7 @@ dialog::backdrop { background: rgb(10 12 30 / 0.45); }
 .choices .span { grid-column: 1 / -1; }
 
 @media (prefers-reduced-motion: reduce) {
-  .switch, .switch::after, #mic-level { transition: none; }
+  .switch, .switch::after, #mic-level, #fetch-level { transition: none; }
 }
 
 /* First-run steps: the microphone and recognition cards are moved in here while it is open. */

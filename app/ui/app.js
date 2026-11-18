@@ -65,7 +65,7 @@ function render() {
   mic.setAttribute('aria-pressed', String(state === 'recording'));
   mic.setAttribute('aria-label', micLabels[state] || '開始錄音');
   mic.title = mic.getAttribute('aria-label');
-  if (state !== 'recording') level.style.width = '0';
+  if (state !== 'recording') level.style.transform = '';
 }
 
 function receive(next) {
@@ -265,7 +265,7 @@ listen('mode', event => { mode = event.payload; render(); });
 // Square root keeps quiet speech visible on the meter.
 listen('level', event => {
   heard = Math.sqrt(Math.min(1, Math.max(0, Number(event.payload) || 0)));
-  level.style.width = Math.round(heard * 100) + '%';
+  level.style.transform = `scaleX(${heard.toFixed(3)})`;
 });
 
 function applyLook(look) {

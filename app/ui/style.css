@@ -152,12 +152,14 @@ html, body { background: transparent; }
   display: none;
 }
 [data-state="recording"] .meter { display: block; }
+/* Scaled rather than resized, so following the microphone does not lay the pill out again many times a second. */
 #level {
   display: block;
   height: 100%;
-  width: 0;
   background: var(--accent);
-  transition: width var(--motion-meter) linear;
+  transform: scaleX(0);
+  transform-origin: left;
+  transition: transform var(--motion-meter) linear;
 }
 
 /* Tools wait until the pointer is on the pill; a result's own tools show straight away. */
@@ -176,6 +178,9 @@ html, body { background: transparent; }
   cursor: pointer;
 }
 .tool:hover { background: var(--input); color: var(--text); }
+/* Tools fade in rather than pop up when they appear; they go at once, so they never linger after the pointer. */
+.tools .tool { transition: opacity var(--motion-fast) ease-out; }
+@starting-style { .tools .tool { opacity: 0; } }
 .tool .glyph { width: 20px; height: 20px; }
 .tools .for-text, .tools .for-retry { display: none; }
 [data-state="done"] .tools .for-text { display: grid; }
@@ -267,7 +272,7 @@ html, body { background: transparent; }
 
 /* Reduced motion: no travel, no wave, static bars; colour still tells the state. */
 @media (prefers-reduced-motion: reduce) {
-  #level, .key-face, .key-bar { transition: none; }
+  #level, .key-face, .key-bar, .tools .tool { transition: none; }
   .mic:hover .key-face, .mic:active .key-face, .mic.tap .key-face { transform: none; }
   [data-state] .key-bar { transform: none; animation: none; }
   .capsule.opening .bar, .capsule.closing .bar, .capsule.card-opening .editor, .capsule.card-closing .editor { animation: none; }
