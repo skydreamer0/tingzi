@@ -27,6 +27,7 @@ pub(super) struct Segmenter {
     earlier_voice_end: usize,
     previous_end: usize,
     phrase: Option<Phrase>,
+    incomplete: bool,
 }
 
 impl Segmenter {
@@ -42,6 +43,7 @@ impl Segmenter {
             earlier_voice_end: 0,
             previous_end: 0,
             phrase: None,
+            incomplete: false,
         }
     }
 
@@ -132,6 +134,7 @@ impl Segmenter {
         }
         let phrase = self.phrase.take().unwrap();
         if !self.long_enough(&phrase.voice) {
+            self.incomplete = true;
             self.previous_end = self.end;
             return None;
         }
@@ -164,16 +167,25 @@ impl Segmenter {
                 voice: first.start..phrase.voice.end,
             });
         }
-        self.long_enough(&voice).then_some(phrase.start..cut)
+        let long_enough = self.long_enough(&voice);
+        self.incomplete |= !long_enough;
+        long_enough.then_some(phrase.start..cut)
     }
 
-    pub(super) fn finish(mut self) -> Option<Range<usize>> {
+    pub(super) fn incomplete(&self) -> bool {
+        self.incomplete
+    }
+
+    pub(super) fn finish(mut self) -> (Option<Range<usize>>, bool) {
         if self.end > self.window_start {
             self.close_window();
         }
-        let phrase = self.phrase.as_ref()?;
+        let Some(phrase) = self.phrase.as_ref() else {
+            return (None, self.incomplete);
+        };
         let end = (phrase.voice.end + self.rate / 4).min(self.end);
-        self.long_enough(&phrase.voice).then_some(phrase.start..end)
+        let long_enough = self.long_enough(&phrase.voice);
+        (long_enough.then_some(phrase.start..end), self.incomplete || !long_enough)
     }
 }
 
@@ -193,7 +205,7 @@ mod tests {
             segmenter = next;
             segments.extend(ready);
         }
-        segments.extend(segmenter.finish());
+        segments.extend(segmenter.finish().0);
         segments
     }
 
@@ -210,7 +222,7 @@ mod tests {
         let s = advance(Segmenter::new(1000), &[0.5; 200], &[]);
         let s = advance(s, &[0.04; 600], &[0..450]);
         let s = advance(s, &[0.040001; 200], &[]);
-        assert_eq!(s.finish(), Some(550..1000));
+        assert_eq!(s.finish(), (Some(550..1000), false));
     }
 
     #[test]
@@ -258,6 +270,24 @@ mod tests {
     }
 
     #[test]
+    fn short_unsubmitted_speech_requires_the_full_recording() {
+        let sentence = advance(Segmenter::new(1000), &[0.5; 200], &[]);
+        let silence = advance(sentence, &[0.0; 600], &[0..450]);
+        assert_eq!(silence.finish(), (None, false));
+
+        let sentence = advance(Segmenter::new(1000), &[0.5; 200], &[]);
+        let silence = advance(sentence, &[0.0; 600], &[0..450]);
+        let short_tail = advance(silence, &[0.5; 180], &[]);
+        assert_eq!(short_tail.finish(), (None, true));
+
+        let short_start = advance(Segmenter::new(1000), &[0.5; 180], &[]);
+        let gap = advance(short_start, &[0.0; 15_000], &[]);
+        assert!(gap.incomplete());
+        let tail = advance(gap, &[0.5; 200], &[]);
+        assert_eq!(tail.finish(), (Some(15000..15380), true));
+    }
+
+    #[test]
     fn forced_cuts_use_the_quietest_complete_window_and_keep_the_suffix() {
         let s = advance(Segmenter::new(1000), &vec![0.5; 14_000], &[]);
         let s = advance(s, &[0.1; 40], &[]);
@@ -265,7 +295,7 @@ mod tests {
         let s = advance(s, &[0.1; 20], &[]);
         let s = advance(s, &[0.5; 699], &[]);
         let s = advance(s, &[0.5], &[0..14300]);
-        assert_eq!(s.finish(), Some(14300..15000));
+        assert_eq!(s.finish(), (Some(14300..15000), false));
         assert_eq!(
             cut(1000, 4096, &[(30_200, 0.5)]),
             [0..15000, 15000..30000, 30000..30200]
@@ -287,7 +317,7 @@ mod tests {
                 segments.extend(ready);
             }
             assert_eq!(segments, [0..14_520]);
-            assert_eq!(segmenter.finish(), Some(14_520..15_000));
+            assert_eq!(segmenter.finish(), (Some(14_520..15_000), false));
         }
     }
 
