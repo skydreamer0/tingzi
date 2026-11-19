@@ -8,6 +8,8 @@
 
 ## [尚未發行]
 
+## [0.9.0] - 2026-11-19
+
 ### 新增
 
 - 語音：使用「Codex 線上辨識」時，可開啟「邊講邊出字」實驗功能。浮條在錄音中逐句顯示文字，停止錄音後才送出全文。逐句辨識遇到問題時，會等錄音停止再辨識整段。
@@ -135,7 +137,8 @@
 - 語音：以自訂詞校正同音字、取代規則，以及依程式套用不同設定。
 - 語音：保留最近 50 則辨識紀錄，Alt＋Shift＋Z 可以再次貼上上一則。
 
-[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.8.0...HEAD
+[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/skydreamer0/tingzi/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/skydreamer0/tingzi/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/skydreamer0/tingzi/compare/v0.7.6...v0.7.7
 [0.7.6]: https://github.com/skydreamer0/tingzi/compare/v0.7.5...v0.7.6
