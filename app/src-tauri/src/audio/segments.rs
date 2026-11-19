@@ -293,8 +293,8 @@ mod tests {
 
     #[test]
     fn finishing_classifies_a_partial_window_and_ignores_a_silent_tail() {
-        assert_eq!(cut(1000, 13, &[(190, 0.5)]), []);
-        assert_eq!(cut(1000, 13, &[(190, 0.5), (9, 0.0)]), []);
+        assert!(cut(1000, 13, &[(190, 0.5)]).is_empty());
+        assert!(cut(1000, 13, &[(190, 0.5), (9, 0.0)]).is_empty());
         assert_eq!(cut(1000, 13, &[(190, 0.5), (15, 0.0)]), [0..205]);
         assert_eq!(cut(1000, 13, &[(180, 0.5), (25, -0.5)]), [0..205]);
         assert_eq!(cut(1000, 13, &[(200, 0.5), (2000, 0.0)]), [0..450]);
