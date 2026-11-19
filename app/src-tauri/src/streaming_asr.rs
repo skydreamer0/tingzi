@@ -338,7 +338,7 @@ mod tests {
             let requests = Arc::new(Requests::default());
             let (published, states) = mpsc::channel();
             requests.submit(1, 0..1, |_, _| Ok("先前句子".into()), |_| {});
-            requests.submit(2, 1..2, move |_, _| result, move |queue| {
+            requests.submit(2, 1..2, move |_, _| result.clone(), move |queue| {
                 published
                     .send((queue.fell_back(), queue.sentences().to_vec()))
                     .unwrap();
