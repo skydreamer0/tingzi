@@ -754,6 +754,13 @@ class Input {
         auto at=dict.byCode.lower_bound(keys);
         return at!=dict.byCode.end() && at->first.compare(0,keys.size(),keys)==0;
     }
+    // The keys as a syllable someone would say, a spelling no syllable has written the usual way; empty
+    // when they are neither.
+    Text usual(const Text& keys) const {
+        if(spoken(keys))return keys;
+        const Text fixed=standardSpelling(keys);
+        return spoken(fixed)?fixed:Text();
+    }
     // True when the keys begin a syllable once a spelling no syllable has is written the usual way.
     bool startsRespelled(const Text& keys) const {
         const Text fixed=standardSpelling(keys);
@@ -786,11 +793,11 @@ class Input {
         if(raw.empty())return false;
         if(!spoken(raw)){
             // A spelling no syllable has becomes the one that is said: ㄈㄨㄥ is ㄈㄥ, ㄒㄨㄝˊ is ㄒㄩㄝˊ.
-            if(const Text fixed=standardSpelling(raw);spoken(fixed))raw=fixed;
-            // Keys typed out of order, or after a syllable that was ended too soon, are put in reading order.
-            else if(const Text ordered=syllableOrder(raw);ordered!=raw && spoken(ordered))raw=ordered;
+            // Keys typed out of order, or after a syllable that was ended too soon, are put in reading
+            // order first, and read the same way: ㄨ ㄥ ㄈ is ㄈㄥ.
+            if(const Text fixed=usual(syllableOrder(raw));!fixed.empty())raw=fixed;
             else for(size_t count=loose;count>0;--count)
-                if(const Text joined=takenBack(count,raw);spoken(joined)){takeBack(count,joined);loose-=count;break;}
+                if(const Text joined=usual(takenBack(count,raw));!joined.empty()){takeBack(count,joined);loose-=count;break;}
             // A key given to the syllable before goes to this one when only that makes it a syllable:
             // ㄋㄧˇ ㄠ ㄏ ˇ is ㄋㄧˇ ㄏㄠˇ, not ㄋㄧㄠˇ and a ㄏˇ that spells nothing.
             if(settle && !spoken(raw) && owed && !caret && !syllables.empty() && !owner(syllables.size()-1))
