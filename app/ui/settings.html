@@ -106,6 +106,9 @@
           <div class="row sub" id="api-key-row">
             <div class="what"><label for="api-key">金鑰</label><p id="api-key-note"></p></div>
             <div class="group"><input id="api-key" type="password" maxlength="2048" autocomplete="off" spellcheck="false" placeholder="貼上新的金鑰"><button id="api-key-clear" type="button" class="button" aria-label="刪除已存的金鑰">刪除</button></div></div>
+          <div class="row sub">
+            <div class="what"><label for="streaming-asr">邊講邊出字</label><p id="streaming-asr-note">實驗功能・準備中。啟用後，錄音中會逐句經 Codex 傳到 ChatGPT 辨識。</p></div>
+            <input id="streaming-asr" type="checkbox" role="switch" class="switch" aria-describedby="streaming-asr-note" disabled></div>
         </div>
         <h2>文字處理</h2>
         <div class="card">

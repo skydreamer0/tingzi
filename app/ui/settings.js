@@ -78,6 +78,7 @@ function fill() {
   }
   microphone.value = prefs.MicrophoneName || '';
   byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
+  byId('streaming-asr').checked = Boolean(prefs.StreamingAsr);
   showLocal();
   byId('api-url').value = prefs.ApiUrl;
   byId('api-model').value = prefs.ApiModel;

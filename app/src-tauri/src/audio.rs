@@ -4,8 +4,13 @@ use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
+use std::time::Duration;
+
+mod segments;
+use segments::Segmenter;
 
 const TARGET_RATE: u32 = 16_000;
+const DAMAGED: &str = "錄音資料損毀";
 /// Recording stops by itself after ten minutes.
 pub const LONGEST_SECONDS: usize = 600;
 
@@ -14,16 +19,40 @@ pub struct Recorder {
     worker: JoinHandle<Result<Vec<u8>, String>>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+pub struct Segment {
+    pub recording_id: u64,
+    pub sequence: usize,
+    pub start: usize,
+    pub end: usize,
+}
+
+pub type SegmentListener = (u64, Box<dyn Fn(Segment) + Send>);
+
 impl Recorder {
     /// Starts recording from the microphone with this name, or the Windows default when None.
     /// `level` receives the peak of each buffer, from 0 to 1.
     pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
+        Self::start_with_segments(microphone, level, None)
+    }
+
+    pub fn start_with_segments(
+        microphone: Option<String>,
+        level: impl Fn(f32) + Send + 'static,
+        segments: Option<SegmentListener>,
+    ) -> Result<Self, String> {
+        Self::start_capture(move || open(microphone.as_deref(), level), segments)
+    }
+
+    fn start_capture<Stream>(
+        open: impl FnOnce() -> Result<(Stream, Arc<Mutex<Vec<f32>>>, u32), String> + Send + 'static,
+        segments: Option<SegmentListener>,
+    ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel::<()>();
         let (ready, started) = mpsc::channel::<Result<(), String>>();
         let worker = thread::spawn(move || -> Result<Vec<u8>, String> {
             // The stream is not Send, so the thread that opens it also owns and closes it.
-            let opened = open(microphone.as_deref(), level);
-            let (stream, samples, rate) = match opened {
+            let (stream, samples, rate) = match open() {
                 Ok(parts) => parts,
                 Err(reason) => {
                     let _ = ready.send(Err(reason.clone()));
@@ -31,13 +60,33 @@ impl Recorder {
                 }
             };
             let _ = ready.send(Ok(()));
-            let _ = stopped.recv();
+            let reader = if let Some((recording_id, notify)) = segments {
+                let mut reader = SegmentReader::new(rate, recording_id, notify);
+                loop {
+                    match stopped.recv_timeout(Duration::from_millis(20)) {
+                        Ok(()) => break Some(reader),
+                        Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+                        Err(mpsc::RecvTimeoutError::Timeout) => {
+                            let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
+                            reader = reader.read(&samples, end)?;
+                        }
+                    }
+                }
+            } else {
+                let _ = stopped.recv();
+                None
+            };
             drop(stream);
-            let captured = samples.lock().map_err(|_| "錄音資料損毀".to_string())?;
-            if too_short(&captured, rate) {
-                return Err(TOO_SHORT.into());
-            }
-            Ok(wav(&resample(trim(&captured, rate), rate)))
+            let captured = samples.lock().map_err(|_| DAMAGED.to_string())?;
+            let end = captured.len();
+            let captured = if let Some(reader) = reader {
+                drop(captured);
+                reader.finish(&samples, end)?;
+                samples.lock().map_err(|_| DAMAGED.to_string())?
+            } else {
+                captured
+            };
+            encode_recording(&captured[..end], rate)
         });
         match started.recv() {
             Ok(Ok(())) => Ok(Self { stop, worker }),
@@ -51,6 +100,59 @@ impl Recorder {
         let _ = self.stop.send(());
         self.worker.join().map_err(|_| "錄音中斷".to_string())?
     }
+}
+
+struct SegmentReader {
+    segmenter: Segmenter,
+    recording_id: u64,
+    sequence: usize,
+    cursor: usize,
+    notify: Box<dyn Fn(Segment) + Send>,
+}
+
+impl SegmentReader {
+    fn new(rate: u32, recording_id: u64, notify: Box<dyn Fn(Segment) + Send>) -> Self {
+        Self { segmenter: Segmenter::new(rate), recording_id, sequence: 0, cursor: 0, notify }
+    }
+
+    fn read(mut self, samples: &Mutex<Vec<f32>>, end: usize) -> Result<Self, String> {
+        while self.cursor < end {
+            let next = (self.cursor + 8192).min(end);
+            let batch = samples.lock().map_err(|_| DAMAGED.to_string())?[self.cursor..next].to_vec();
+            self.cursor = next;
+            let (segmenter, segments) = self.segmenter.push(&batch);
+            self.segmenter = segmenter;
+            for range in segments {
+                self.send(range);
+            }
+        }
+        Ok(self)
+    }
+
+    fn send(&mut self, range: std::ops::Range<usize>) {
+        self.sequence += 1;
+        (self.notify)(Segment {
+            recording_id: self.recording_id,
+            sequence: self.sequence,
+            start: range.start,
+            end: range.end,
+        });
+    }
+
+    fn finish(self, samples: &Mutex<Vec<f32>>, end: usize) -> Result<(), String> {
+        let Self { segmenter, recording_id, sequence, notify, .. } = self.read(samples, end)?;
+        if let Some(range) = segmenter.finish() {
+            notify(Segment { recording_id, sequence: sequence + 1, start: range.start, end: range.end });
+        }
+        Ok(())
+    }
+}
+
+fn encode_recording(samples: &[f32], rate: u32) -> Result<Vec<u8>, String> {
+    if too_short(samples, rate) {
+        return Err(TOO_SHORT.into());
+    }
+    Ok(wav(&resample(trim(samples, rate), rate)))
 }
 
 type Opened = (cpal::Stream, Arc<Mutex<Vec<f32>>>, u32);
@@ -78,24 +180,7 @@ fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Resul
     let limit = rate as usize * LONGEST_SECONDS;
     // Mixes each frame down to mono and reports how loud the buffer was.
     let keep = move |frames: &mut dyn Iterator<Item = f32>| {
-        let mut peak = 0f32;
-        if let Ok(mut held) = sink.lock() {
-            let mut sum = 0f32;
-            let mut count = 0usize;
-            for sample in frames {
-                sum += sample;
-                count += 1;
-                if count == channels {
-                    let mono = sum / channels as f32;
-                    peak = peak.max(mono.abs());
-                    if held.len() < limit {
-                        held.push(mono);
-                    }
-                    sum = 0.0;
-                    count = 0;
-                }
-            }
-        }
+        let peak = sink.lock().map(|mut held| capture_mono(&mut held, frames, channels, limit)).unwrap_or(0.0);
         level(peak.min(1.0));
     };
     let failed = |_: cpal::StreamError| {};
@@ -125,16 +210,44 @@ fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Resul
     Ok((stream, samples, rate))
 }
 
+fn capture_mono(samples: &mut Vec<f32>, frames: impl Iterator<Item = f32>, channels: usize, limit: usize) -> f32 {
+    let mut peak = 0f32;
+    let mut sum = 0f32;
+    let mut count = 0usize;
+    for sample in frames {
+        sum += sample;
+        count += 1;
+        if count == channels {
+            let mono = sum / channels as f32;
+            peak = peak.max(mono.abs());
+            if samples.len() < limit {
+                samples.push(mono);
+            }
+            sum = 0.0;
+            count = 0;
+        }
+    }
+    peak
+}
+
 /// Where the sound starts and ends, in samples, to the nearest 20 ms. None when nothing stands out.
 fn sound(samples: &[f32], rate: u32) -> Option<(usize, usize)> {
-    let window = (rate as usize / 50).max(1); // 20 ms
+    let window = sound_window(rate);
     let loudest = samples.iter().fold(0f32, |peak, sample| peak.max(sample.abs()));
     // Speech stands well above the room; the floor keeps a silent recording from being cut to nothing.
-    let threshold = (loudest * 0.08).max(0.004);
+    let threshold = sound_threshold(loudest);
     let speaking = |chunk: &[f32]| chunk.iter().any(|sample| sample.abs() > threshold);
     let chunks = samples.chunks(window);
     let (first, last) = (chunks.clone().position(speaking)?, chunks.clone().rposition(speaking)?);
     Some((first * window, ((last + 1) * window).min(samples.len())))
+}
+
+fn sound_window(rate: u32) -> usize {
+    (rate as usize / 50).max(1)
+}
+
+fn sound_threshold(loudest: f32) -> f32 {
+    (loudest * 0.08).max(0.004)
 }
 
 const TOO_SHORT: &str = "錄音太短，請再說一次";
@@ -263,6 +376,61 @@ pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn positions_arrive_during_capture_and_at_finish_without_changing_the_wav() {
+        struct TailOnStop(Arc<Mutex<Vec<f32>>>, Vec<f32>);
+        impl Drop for TailOnStop {
+            fn drop(&mut self) {
+                self.0.lock().unwrap().extend(&self.1);
+            }
+        }
+
+        let rate = 44_100;
+        let frame = rate as usize / 100;
+        let mut input = vec![0.0; 30 * frame];
+        input.extend(std::iter::repeat_n(-0.5, 20 * frame));
+        input.resize(110 * frame, 0.0);
+        let open = || {
+            let samples = Arc::new(Mutex::new(input.clone()));
+            move || Ok((TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate))
+        };
+        let (send, received) = mpsc::channel();
+        let recorder = Recorder::start_capture(open(), Some((19, Box::new(move |segment| send.send(segment).unwrap())))).unwrap();
+        let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
+        assert_eq!(first, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
+        assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Empty));
+
+        let segmented = recorder.finish();
+        assert_eq!(received.try_recv().unwrap(), Segment { recording_id: 19, sequence: 2, start: 85 * frame, end: 131 * frame });
+        assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+        let full = Recorder::start_capture(open(), None).unwrap().finish();
+        input.extend(std::iter::repeat_n(0.25, 21 * frame));
+        assert_eq!(full, Ok(wav(&resample(trim(&input, rate), rate))));
+        assert_eq!(segmented, full);
+
+        let brief = move || Ok(((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate));
+        let listener: SegmentListener = (20, Box::new(|segment| panic!("unexpected segment: {segment:?}")));
+        for option in [None, Some(listener)] {
+            let result = Recorder::start_capture(brief, option).unwrap().finish();
+            assert_eq!(result, Err(TOO_SHORT.to_string()));
+        }
+    }
+
+    #[test]
+    fn the_last_segment_stops_at_the_capture_limit() {
+        let rate = 1_000u32;
+        let limit = rate as usize * LONGEST_SECONDS;
+        let mut input = Vec::new();
+        capture_mono(&mut input, std::iter::repeat_n(0.0, limit - 250), 1, limit);
+        assert_eq!(capture_mono(&mut input, std::iter::repeat_n(-0.5, 400), 1, limit), 0.5);
+        assert_eq!(input.len(), 600_000);
+        let (send, received) = mpsc::channel();
+        let read = SegmentReader::new(rate, 42, Box::new(move |segment| send.send(segment).unwrap()));
+        read.finish(&Mutex::new(input), limit).unwrap();
+        assert_eq!(received.try_recv().unwrap(), Segment { recording_id: 42, sequence: 1, start: 599_490, end: 600_000 });
+        assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
+    }
 
     #[test]
     fn silence_around_speech_is_dropped() {
