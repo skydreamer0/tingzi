@@ -188,6 +188,7 @@ html, body { background: transparent; }
 .tools .tool { transition: opacity var(--motion-fast) ease-out, transform var(--motion-fast) ease-out; }
 @starting-style { .tools .tool { opacity: 0; transform: translateX(calc(var(--out) * -6px)); } }
 .tool .glyph { width: 20px; height: 20px; }
+[data-side="left"] #dock .glyph { transform: scaleX(-1); }
 .tools .for-text, .tools .for-retry { display: none; }
 [data-state="done"] .tools .for-text { display: grid; }
 [data-state="retry"] .tools .for-retry { display: grid; }
@@ -283,7 +284,7 @@ html, body { background: transparent; }
 }
 .capsule[data-side="right"] { --start: inset(0 0 0 calc(100% - var(--shown)) round 36px); }
 .capsule.opening .bar { animation: pill-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
-.capsule.closing .bar { animation: pill-close var(--motion-base) cubic-bezier(0.4, 0, 1, 1) forwards; }
+.capsule.closing .bar { animation: pill-close var(--motion-base) cubic-bezier(0.25, 0.5, 0.5, 1) forwards; }
 /* The words and tools fade first, so the fold does not look like it cuts through them. */
 .capsule.closing .body, .capsule.closing .tools { opacity: 0; transition: opacity var(--motion-fast) ease-in; }
 /* A dictation that starts with the pill open folds only the pill's far end, back to the short pill's length;
@@ -292,13 +293,25 @@ html, body { background: transparent; }
 @keyframes pill-open { from { clip-path: var(--start); } to { clip-path: var(--whole); } }
 @keyframes pill-close { from { clip-path: var(--whole); } to { clip-path: var(--start); } }
 
-/* The card unrolls from the pill's side, downwards below it or upwards above it, and rolls back up into it. */
-.capsule { --card-start: inset(0 0 100% 0 round var(--radius-lg)); --card-whole: inset(0 0 0 0 round var(--radius-lg)); }
-.capsule[data-above="true"] { --card-start: inset(100% 0 0 0 round var(--radius-lg)); }
+/* Fold the editor towards the keycap, not against a full-width horizontal line.
+   The edge next to the bar stays anchored whether the editor opens below or above it. */
+.capsule {
+  --card-top: 0%;
+  --card-bottom: 100%;
+  --card-right: 0px;
+  --card-left: max(0px, calc(100% - 72px));
+  --card-start: inset(var(--card-top) var(--card-right) var(--card-bottom) var(--card-left) round var(--radius-lg));
+  --card-whole: inset(0 0 0 0 round var(--radius-lg));
+}
+.capsule[data-side="left"] { --card-right: max(0px, calc(100% - 72px)); --card-left: 0px; }
+.capsule[data-above="true"] { --card-top: 100%; --card-bottom: 0%; }
 .capsule.card-opening .editor { animation: card-open var(--motion-base) cubic-bezier(0.2, 0.8, 0.2, 1); }
-.capsule.card-closing .editor { animation: card-close var(--motion-fast) cubic-bezier(0.4, 0, 1, 1) forwards; }
+.capsule.card-closing .editor { animation: card-close var(--motion-fast) cubic-bezier(0.25, 0.5, 0.5, 1) forwards; }
 @keyframes card-open { from { clip-path: var(--card-start); opacity: 0.4; } to { clip-path: var(--card-whole); opacity: 1; } }
-@keyframes card-close { from { clip-path: var(--card-whole); opacity: 1; } to { clip-path: var(--card-start); opacity: 0; } }
+@keyframes card-close {
+  from { clip-path: var(--card-whole); opacity: 1; }
+  to { clip-path: var(--card-start); opacity: 0; }
+}
 
 /* Reduced motion: no travel, no wave, static bars; colour still tells the state. */
 @media (prefers-reduced-motion: reduce) {
