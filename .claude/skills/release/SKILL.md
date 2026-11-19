@@ -39,7 +39,7 @@ git push origin v<新版>
 ## 4. 檢查草稿
 
 1. 等 `.github/workflows/release.yml` 跑完。標籤和建置出來的版號不一致時，它會停下來；回到第 2 步修正，刪掉錯的標籤前也要先問。
-2. 草稿 release 只能有 `Tingzi-Setup-<新版>-x64.exe` 與 `Tingzi-Setup-<新版>-x64.exe.sha256` 兩個檔，檔名不能改。
+2. 草稿 release 只能有四個檔，檔名不能改：Windows 的 `Tingzi-Setup-<新版>-x64.exe` 與 `Tingzi-Setup-<新版>-x64.exe.sha256`，macOS 的 `Tingzi-<新版>-macos.dmg` 與 `Tingzi-<新版>-macos.dmg.sha256`。macOS 的兩個檔由同一個工作流程在 Windows 之後附上。
 3. 起草說明裡的 `{{SUMMARY}}`（一兩句本版重點）、`{{UPGRADE_NOTES}}`、`{{KNOWN_ISSUES}}`，沒有內容的項目整行刪除，確認沒有留下 `{{`。寫法依 `CONTRIBUTING.md` 的「發行說明」：重點放最前面，不用表格或 HTML 註解，尚未實機驗收的項目如實寫明。
 
 ## 5. 發佈（停下來問）

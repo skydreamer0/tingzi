@@ -13,9 +13,9 @@
 | `windows/editor.cpp` | 開發用的注音測試視窗；預設建置已不再編譯，也不隨安裝包發行。 |
 | `app/src-tauri/` | 語音浮窗與設定頁的 Rust 後端（Tauri 2）：錄音、辨識（內建 codex-asr 與本機 Whisper）、貼入規則、設定、系統匣與單一執行個體。各檔案的職責見[遷移規格](../specs/app-migration.md)的架構表；測試寫在各模組裡，以 `cargo test` 執行。 |
 | `app/src-tauri/src/sys/` | 向作業系統要求的每一件事，一個系統一個檔：`win.rs`（Win32、登錄檔、認證管理員）與 `mac.rs`（AppKit、Quartz 按鍵事件、鑰匙圈）。兩個檔提供同一組函式，其他模組只呼叫 `sys::`，不直接使用系統 API。 |
-| `macos/build.sh`、`notices.py`、`README.md` | macOS 版的建置腳本（組出 `Tingzi.app` 與 ZIP）、第三方聲明產生器與使用說明。macOS 版只有語音浮窗，沒有注音輸入法。 |
+| `macos/build.sh`、`notices.py`、`README.md` | macOS 版的建置腳本（組出同時支援 Apple 晶片與 Intel 的 `Tingzi.app` 與磁碟映像檔）、磁碟映像檔的檢查腳本 `check_dmg.sh`、第三方聲明產生器與使用說明。macOS 版只有語音浮窗，沒有注音輸入法。 |
 | `.github/workflows/windows.yml` | 在 GitHub 的 Windows 電腦上執行 `cargo test`、`windows/test_engine.cmd`、`windows/build.cmd`、打包 ZIP 與安裝程式，再在那台用完即丟的電腦上以 `windows/test_installer.ps1` 安裝、升級與移除一次，並存成工作流程的產物。 |
-| `.github/workflows/macos.yml` | 在 GitHub 的 Mac 上執行 `cargo test` 與 `macos/build.sh`，並把 ZIP 存成工作流程的產物。 |
+| `.github/workflows/macos.yml` | 在 GitHub 的 Mac 上執行 `cargo test` 與 `macos/build.sh`，檢查磁碟映像檔，並把 `.dmg` 與 `.sha256` 存成工作流程的產物。發行時由 `release.yml` 的 macOS 工作附到草稿 release。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`）的網頁介面，只顯示狀態與收集選擇。 |
 | `windows/engine_test.cpp`、`learning_test.cpp`、`test_engine.cmd` | 自有引擎與學習的測試。`test_engine.cmd` 編譯並執行它們和選字基準測試，Windows 工作流程每次都會跑。 |
 | `windows/bench/` | 選字基準測試：測試句、各類別的基準數字與量測程式，說明見[選字基準測試](../../windows/bench/README.md)。 |
@@ -58,7 +58,7 @@ macOS 版要在 Mac 上建置，需要 Rust、Python 3 與 Xcode 命令列工具
 bash macos/build.sh
 ```
 
-腳本以 `cargo build --release --locked` 建置 `app/src-tauri`，組出 `.build/macos/Tingzi.app`（執行檔、`Info.plist`、圖示、字音表 `phrases.txt` 與第三方聲明），做本機簽章，再壓成 ZIP。第三方聲明沿用 `windows/package_release.py` 的授權審核清單，遇到清單以外的授權字串會停下來。使用方式與目前的限制見 [macOS 說明](../../macos/README.md)。
+腳本以 `cargo build --release --locked` 分別建置 `aarch64-apple-darwin` 與 `x86_64-apple-darwin`，用 `lipo` 合成一個執行檔，組出 `.build/macos/Tingzi.app`（執行檔、`Info.plist`、圖示、字音表 `phrases.txt` 與第三方聲明），做本機簽章，再用 `hdiutil` 做成 `Tingzi-<版本>-macos.dmg`（裡面是 `Tingzi.app` 與「應用程式」資料夾的捷徑）和它的 `.sha256`。需要用 rustup 安裝的 Rust。第三方聲明沿用 `windows/package_release.py` 的授權審核清單，遇到清單以外的授權字串會停下來。使用方式與目前的限制見 [macOS 說明](../../macos/README.md)。
 
 在 Windows 上無法編譯 macOS 版（錄音與加密的相依套件需要 Apple 的工具與 SDK）。改動 `sys/mac.rs` 後，以推送到 GitHub 觸發的 macOS 工作流程確認編譯與測試。
 

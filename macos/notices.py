@@ -8,8 +8,17 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent / 'windows'))
 from package_release import dependency_notices
 
 
-def notices(metadata_path, destination):
-    metadata = json.loads(metadata_path.read_text(encoding='utf-8-sig'))
+def notices(metadata_paths, destination):
+    # One `cargo metadata` per kind of Mac; a package used by either is listed once.
+    metadata = {'workspace_members': [], 'packages': []}
+    seen = set()
+    for path in metadata_paths:
+        part = json.loads(path.read_text(encoding='utf-8-sig'))
+        metadata['workspace_members'] += part['workspace_members']
+        for item in part['packages']:
+            if item['id'] not in seen:
+                seen.add(item['id'])
+                metadata['packages'].append(item)
     entries = {}
     dependencies = dependency_notices(metadata, entries)
     combined = ['Third-party notices for Tingzi on macOS\n',
@@ -24,6 +33,6 @@ def notices(metadata_path, destination):
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        sys.exit('usage: notices.py <cargo-metadata.json> <THIRD-PARTY-NOTICES.txt>')
-    notices(Path(sys.argv[1]), Path(sys.argv[2]))
+    if len(sys.argv) < 3:
+        sys.exit('usage: notices.py <cargo-metadata.json>... <THIRD-PARTY-NOTICES.txt>')
+    notices([Path(arg) for arg in sys.argv[1:-1]], Path(sys.argv[-1]))

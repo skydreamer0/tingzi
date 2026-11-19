@@ -9,21 +9,31 @@
 
 ## 已知問題
 
-- 安裝程式沒有數位簽章，Windows 可能會顯示警告。
+- 安裝程式沒有數位簽章，Windows 可能會顯示警告；macOS 版沒有 Apple 的開發者簽章與公證，第一次開啟要到系統設定允許。
 - {{KNOWN_ISSUES}}
 
 ## 下載與安裝
 
-本版只提供 Windows 10 與 11（x64）。macOS 版仍在準備中。
-
-- `Tingzi-Setup-{{VERSION}}-x64.exe`：安裝程式，全新安裝與升級都使用這個檔案。
+- `Tingzi-Setup-{{VERSION}}-x64.exe`：Windows 10 與 11（x64）的安裝程式，全新安裝與升級都使用這個檔案。
 - `Tingzi-Setup-{{VERSION}}-x64.exe.sha256`：安裝程式的 SHA-256 雜湊值。
+- `Tingzi-{{VERSION}}-macos.dmg`：macOS 11 以上的磁碟映像檔，Apple 晶片與 Intel 的 Mac 都能用。macOS 版只有語音輸入，還沒有實機驗收。
+- `Tingzi-{{VERSION}}-macos.dmg.sha256`：磁碟映像檔的 SHA-256 雜湊值。
+
+**Windows**
 
 1. 下載安裝程式後，在 PowerShell 執行 `Get-FileHash .\Tingzi-Setup-{{VERSION}}-x64.exe -Algorithm SHA256`，確認結果是 `{{SHA256}}`。
 2. 執行安裝程式。如果出現「Windows 已保護您的電腦」，按「其他資訊」，再按「仍要執行」。
 3. 安裝完成後，按 Windows＋空白鍵選擇「聽字・注音與語音輸入法」。
 
 詳細步驟、無人值守安裝與移除方式，見 Windows 使用手冊：https://github.com/skydreamer0/tingzi/blob/main/windows/README.md
+
+**macOS**
+
+1. 下載後在「終端機」執行 `shasum -a 256 Tingzi-{{VERSION}}-macos.dmg`，確認結果和 `.sha256` 檔裡的一樣。
+2. 打開磁碟映像檔，把「Tingzi」拖到「應用程式」資料夾。
+3. 第一次開啟會被 macOS 擋下，因為程式沒有 Apple 的開發者簽章。到「系統設定 > 隱私權與安全性」，在「安全性」一段按「強制打開」。
+
+詳細步驟見 macOS 說明：https://github.com/skydreamer0/tingzi/blob/main/macos/README.md
 
 ## 隱私
 

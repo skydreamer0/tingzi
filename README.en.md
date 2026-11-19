@@ -42,7 +42,7 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 | Platform | Status | How to get it |
 | --- | --- | --- |
 | Windows 10/11 (x64) | Preview | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
-| macOS | In progress, not released | Voice input only, no Zhuyin; for now you can only [build it yourself](macos/README.md) |
+| macOS 11 or later | In progress, not yet tested on a real Mac | Voice input only, no Zhuyin; for versions after 0.9.0, download `Tingzi-<version>-macos.dmg` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and drag it to Applications; see the [macOS notes](macos/README.md) |
 
 **Installing on Windows**
 
@@ -55,7 +55,7 @@ Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) a
 > [!NOTE]
 > This is a preview. The installer is not code-signed, so Windows may show "Windows protected your PC"; choose More info, then Run anyway. Each release includes a `.sha256` file you can use to check the download.
 >
-> A self-built macOS `Tingzi.app` is signed locally only. It has no Developer ID and is not notarized by Apple, so the first time you open it, right-click it in Finder and choose Open.
+> The macOS app is signed locally only. It has no Developer ID and is not notarized by Apple, so macOS blocks it the first time; open System Settings > Privacy & Security and choose Open Anyway (on macOS 14 or earlier, right-click it in Finder and choose Open).
 
 ## Quick start
 
