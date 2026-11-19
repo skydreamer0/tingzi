@@ -226,6 +226,9 @@ int wmain(int argc,wchar_t** argv) {
     expect(shows({'X','J',VK_OEM_COMMA,'4'},{'X','M',VK_OEM_COMMA,'4'}),"and after an initial that takes both medials, before the final only one of them has");
     expect(shows({'S','U','3','V','J',VK_OEM_COMMA,'6'},{'S','U','3','V','M',VK_OEM_COMMA,'6'}),"in the middle of a sentence too");
     expect(shows({'Z','J',VK_OEM_2,'S','U','3'},{'Z',VK_OEM_2,VK_SPACE,'S','U','3'}),"and when the next syllable ends it");
+    expect(shows({'J',VK_OEM_2,'Z',VK_SPACE},{'Z',VK_OEM_2,VK_SPACE}),"and when its keys came out of order");
+    expect(shows({'J','V',VK_OEM_COMMA,'6'},{'V','M',VK_OEM_COMMA,'6'}),"with the medial first");
+    expect(shows({'V','J','6',VK_OEM_COMMA,'S','U','3'},{'V','M',VK_OEM_COMMA,'6','S','U','3'}),"or the tone a key early");
     enter("ZJ ");
     expect(input.preview().size()==1 && input.preview()!=L"ㄈ","a spelling that is a syllable is left alone");
     input.clear();
