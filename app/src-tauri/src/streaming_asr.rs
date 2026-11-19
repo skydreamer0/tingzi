@@ -319,32 +319,44 @@ mod tests {
         );
     }
 
+    /// One recogniser for the whole recording, as in the app: the running worker also handles the
+    /// sentences queued behind it, so each answer is chosen by where its sentence starts.
+    fn answers(
+        results: Vec<Result<String, String>>,
+    ) -> impl Fn(Range<usize>, &dyn Fn() -> bool) -> Result<String, String> + Send + Clone + 'static {
+        let results = Arc::new(results);
+        move |range: Range<usize>, _: &dyn Fn() -> bool| results[range.start].clone()
+    }
+
     #[test]
     fn successful_tail_and_silent_tail_finish_with_one_ordered_transcript() {
+        let recognise = answers(vec![Ok("中文".into()), Ok("尾句".into())]);
         let requests = Arc::new(Requests::default());
-        requests.submit(1, 0..1, |_, _| Ok("中文".into()), |_| {});
-        requests.submit(2, 1..2, |_, _| Ok("尾句".into()), |_| {});
+        requests.submit(1, 0..1, recognise.clone(), |_| {});
+        requests.submit(2, 1..2, recognise.clone(), |_| {});
         assert_eq!(requests.finish(), Transcript::Sentences("中文尾句".into()));
 
         // Silence creates no segment, so the preceding sentence remains the transcript.
         let requests = Arc::new(Requests::default());
-        requests.submit(1, 0..1, |_, _| Ok("中文".into()), |_| {});
+        requests.submit(1, 0..1, recognise, |_| {});
         assert_eq!(requests.finish(), Transcript::Sentences("中文".into()));
     }
 
     #[test]
     fn empty_tail_timeout_and_rate_limit_fall_back_once_and_clear_preview() {
         for result in [Ok(" \n ".into()), Err("timeout".into()), Err("429".into())] {
+            let recognise = answers(vec![Ok("先前句子".into()), result]);
             let requests = Arc::new(Requests::default());
             let (published, states) = mpsc::channel();
-            requests.submit(1, 0..1, |_, _| Ok("先前句子".into()), |_| {});
-            requests.submit(2, 1..2, move |_, _| result.clone(), move |queue| {
+            let publish = move |queue: &Queue| {
                 published
                     .send((queue.fell_back(), queue.sentences().to_vec()))
                     .unwrap();
-            });
+            };
+            requests.submit(1, 0..1, recognise.clone(), publish.clone());
+            requests.submit(2, 1..2, recognise, publish);
             assert_eq!(requests.finish(), Transcript::FullRecording);
-            let (fallback, sentences) = states.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (fallback, sentences) = states.try_iter().last().unwrap();
             assert!(fallback);
             assert!(sentences.is_empty());
         }
@@ -354,33 +366,24 @@ mod tests {
     fn fallback_drops_queued_requests_without_starting_them() {
         let requests = Arc::new(Requests::default());
         let (release, unblock) = mpsc::channel();
-        let unblock = Mutex::new(unblock);
+        let unblock = Arc::new(Mutex::new(unblock));
         let (started, wait_started) = mpsc::channel();
-        requests.submit(
-            1,
-            0..1,
-            move |_, _| {
-                started.send(()).unwrap();
-                unblock.lock().unwrap().recv().unwrap();
-                Ok("late".into())
-            },
-            |_| {},
-        );
-        wait_started.recv_timeout(Duration::from_secs(5)).unwrap();
-        let (queued, ran_queued) = mpsc::channel();
-        requests.submit(
-            2,
-            1..2,
-            move |_, _| {
-                queued.send(()).unwrap();
-                Ok("should not run".into())
-            },
-            |_| {},
-        );
+        let recognise = move |range: Range<usize>, _: &dyn Fn() -> bool| {
+            started.send(range.start).unwrap();
+            unblock.lock().unwrap().recv().unwrap();
+            Ok("late".to_string())
+        };
+        requests.submit(1, 0..1, recognise.clone(), |_| {});
+        assert_eq!(wait_started.recv_timeout(Duration::from_secs(5)), Ok(0));
+        requests.submit(2, 1..2, recognise, |_| {});
         requests.fallback(|_| {});
         assert_eq!(requests.finish(), Transcript::FullRecording);
-        assert_eq!(ran_queued.try_recv(), Err(mpsc::TryRecvError::Empty));
         release.send(()).unwrap();
+        // The worker ends after the late answer without starting the queued sentence.
+        assert_eq!(
+            wait_started.recv_timeout(Duration::from_secs(5)),
+            Err(mpsc::RecvTimeoutError::Disconnected)
+        );
     }
 
     #[test]
