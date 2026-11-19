@@ -77,7 +77,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 
 ![The voice bar, the edit card shown after a field change, and its six states](docs/images/voice-bar.svg)
 
-- **An always-available bar**: normally just an icon at the screen edge, which you can drag to the left or right side. It expands while recording, recognizing and refining, and shows whether the current sentence is being recognized online or locally.
+- **An always-available bar**: normally just an icon at the screen edge, which you can drag to the left or right side. It expands while recording, recognizing and refining, and shows whether the current sentence is being recognized online or locally. The editor and bar fold back toward the edge where the icon sits.
 - **No pasting into the wrong field**: if you move to another field while recording, the text isn't pasted there. It stays in an editable card and is already on the clipboard.
 - **Spoken-language cleanup**: removes leading fillers such as 嗯 and 呃 and stuttered repeats, and adds Chinese punctuation, without rewriting the sentence.
 - **Custom words and replacement rules**: names and terms you add are spelled correctly first. For words that are always misheard, or English capitalization, add rules of the form "what was heard → what to write".
