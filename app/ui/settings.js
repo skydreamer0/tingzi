@@ -138,6 +138,7 @@ function collect(engineFromPage) {
       ...panel.prefs,
       Engine: engine,
       Online: engine === 'codex',
+      StreamingAsr: byId('streaming-asr').checked,
       LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
       Gpu: byId('gpu').disabled ? panel.prefs.Gpu : byId('gpu').checked,
       ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
@@ -178,6 +179,11 @@ const engineNotes = {
 function showEngine() {
   const engine = byId('engine').value;
   byId('engine-note').textContent = engineNotes[engine]();
+  const streaming = byId('streaming-asr');
+  streaming.disabled = engine !== 'codex';
+  byId('streaming-asr-note').textContent = streaming.disabled
+    ? '實驗功能。使用 Codex 時可開啟。'
+    : '實驗功能。啟用後，錄音中會逐句經 Codex 傳到 ChatGPT 辨識。';
   byId('local-model-row').hidden = engine !== 'local';
   byId('gpu-row').hidden = engine !== 'local' || !(local.gpu_ready || local.gpu_offer);
   byId('update-row').hidden = engine !== 'local' || !local.updates.length;

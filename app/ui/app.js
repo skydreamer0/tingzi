@@ -12,15 +12,16 @@ let previewVersion = -1;
 function receiveStreamingPreview(preview) {
   if (preview.version <= previewVersion) return;
   previewVersion = preview.version;
+  capsule.toggleAttribute('data-streaming', preview.recording_id != null);
   const lines = preview.sentences.map(sentence => {
     const line = document.createElement('p');
     line.textContent = sentence;
     return line;
   });
-  if (preview.pending > 0) {
+  if (preview.fallback || preview.pending > 0) {
     const line = document.createElement('p');
     line.className = 'pending';
-    line.textContent = '辨識中…';
+    line.textContent = preview.fallback ? '停止錄音後將辨識全文' : '辨識中…';
     lines.push(line);
   }
   streamingPreview.replaceChildren(...lines);

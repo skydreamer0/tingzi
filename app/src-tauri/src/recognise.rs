@@ -51,11 +51,24 @@ pub fn warm(engine: Engine, prefs: &Settings) {
     }
 }
 
+// A cancelled Codex upload keeps its slot until the blocking client returns.
+static CODEX_REQUEST: Mutex<()> = Mutex::new(());
+
 /// Recognises 16 kHz mono WAV bytes with `engine`. Blocks; call it off the UI thread.
 pub fn run(engine: Engine, prefs: &Settings, wav: Vec<u8>, cancelled: &dyn Fn() -> bool) -> Result<String, String> {
     match engine {
         Engine::Local => local(prefs.local_model.as_deref(), prefs.gpu, &wav, cancelled),
-        Engine::Codex => online(wav),
+        Engine::Codex => {
+            if cancelled() {
+                return Err("已取消".into());
+            }
+            let _request = CODEX_REQUEST.lock().map_err(|_| "線上辨識無法使用".to_string())?;
+            // The previous upload may have occupied the slot while the user cancelled this one.
+            if cancelled() {
+                return Err("已取消".into());
+            }
+            online(wav)
+        }
         Engine::Api => {
             let hint = hint();
             crate::api::transcribe(&prefs.api_url, &prefs.api_model, wav, &hint).map(|heard| drop_echo(heard, &hint))

@@ -50,6 +50,10 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 | 檢查更新 | 和 Windows 版一樣在「關於」頁檢查與提示，但還沒有 macOS 的安裝程式，所以按鈕是「開啟下載頁」 |
 | 注音頁 | 只留下自訂詞；鍵盤配置、文字範本、本機學習等注音輸入法的項目不顯示 |
 
+## 邊講邊出字
+
+在設定的「語音」頁選擇「Codex 線上辨識」後，可以開啟「邊講邊出字」實驗功能。錄音中，每句會經 Codex 傳到 ChatGPT 辨識，結果會依序顯示在浮條。停止錄音後才會依「辨識完成後」的設定處理全文。浮條若顯示「停止錄音後將辨識全文」，聽字會在停止後改用整段錄音辨識。
+
 ## 本機 Whisper
 
 1. 安裝 whisper.cpp 的命令列工具，例如 `brew install whisper-cpp`，會得到 `/opt/homebrew/bin/whisper-cli`。也可以把 `whisper-cli` 放進 `~/Library/Application Support/Tingzi/whisper/`。

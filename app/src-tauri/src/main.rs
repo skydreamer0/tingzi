@@ -21,6 +21,7 @@ mod replace;
 mod report;
 mod secret;
 mod settings;
+mod streaming_asr;
 mod streaming_preview;
 mod sys;
 mod tidy;
@@ -33,7 +34,7 @@ use layout::Layout;
 use serde::Serialize;
 use settings::{Engine, Settings};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 use tauri::menu::{Menu, MenuItem, PredefinedMenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
@@ -51,7 +52,8 @@ struct Voice {
 
 #[derive(Default)]
 struct Session {
-    recorder: Mutex<Option<audio::Recorder>>,
+    recorder: Mutex<Option<Recording>>,
+    streaming: Mutex<Option<Arc<streaming_asr::Requests>>>,
     streaming_preview: Mutex<streaming_preview::Preview>,
     /// Goes up whenever work starts or is cancelled; a result from an older run is dropped.
     run: AtomicU64,
@@ -156,20 +158,47 @@ fn change_streaming_preview(app: &AppHandle, change: impl FnOnce(&mut streaming_
     }
 }
 
-fn report_segment(app: &AppHandle, segment: audio::Segment) {
+fn show_sentences(app: &AppHandle, run: u64, queue: &streaming_asr::Queue) {
     change_streaming_preview(app, |preview| {
-        let changed = preview.update(segment.recording_id, |view| {
-            if segment.sequence != view.segments + 1 {
-                return false;
-            }
-            view.segments = segment.sequence;
-            true
-        });
-        if changed {
-            let _ = app.emit("voice-segment", segment);
+        if app.state::<Session>().run.load(Ordering::SeqCst) != run {
+            return false;
         }
-        changed
+        preview.update(run, |view| {
+            view.segments = queue.accepted();
+            view.pending = queue.pending();
+            view.sentences = queue.sentences().to_vec();
+            view.fallback = queue.fell_back();
+            true
+        })
     });
+}
+
+fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<streaming_asr::Requests>) -> audio::SegmentListener {
+    let app = app.clone();
+    (run, Box::new(move |event, audio| {
+        let handle = app.clone();
+        let publish = move |queue: &streaming_asr::Queue| show_sentences(&handle, run, queue);
+        match event {
+            audio::SegmentEvent::Ready(segment) if segment.recording_id == run => {
+                let handle = app.clone();
+                let prefs = prefs.clone();
+                let audio = audio.clone();
+                requests.submit(segment.sequence, segment.start..segment.end, move |range, abandoned| {
+                    let cancelled = || abandoned() || handle.state::<Session>().run.load(Ordering::SeqCst) != run;
+                    recognise::run(Engine::Codex, &prefs, audio.encode(range)?, &cancelled)
+                }, publish);
+            }
+            audio::SegmentEvent::Incomplete => requests.fallback(publish),
+            audio::SegmentEvent::Ready(_) => {}
+        }
+    }))
+}
+
+fn cancel_streaming(app: &AppHandle) {
+    if let Some(requests) = app.state::<Session>().streaming.lock().unwrap().take() {
+        requests.cancel();
+    }
+    change_streaming_preview(app, streaming_preview::Preview::clear);
 }
 
 /// Announces a change and gives the window the shape that suits it.
@@ -289,14 +318,34 @@ enum Sound {
     Wav(Vec<u8>),
 }
 
+struct Recording {
+    recorder: audio::Recorder,
+    engine: Engine,
+}
+
 /// Recognises `sound` in the background and delivers the text.
 /// `target` is where the user was typing; None shows the text without inserting it.
 fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>) {
     let session = app.state::<Session>();
-    let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
+    let streaming = if matches!(&sound, Sound::Recording(_)) {
+        session.streaming.lock().unwrap().clone()
+    } else {
+        None
+    };
+    // Stopping an active stream keeps its recording ID valid while the tail drains.
+    let run = if streaming.is_some() {
+        session.run.load(Ordering::SeqCst)
+    } else {
+        session.run.fetch_add(1, Ordering::SeqCst) + 1
+    };
     session.working.store(true, Ordering::SeqCst);
     let rewrite = session.rewrite.lock().unwrap().take();
-    show(app, "working", recognise::working_label(engine, &Settings::load()), "", false);
+    let label = if streaming.is_some() {
+        "逐句辨識中・再點一下取消"
+    } else {
+        recognise::working_label(engine, &Settings::load())
+    };
+    show(app, "working", label, "", false);
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
@@ -313,9 +362,35 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             Sound::Wav(wav) => Ok(wav),
         };
         let started = Instant::now();
-        let heard = wav.clone().and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
+        let transcript = streaming.map(|requests| {
+            let transcript = if wav.is_ok() {
+                requests.finish()
+            } else {
+                requests.cancel();
+                streaming_asr::Transcript::FullRecording
+            };
+            let mut current = session.streaming.lock().unwrap();
+            if !cancelled() {
+                current.take();
+                change_streaming_preview(&app, |preview| preview.clear_recording(run));
+            }
+            transcript
+        });
         if cancelled() {
-            report::note(format!("{}：已取消", report_engine(engine)));
+            return;
+        }
+        let heard = match (wav.as_ref(), transcript) {
+            (Err(reason), _) => Err(reason.clone()),
+            (_, Some(streaming_asr::Transcript::Cancelled)) => return,
+            (_, Some(streaming_asr::Transcript::Sentences(text))) => Ok(text),
+            (Ok(wav), transcript) => {
+                if transcript == Some(streaming_asr::Transcript::FullRecording) {
+                    working(&app, run, "整段辨識中・再點一下取消");
+                }
+                recognise::run(engine, &prefs, wav.clone(), &cancelled)
+            }
+        };
+        if cancelled() {
             return;
         }
         match &heard {
@@ -344,6 +419,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         }
         // An online failure keeps the recording so it can be tried on this computer.
         let can_retry = engine != Engine::Local && recognise::problem(Engine::Local, &prefs).is_none();
+        let mut kept = None;
         let (state, message, text, expand, settles) = match (text, wav) {
             (Ok(text), _) if !text.is_empty() => {
                 let outcome = match target {
@@ -376,22 +452,31 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 ("done", message, text, expand, settles)
             }
             (failed, Ok(wav)) if can_retry => {
-                *session.kept.lock().unwrap() = Some(wav);
+                kept = Some(wav);
                 let reason = failed.err().unwrap_or_else(|| "線上未回傳文字".into());
                 ("retry", format!("{reason}・點圖示改用本機辨識"), String::new(), false, false)
             }
             (Ok(_), _) => ("error", "沒有辨識到文字，點圖示重新錄音".to_string(), String::new(), false, false),
             (Err(reason), _) => ("error", reason, String::new(), false, false),
         };
-        if state != "retry" {
-            deliver::end();
-        }
-        session.working.store(false, Ordering::SeqCst);
-        show(&app, state, message, text, expand);
-        // The page folds the preview back once the user has left it alone for this long.
-        if settles {
-            let _ = app.emit("settle", deliver::SETTLE_SECONDS);
-        }
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let session = handle.state::<Session>();
+            if session.run.load(Ordering::SeqCst) != run {
+                return;
+            }
+            if let Some(wav) = kept {
+                *session.kept.lock().unwrap() = Some(wav);
+            } else {
+                deliver::end();
+            }
+            session.working.store(false, Ordering::SeqCst);
+            show(&handle, state, message, text, expand);
+            // The page folds the preview back once the user has left it alone for this long.
+            if settles {
+                let _ = handle.emit("settle", deliver::SETTLE_SECONDS);
+            }
+        });
     });
 }
 
@@ -491,14 +576,14 @@ fn toggle(app: &AppHandle) {
     let session = app.state::<Session>();
     if session.working.swap(false, Ordering::SeqCst) {
         session.run.fetch_add(1, Ordering::SeqCst);
-        change_streaming_preview(app, streaming_preview::Preview::clear);
+        cancel_streaming(app);
         session.rewrite.lock().unwrap().take();
         deliver::end();
         idle(app, "已取消");
         return;
     }
-    if let Some(recorder) = session.recorder.lock().unwrap().take() {
-        recognise(app, Sound::Recording(recorder), Settings::load().engine(), Some(deliver::target()));
+    if let Some(recording) = session.recorder.lock().unwrap().take() {
+        recognise(app, Sound::Recording(recording.recorder), recording.engine, Some(deliver::target()));
         return;
     }
     if let Some(wav) = session.kept.lock().unwrap().take() {
@@ -513,21 +598,24 @@ fn toggle(app: &AppHandle) {
             preview.begin(run);
             true
         });
-        let handle = app.clone();
-        Some((run, Box::new(move |segment| report_segment(&handle, segment))))
+        let requests = Arc::new(streaming_asr::Requests::default());
+        *session.streaming.lock().unwrap() = Some(requests.clone());
+        Some(segment_listener(app, run, prefs.clone(), requests))
     } else {
         None
     };
     let meter = app.clone();
     let started = audio::Recorder::start_with_segments(prefs.microphone_name.clone(), move |peak| {
-        let _ = meter.emit("level", peak);
+        if meter.state::<Session>().run.load(Ordering::SeqCst) == run {
+            let _ = meter.emit("level", peak);
+        }
     }, segments);
     match started {
         Ok(recorder) => {
             // The program's name only, never what is in it, so a report says where the dictation was going.
             let program = (spot.process != 0).then(|| apps::program(spot.process)).flatten().unwrap_or_else(|| "無".into());
             report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
-            *session.recorder.lock().unwrap() = Some(recorder);
+            *session.recorder.lock().unwrap() = Some(Recording { recorder, engine: prefs.engine() });
             // While the user speaks: the connection to an online service is opened, and words typed
             // to fix earlier dictations are picked up, which needs those dictations to have been kept.
             let ahead = prefs.clone();
@@ -541,6 +629,7 @@ fn toggle(app: &AppHandle) {
             stop_at_limit(app.clone(), run);
         }
         Err(reason) => {
+            cancel_streaming(app);
             report::note(format!("無法開始錄音：{reason}"));
             deliver::end();
             show(app, "error", reason, "", false);
@@ -590,13 +679,13 @@ fn stop_at_limit(app: AppHandle, run: u64) {
 fn discard(app: &AppHandle) {
     let session = app.state::<Session>();
     session.run.fetch_add(1, Ordering::SeqCst);
-    change_streaming_preview(app, streaming_preview::Preview::clear);
-    session.working.store(false, Ordering::SeqCst);
-    session.recorder.lock().unwrap().take();
+    cancel_streaming(app);
+    let was_working = session.working.swap(false, Ordering::SeqCst);
+    let was_recording = session.recorder.lock().unwrap().take().is_some();
     session.kept.lock().unwrap().take();
     session.rewrite.lock().unwrap().take();
     deliver::end();
-    idle(app, "");
+    idle(app, if was_working || was_recording { "已取消" } else { "" });
 }
 
 /// Whether a recording is running or a dictation is being recognised, so nothing should interrupt the user.

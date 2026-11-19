@@ -7,6 +7,7 @@ pub struct Preview {
     pub segments: usize,
     pub sentences: Vec<String>,
     pub pending: usize,
+    pub fallback: bool,
 }
 
 impl Preview {
@@ -29,6 +30,10 @@ impl Preview {
         true
     }
 
+    pub fn clear_recording(&mut self, recording_id: u64) -> bool {
+        self.recording_id == Some(recording_id) && self.clear()
+    }
+
     pub fn update(&mut self, recording_id: u64, change: impl FnOnce(&mut Self) -> bool) -> bool {
         if self.recording_id != Some(recording_id) || !change(self) {
             return false;
@@ -38,7 +43,7 @@ impl Preview {
     }
 
     pub fn visible(&self) -> bool {
-        self.pending > 0 || !self.sentences.is_empty()
+        self.fallback || self.pending > 0 || !self.sentences.is_empty()
     }
 }
 
@@ -69,7 +74,7 @@ mod tests {
         assert_eq!(
             to_value(&preview).unwrap(),
             json!({
-                "recording_id": 7, "version": 2, "segments": 2, "sentences": [], "pending": 2
+                "recording_id": 7, "version": 2, "segments": 2, "sentences": [], "pending": 2, "fallback": false
             })
         );
         for (pending, sentences) in [
@@ -94,7 +99,7 @@ mod tests {
         assert_eq!(
             to_value(preview).unwrap(),
             json!({
-                "recording_id": 9, "version": 6, "segments": 0, "sentences": [], "pending": 0
+                "recording_id": 9, "version": 6, "segments": 0, "sentences": [], "pending": 0, "fallback": false
             })
         );
     }

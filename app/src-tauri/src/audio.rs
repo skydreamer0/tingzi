@@ -11,6 +11,7 @@ use segments::Segmenter;
 
 const TARGET_RATE: u32 = 16_000;
 const DAMAGED: &str = "錄音資料損毀";
+const INTERRUPTED: &str = "錄音中斷";
 /// Recording stops by itself after ten minutes.
 pub const LONGEST_SECONDS: usize = 600;
 
@@ -19,7 +20,7 @@ pub struct Recorder {
     worker: JoinHandle<Result<Vec<u8>, String>>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Segment {
     pub recording_id: u64,
     pub sequence: usize,
@@ -27,7 +28,27 @@ pub struct Segment {
     pub end: usize,
 }
 
-pub type SegmentListener = (u64, Box<dyn Fn(Segment) + Send>);
+pub enum SegmentEvent {
+    Ready(Segment),
+    Incomplete,
+}
+
+#[derive(Clone)]
+pub struct SegmentAudio {
+    samples: Arc<Mutex<Vec<f32>>>,
+    rate: u32,
+}
+
+impl SegmentAudio {
+    pub fn encode(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
+        let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
+            .get(range).ok_or_else(|| DAMAGED.to_string())?.to_vec();
+        Ok(wav(&resample(&samples, self.rate)))
+    }
+}
+
+type SegmentNotice = Box<dyn Fn(SegmentEvent) + Send>;
+pub type SegmentListener = (u64, Box<dyn Fn(SegmentEvent, &SegmentAudio) + Send>);
 
 impl Recorder {
     /// Starts recording from the microphone with this name, or the Windows default when None.
@@ -61,11 +82,12 @@ impl Recorder {
             };
             let _ = ready.send(Ok(()));
             let reader = if let Some((recording_id, notify)) = segments {
-                let mut reader = SegmentReader::new(rate, recording_id, notify);
+                let audio = SegmentAudio { samples: samples.clone(), rate };
+                let mut reader = SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)));
                 loop {
                     match stopped.recv_timeout(Duration::from_millis(20)) {
                         Ok(()) => break Some(reader),
-                        Err(mpsc::RecvTimeoutError::Disconnected) => break None,
+                        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(INTERRUPTED.into()),
                         Err(mpsc::RecvTimeoutError::Timeout) => {
                             let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
                             reader = reader.read(&samples, end)?;
@@ -73,7 +95,7 @@ impl Recorder {
                     }
                 }
             } else {
-                let _ = stopped.recv();
+                stopped.recv().map_err(|_| INTERRUPTED.to_string())?;
                 None
             };
             drop(stream);
@@ -98,7 +120,7 @@ impl Recorder {
     /// Stops recording and returns the WAV file contents.
     pub fn finish(self) -> Result<Vec<u8>, String> {
         let _ = self.stop.send(());
-        self.worker.join().map_err(|_| "錄音中斷".to_string())?
+        self.worker.join().map_err(|_| INTERRUPTED.to_string())?
     }
 }
 
@@ -107,11 +129,11 @@ struct SegmentReader {
     recording_id: u64,
     sequence: usize,
     cursor: usize,
-    notify: Box<dyn Fn(Segment) + Send>,
+    notify: SegmentNotice,
 }
 
 impl SegmentReader {
-    fn new(rate: u32, recording_id: u64, notify: Box<dyn Fn(Segment) + Send>) -> Self {
+    fn new(rate: u32, recording_id: u64, notify: SegmentNotice) -> Self {
         Self { segmenter: Segmenter::new(rate), recording_id, sequence: 0, cursor: 0, notify }
     }
 
@@ -120,8 +142,12 @@ impl SegmentReader {
             let next = (self.cursor + 8192).min(end);
             let batch = samples.lock().map_err(|_| DAMAGED.to_string())?[self.cursor..next].to_vec();
             self.cursor = next;
+            let had_gap = self.segmenter.incomplete();
             let (segmenter, segments) = self.segmenter.push(&batch);
             self.segmenter = segmenter;
+            if !had_gap && self.segmenter.incomplete() {
+                (self.notify)(SegmentEvent::Incomplete);
+            }
             for range in segments {
                 self.send(range);
             }
@@ -131,18 +157,25 @@ impl SegmentReader {
 
     fn send(&mut self, range: std::ops::Range<usize>) {
         self.sequence += 1;
-        (self.notify)(Segment {
+        (self.notify)(SegmentEvent::Ready(Segment {
             recording_id: self.recording_id,
             sequence: self.sequence,
             start: range.start,
             end: range.end,
-        });
+        }));
     }
 
     fn finish(self, samples: &Mutex<Vec<f32>>, end: usize) -> Result<(), String> {
         let Self { segmenter, recording_id, sequence, notify, .. } = self.read(samples, end)?;
-        if let Some(range) = segmenter.finish() {
-            notify(Segment { recording_id, sequence: sequence + 1, start: range.start, end: range.end });
+        let had_gap = segmenter.incomplete();
+        let (tail, incomplete) = segmenter.finish();
+        if incomplete && !had_gap {
+            notify(SegmentEvent::Incomplete);
+        }
+        if let Some(range) = tail {
+            notify(SegmentEvent::Ready(Segment {
+                recording_id, sequence: sequence + 1, start: range.start, end: range.end,
+            }));
         }
         Ok(())
     }
@@ -396,13 +429,19 @@ mod tests {
             move || Ok((TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate))
         };
         let (send, received) = mpsc::channel();
-        let recorder = Recorder::start_capture(open(), Some((19, Box::new(move |segment| send.send(segment).unwrap())))).unwrap();
+        let listener: SegmentListener = (19, Box::new(move |event, audio| {
+            let SegmentEvent::Ready(segment) = event else { panic!("unexpected gap") };
+            let wav = audio.encode(segment.start..segment.end).unwrap();
+            send.send((segment, wav)).unwrap();
+        }));
+        let recorder = Recorder::start_capture(open(), Some(listener)).unwrap();
         let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
-        assert_eq!(first, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
+        assert_eq!(first.0, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
+        assert_eq!(first.1, wav(&resample(&input[5 * frame..75 * frame], rate)));
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Empty));
 
         let segmented = recorder.finish();
-        assert_eq!(received.try_recv().unwrap(), Segment { recording_id: 19, sequence: 2, start: 85 * frame, end: 131 * frame });
+        assert_eq!(received.try_recv().unwrap().0, Segment { recording_id: 19, sequence: 2, start: 85 * frame, end: 131 * frame });
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
         let full = Recorder::start_capture(open(), None).unwrap().finish();
         input.extend(std::iter::repeat_n(0.25, 21 * frame));
@@ -410,7 +449,9 @@ mod tests {
         assert_eq!(segmented, full);
 
         let brief = move || Ok(((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate));
-        let listener: SegmentListener = (20, Box::new(|segment| panic!("unexpected segment: {segment:?}")));
+        let listener: SegmentListener = (20, Box::new(|event, _| {
+            assert!(matches!(event, SegmentEvent::Incomplete));
+        }));
         for option in [None, Some(listener)] {
             let result = Recorder::start_capture(brief, option).unwrap().finish();
             assert_eq!(result, Err(TOO_SHORT.to_string()));
@@ -426,7 +467,10 @@ mod tests {
         assert_eq!(capture_mono(&mut input, std::iter::repeat_n(-0.5, 400), 1, limit), 0.5);
         assert_eq!(input.len(), 600_000);
         let (send, received) = mpsc::channel();
-        let read = SegmentReader::new(rate, 42, Box::new(move |segment| send.send(segment).unwrap()));
+        let read = SegmentReader::new(rate, 42, Box::new(move |event| {
+            let SegmentEvent::Ready(segment) = event else { panic!("unexpected gap") };
+            send.send(segment).unwrap();
+        }));
         read.finish(&Mutex::new(input), limit).unwrap();
         assert_eq!(received.try_recv().unwrap(), Segment { recording_id: 42, sequence: 1, start: 599_490, end: 600_000 });
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));

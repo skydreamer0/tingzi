@@ -191,8 +191,10 @@ html, body { background: transparent; }
 .tools .for-text, .tools .for-retry { display: none; }
 [data-state="done"] .tools .for-text { display: grid; }
 [data-state="retry"] .tools .for-retry { display: grid; }
-/* The pill is short while dictating and holds only the clock, so the tools wait for the result. */
-[data-state="recording"] .tools, [data-state="working"] .tools { display: none; }
+/* During streaming capture the discard button cancels the recording; the mic still stops and sends it. */
+[data-state="recording"]:not([data-streaming]) .tools, [data-state="working"] .tools { display: none; }
+[data-state="recording"][data-streaming] .tools .tool:not(#discard) { display: none; }
+[data-state="recording"][data-streaming] .tools #discard { display: grid; }
 
 .streaming-preview {
   display: none;
