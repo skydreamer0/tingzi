@@ -74,6 +74,17 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
         data.setUserWords(words);
     }
     std::unique_ptr<Input> input;
+    // A standalone symbol list is selectable without any text in the composition.
+    static bool menuOnly(const Input& state){return state.selecting() && !state.active();}
+    static bool atSelection(ITfContext* context,TfEditCookie ec,ITfRange* range){
+        TF_SELECTION selection{};ULONG fetched=0;
+        const HRESULT hr=context->GetSelection(ec,TF_DEFAULT_SELECTION,1,&selection,&fetched);
+        ComPtr<ITfRange> current;current.Attach(selection.range);
+        BOOL sameStart=FALSE,sameEnd=FALSE;
+        return SUCCEEDED(hr) && fetched==1 && current &&
+            SUCCEEDED(range->IsEqualStart(ec,current.Get(),TF_ANCHOR_START,&sameStart)) && sameStart &&
+            SUCCEEDED(range->IsEqualEnd(ec,current.Get(),TF_ANCHOR_END,&sameEnd)) && sameEnd;
+    }
     bool chinese=true, shiftPending=false;
     // Letters, digits and the space bar come out full-width while this is on; Shift+Space switches it.
     bool fullWidth=false;
@@ -81,11 +92,11 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
         return ((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN))&0x8000)!=0;
     }
     bool widthSwitch(ITfContext* c,WPARAM k) const {
-        return k==VK_SPACE && (GetKeyState(VK_SHIFT)&0x8000) && !otherModifier() && !losingFocus && input && c && !input->active();
+        return k==VK_SPACE && (GetKeyState(VK_SHIFT)&0x8000) && !otherModifier() && !losingFocus && input && c && !input->active() && !input->selecting();
     }
     // The key as one full-width character for the engine to commit, or 0 when it is not a printable key.
     WPARAM literal(ITfContext* c,WPARAM k,LPARAM flags) const {
-        if(!fullWidth || losingFocus || !input || !c || input->active() || otherModifier())return 0;
+        if(!fullWidth || losingFocus || !input || !c || input->active() || input->selecting() || otherModifier())return 0;
         BYTE state[256];wchar_t typed[4];
         // Flag 4 asks Windows to translate without disturbing dead-key state.
         if(!GetKeyboardState(state) || ToUnicode(UINT(k),UINT((flags>>16)&0xff),state,typed,4,4)!=1)return 0;
@@ -97,7 +108,7 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     static bool shortcut(){
         return ((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN))&0x8000)!=0;
     }
-    bool canSwitch() const {return input && !input->active() && !shortcut();}
+    bool canSwitch() const {return input && !input->active() && !input->selecting() && !shortcut();}
     void indicateMode(){
 #ifndef TINGZI_STANDALONE
         for(auto name:{chinese?L"Local\\TingziChinese":L"Local\\TingziEnglish",fullWidth?L"Local\\TingziFullWidth":L"Local\\TingziHalfWidth"}){
@@ -220,7 +231,9 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
             }
             return;
         }
-        RECT anchor=line.show(module,parent,*rect,*input,lineSize());
+        RECT anchor=*rect;
+        if(menuOnly(*input))line.hide();
+        else anchor=line.show(module,parent,anchor,*input,lineSize());
         if(!input->selecting()){hideMenu();return;}
         menu.show(module,parent,anchor,*input,learningStatus,this,[](void* object,WPARAM key){
             auto self=static_cast<Service*>(object);
@@ -363,7 +376,7 @@ public:
     }
     HRESULT refresh(ITfContext* c,TfEditCookie ec){
         ComPtr<ITfRange> range;
-        if(c==composingIn.Get() && !losingFocus && composition && input && input->active() &&
+        if(c==composingIn.Get() && !losingFocus && composition && input && (input->active() || input->selecting()) &&
            SUCCEEDED(composition->GetRange(&range)))present(ec,c,range.Get());
         return S_OK;
     }
@@ -399,6 +412,8 @@ public:
         if(!input || (composingIn && composingIn.Get()!=c))return S_FALSE;
         if(!key && !composition)return S_FALSE;
         Input next=*input;
+        const bool wasMenuOnly=menuOnly(*input);
+        const bool opensMenuOnly=!composition && !input->active() && !input->selecting() && key==VK_OEM_3;
         if(!composition && !key)return S_FALSE;
         ComPtr<ITfRange> range;
         HRESULT hr;
@@ -408,7 +423,9 @@ public:
             hr=insert->InsertTextAtSelection(ec,TF_IAS_QUERYONLY,nullptr,0,&range);if(FAILED(hr)){noteOften(editFailures,L"讀不到游標位置 "+hex(hr));return hr;}
             ComPtr<ITfContextComposition> cc;
             hr=c->QueryInterface(IID_PPV_ARGS(&cc));if(FAILED(hr))return hr;
-            HWND parent=nullptr;locate(ec,c,range.Get(),parent);
+            if(opensMenuOnly && !allowsOverlay(c,ec,range.Get()))return S_FALSE;
+            HWND parent=nullptr;const auto anchor=locate(ec,c,range.Get(),parent);
+            if(opensMenuOnly && !anchor)return S_FALSE; // Do not consume a key for an invisible list.
             hr=cc->StartComposition(ec,range.Get(),this,&composition);
             if(FAILED(hr) || !composition){noteOften(editFailures,L"無法開始組字 "+hex(hr));hideCompositionUI();return FAILED(hr)?hr:E_FAIL;}
             composingIn=c;
@@ -419,9 +436,13 @@ public:
                FAILED(source->AdviseSink(IID_ITfTextLayoutSink,static_cast<ITfTextLayoutSink*>(this),&layoutCookie)))
                 layoutCookie=TF_INVALID_COOKIE;
         } else {hr=composition->GetRange(&range);if(FAILED(hr))return hr;}
+        // A click within the same client may move its caret without a focus notification.
+        // Dismiss without a write, and give the key back, rather than insert at the old range.
+        const bool staleMenu=key && wasMenuOnly && (!allowsOverlay(c,ec,range.Get()) || !atSelection(c,ec,range.Get()));
+        if(staleMenu)key=0;
         bool allowed=learnable(c,ec,range.Get(),activationFlags);
         if(!allowed){next.setPreferences(nullptr);next.setFavorites(nullptr);next.setSentences(nullptr);learningStatus=1;}
-        else if(!input->active()){
+        else if(!input->active() && !wasMenuOnly && !opensMenuOnly){
             Learning store;
             bool enabled=store.enabled();learningStatus=enabled?3:2;
             refreshUserWords(dictionary(),store.learnedWords());
@@ -438,24 +459,28 @@ public:
         auto typed=next.typedWord();
         // A word kept with Ctrl and a digit is saved at once; the sentence is still being typed.
         if(added && allowed)appendUserPhrase(added->reading,added->text);
-        Text text=next.active()?next.preview():commit;
-        hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr)){noteOften(editFailures,L"無法寫入組字區 "+hex(hr));return hr;}
-        ComPtr<ITfRange> caret;
-        if(SUCCEEDED(range->Clone(&caret))){
-            // The application's own caret follows the one inside the sentence.
-            LONG moved=0;
-            if(next.active() && next.caretInside() && SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_START)))caret->ShiftEnd(ec,LONG(next.caretOffset()),&moved,nullptr);
-            if(SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_END))){TF_SELECTION s{caret.Get(),{TF_AE_NONE,FALSE}};c->SetSelection(ec,1,&s);}
+        // Opening, navigating or dismissing an empty symbol list must not replace
+        // the application's active selection with an empty string or move its caret.
+        if(!((wasMenuOnly || menuOnly(next)) && !next.active() && commit.empty())){
+            Text text=next.active()?next.preview():commit;
+            hr=range->SetText(ec,0,text.c_str(),(LONG)text.size());if(FAILED(hr)){noteOften(editFailures,L"無法寫入組字區 "+hex(hr));return hr;}
+            ComPtr<ITfRange> caret;
+            if(SUCCEEDED(range->Clone(&caret))){
+                // The application's own caret follows the one inside the sentence.
+                LONG moved=0;
+                if(next.active() && next.caretInside() && SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_START)))caret->ShiftEnd(ec,LONG(next.caretOffset()),&moved,nullptr);
+                if(SUCCEEDED(caret->Collapse(ec,TF_ANCHOR_END))){TF_SELECTION s{caret.Get(),{TF_AE_NONE,FALSE}};c->SetSelection(ec,1,&s);}
+            }
         }
         input=std::make_unique<Input>(std::move(next));
-        if(input->active()){present(ec,c,range.Get(),true);return S_OK;}
+        if(input->active() || input->selecting()){present(ec,c,range.Get(),true);return S_OK;}
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
         if(FAILED(hr))noteOften(editFailures,L"無法結束組字 "+hex(hr));
         if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
                 if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
                 if(typed)noteFix(ec,range.Get(),commit,*typed);
             }}
-        return hr;
+        return staleMenu && SUCCEEDED(hr) ? S_FALSE : hr;
     }
 };
 KeyEdit::KeyEdit(Service* s,ITfContext* c,std::optional<WPARAM> k,std::optional<unsigned long long> g):context(c),owner(s),key(k),generation(g){owner->AddRef();}

@@ -99,6 +99,41 @@ int wmain(int argc,wchar_t** argv) {
     enter("SU3");input.press(VK_OEM_3);input.press('1');
     expect(input.press(VK_RETURN)==L"你，","symbol from the list joins the sentence");
 
+    input.press(VK_OEM_3);
+    expect(input.selecting() && !input.active(),"standalone symbols select without a text composition");
+    input.press(VK_TAB);
+    expect(input.listTitle().rfind(L"符號・括號",0)==0,"Tab changes the standalone symbol category");
+    expect(input.press(VK_ESCAPE).empty() && !input.selecting(),"Escape closes the standalone list without committing");
+    input.press(VK_OEM_3);
+    input.press(VK_RIGHT);
+    expect(input.press(VK_RETURN)==L"。" && !input.active() && !input.selecting(),"arrow then Enter commits only the selected symbol");
+    expect(input.press(VK_OEM_6)==L"」" && !input.active(),"right bracket remains a direct key when idle");
+    expect(!input.wants(VK_OEM_PLUS),"plain equals is still passed through in Standard");
+    input.setLayout(KeyLayout::ETen);
+    expect(input.wants(VK_OEM_PLUS),"plain equals still joins the Eten syllable");
+    input.press(VK_OEM_PLUS);
+    expect(input.displayRuns().active==L"ㄦ","plain equals still enters ㄦ in Eten");
+    input.clear();input.setLayout(KeyLayout::Standard);
+
+    enter("SU3");input.press(VK_OEM_4);input.press(VK_DOWN);
+    options=input.choices();
+    expect(input.listTitle()==L"符號・左括號" && options.size()>5 && options[0].text==L"「" && options[1].text==L"『","Down offers left brackets after a composing left bracket");
+    input.press('2');
+    expect(input.preview()==L"你『" && input.press(VK_RETURN)==L"你『","choosing a related bracket replaces the old mark only");
+    enter("SU3");input.press(VK_OEM_6);input.press(VK_DOWN);
+    options=input.choices();
+    expect(input.listTitle()==L"符號・右括號" && options[0].text==L"」" && options[1].text==L"』","Down offers right brackets after a composing right bracket");
+    expect(input.press(VK_ESCAPE).empty() && input.preview()==L"你」","cancel keeps the original bracket");
+    input.press(VK_UP);
+    expect(input.listTitle().rfind(L"符號・常用",0)==0,"Up after a composing symbol opens all categories");
+    input.press(VK_TAB);input.press(VK_TAB);input.press('1');
+    expect(input.press(VK_RETURN)==L"你→","full palette selection replaces the mark at the caret");
+    enter("SU3");input.press(VK_OEM_4);enter("CL3");input.press(VK_LEFT);input.press(VK_DOWN);
+    auto bracketRuns=input.displayRuns();
+    expect(bracketRuns.before==L"你" && bracketRuns.active==L"「" && bracketRuns.after==L"好","in-sentence bracket preview does not duplicate the current mark");
+    input.press('2');
+    expect(input.press(VK_RETURN)==L"你『好","choose in the middle of the sentence without replacing the next character");
+
     enter("G4RU");input.press(VK_OEM_COMMA);enter("4");
     Text whole=input.preview();
     input.press(VK_TAB);
