@@ -41,7 +41,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 | 平台 | 狀態 | 取得方式 |
 | --- | --- | --- |
 | Windows 10／11（x64） | 預覽版 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
-| macOS 11 以上 | 準備中，尚未實機驗收 | 只有語音輸入，沒有注音；0.9.0 之後的版本在 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`，拖到「應用程式」資料夾，見 [macOS 說明](macos/README.md) |
+| macOS 11 以上 | 準備中，尚未實機驗收 | 只有語音輸入，沒有注音；自 0.10.0 起可在 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`，拖到「應用程式」資料夾，見 [macOS 說明](macos/README.md) |
 
 **Windows 安裝步驟**
 
