@@ -194,6 +194,25 @@ html, body { background: transparent; }
 /* The pill is short while dictating and holds only the clock, so the tools wait for the result. */
 [data-state="recording"] .tools, [data-state="working"] .tools { display: none; }
 
+.streaming-preview {
+  display: none;
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  overflow-wrap: anywhere;
+  margin: 0 2px;
+  padding: 12px;
+  border: 1px solid var(--pill-edge);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+  color: var(--text);
+  font-size: var(--preview-size);
+}
+[data-layout="bar"] .streaming-preview:not([hidden]) { display: block; }
+.streaming-preview p { margin: 0; }
+.streaming-preview p + p { margin-top: 4px; }
+.streaming-preview .pending { color: var(--muted); }
+
 .editor {
   flex: 1;
   min-height: 0;

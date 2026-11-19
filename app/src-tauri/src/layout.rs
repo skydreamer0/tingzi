@@ -24,6 +24,7 @@ pub enum Layout {
 
 /// The height of the keycap's row, which every shape shares, in logical pixels.
 const ROW: f64 = 72.0;
+const STREAMING_HEIGHT: f64 = 192.0;
 
 impl Layout {
     /// Width and height in logical pixels; `short` is the pill during a dictation.
@@ -55,6 +56,7 @@ pub struct Place {
     home: Layout,
     /// Whether a dictation is being recorded or recognised, which shortens the pill.
     short: bool,
+    streaming_preview: bool,
     /// Whether the editor last opened above the keycap's row.
     above: bool,
 }
@@ -86,7 +88,7 @@ fn corner(layout: Layout, size: (i32, i32), area: Area, scale: f64, saved: &Save
     let row = (ROW * scale).round() as i32;
     let x = if saved.dock_left { area.left } else { area.right - size.0 };
     let top = saved.dock_y.unwrap_or(area.bottom - row - (120.0 * scale).round() as i32).min(area.bottom - row).max(area.top);
-    let above = layout == Layout::Editor && top + size.1 > area.bottom;
+    let above = layout != Layout::Docked && size.1 > row && top + size.1 > area.bottom;
     let y = if above { top + row - size.1 } else { top };
     ((x.min(area.right - size.0).max(area.left), y.min(area.bottom - size.1).max(area.top)), above)
 }
@@ -106,7 +108,7 @@ pub fn start() -> Mutex<Place> {
     let mut saved: Saved = std::fs::read_to_string(file()).ok().and_then(|text| serde_json::from_str(&text).ok()).unwrap_or_default();
     // Earlier versions could save the parked position of a minimised window.
     saved.dock_y = saved.dock_y.filter(|y| *y > -30000);
-    Mutex::new(Place { layout: Layout::Docked, saved, unsaved: false, home: Layout::Docked, short: false, above: false })
+    Mutex::new(Place { layout: Layout::Docked, saved, unsaved: false, home: Layout::Docked, short: false, streaming_preview: false, above: false })
 }
 
 pub fn current(app: &AppHandle) -> Layout {
@@ -150,6 +152,17 @@ pub fn shorten(app: &AppHandle, short: bool) {
         Layout::Bar | Layout::Editor if short => shrink_for_work(app, layout),
         Layout::Bar => place(app, Layout::Bar),
         _ => {}
+    }
+}
+
+pub fn show_streaming_preview(app: &AppHandle, visible: bool) {
+    let bar_changed = {
+        let state = app.state::<Mutex<Place>>();
+        let mut place = state.lock().unwrap();
+        std::mem::replace(&mut place.streaming_preview, visible) != visible && place.layout == Layout::Bar
+    };
+    if bar_changed {
+        place_window(app, Layout::Bar, false);
     }
 }
 
@@ -235,6 +248,10 @@ pub fn close_soon(app: &AppHandle) {
 }
 
 fn place(app: &AppHandle, layout: Layout) {
+    place_window(app, layout, true);
+}
+
+fn place_window(app: &AppHandle, layout: Layout, reveal: bool) {
     let Some(window) = app.get_webview_window("capsule") else { return };
     let monitor = window.current_monitor().ok().flatten().or_else(|| window.primary_monitor().ok().flatten());
     let Some(monitor) = monitor else { return };
@@ -243,7 +260,11 @@ fn place(app: &AppHandle, layout: Layout) {
         let state = app.state::<Mutex<Place>>();
         let mut place = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         place.layout = layout;
-        let (width, height) = layout.size(place.short);
+        let (width, height) = if layout == Layout::Bar && place.streaming_preview {
+            (Layout::Bar.size(false).0, STREAMING_HEIGHT)
+        } else {
+            layout.size(place.short)
+        };
         let size = ((width * scale).round() as i32, (height * scale).round() as i32);
         let (at, above) = corner(layout, size, Area::of(&monitor), scale, &place.saved);
         place.above = above;
@@ -252,7 +273,9 @@ fn place(app: &AppHandle, layout: Layout) {
     let size = ((width * scale).round() as i32, (height * scale).round() as i32);
     let now = window.outer_position().ok().zip(window.outer_size().ok()).map(|(at, size)| ((at.x, at.y), (size.width as i32, size.height as i32)));
     // Show-desktop and similar commands can minimise the window; bring it back first.
-    let _ = window.unminimize();
+    if reveal {
+        let _ = window.unminimize();
+    }
     // Size and place are two steps, so the frame between them should show nothing rather than a keycap out of place.
     if move_first(now, (x, y), size) {
         let _ = window.set_position(PhysicalPosition::new(x, y));
@@ -261,8 +284,10 @@ fn place(app: &AppHandle, layout: Layout) {
         let _ = window.set_size(LogicalSize::new(width, height));
         let _ = window.set_position(PhysicalPosition::new(x, y));
     }
-    let _ = window.show();
-    crate::sys::keep_on_top(&window);
+    if reveal {
+        let _ = window.show();
+        crate::sys::keep_on_top(&window);
+    }
     let _ = app.emit("side", Side { left, above });
     let _ = app.emit("layout", layout);
 }
@@ -289,8 +314,8 @@ pub fn moved(app: &AppHandle, to: PhysicalPosition<i32>) {
     {
         let state = app.state::<Mutex<Place>>();
         let Ok(mut place) = state.lock() else { return };
-        // The editor may sit above the keycap's row, so its top is not the row's.
-        if place.layout == Layout::Editor {
+        // An open panel may sit above the keycap's row, so its top is not the row's.
+        if place.layout == Layout::Editor || (place.layout == Layout::Bar && place.streaming_preview) {
             return;
         }
         place.saved.dock_y = Some(to.y);
@@ -328,7 +353,7 @@ fn snap(app: &AppHandle) {
     let (layout, changed_side) = {
         let state = app.state::<Mutex<Place>>();
         let mut place = state.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        if place.layout == Layout::Editor {
+        if place.layout == Layout::Editor || (place.layout == Layout::Bar && place.streaming_preview) {
             return;
         }
         let changed_side = place.saved.dock_left != left;
@@ -465,6 +490,15 @@ mod tests {
         // Near the bottom the card goes above, and the keycap's row stays at 900.
         let low = Saved { dock_y: Some(900), dock_left: false };
         assert_eq!(corner(Layout::Editor, (460, 280), SCREEN, 1.0, &low), ((1460, 692), true));
+    }
+
+    #[test]
+    fn streaming_preview_keeps_the_recording_bar_at_its_anchor() {
+        let size = (460, STREAMING_HEIGHT as i32);
+        let high = Saved { dock_y: Some(100), dock_left: false };
+        let low = Saved { dock_y: Some(900), dock_left: false };
+        assert_eq!(corner(Layout::Bar, size, SCREEN, 1.0, &high), ((1460, 100), false));
+        assert_eq!(corner(Layout::Bar, size, SCREEN, 1.0, &low), ((1460, 780), true));
     }
 
     #[test]

@@ -6,6 +6,27 @@ const capsule = document.querySelector('.capsule');
 const byId = id => document.getElementById(id);
 const mic = byId('mic'), status = byId('status'), detail = byId('detail'), level = byId('level'), editor = byId('text');
 const micLabels = { recording: '停止錄音', working: '取消辨識', retry: '改用本機辨識' };
+const streamingPreview = byId('streaming-preview');
+let previewVersion = -1;
+
+function receiveStreamingPreview(preview) {
+  if (preview.version <= previewVersion) return;
+  previewVersion = preview.version;
+  const lines = preview.sentences.map(sentence => {
+    const line = document.createElement('p');
+    line.textContent = sentence;
+    return line;
+  });
+  if (preview.pending > 0) {
+    const line = document.createElement('p');
+    line.className = 'pending';
+    line.textContent = '辨識中…';
+    lines.push(line);
+  }
+  streamingPreview.replaceChildren(...lines);
+  streamingPreview.hidden = lines.length === 0;
+  streamingPreview.scrollTop = streamingPreview.scrollHeight;
+}
 
 let voice = { state: 'idle', message: '', text: '' };
 let idleText = '點圖示開始錄音';
@@ -216,6 +237,7 @@ function setLayout(shape) {
     timers.card = setTimeout(() => capsule.classList.remove('card-opening'), PILL_MS + 60);
   }
   capsule.dataset.layout = shape;
+  streamingPreview.scrollTop = streamingPreview.scrollHeight;
   render();
   if (shape === 'editor') { loadRecent(); editor.focus(); }
 }
@@ -283,6 +305,7 @@ editor.addEventListener('input', () => { round++; voice.text = editor.value; inv
 document.addEventListener('keydown', event => { if (event.key === 'Escape' && capsule.dataset.layout === 'editor') goHome(); });
 
 listen('voice', event => receive(event.payload));
+const previewListening = listen('voice-preview', event => receiveStreamingPreview(event.payload));
 listen('settle', event => { settleMs = Number(event.payload) * 1000; settleLater(); });
 listen('notice', event => notice(event.payload));
 listen('layout', event => setLayout(event.payload));
@@ -310,11 +333,12 @@ function applyLook(look) {
   render();
 }
 
-invoke('facts').then(facts => {
+previewListening.then(() => invoke('facts')).then(facts => {
   if (facts.platform === 'macos') document.getElementById('paste-last-hint').textContent = 'Option+Shift+Z 再貼上一則';
   mode = facts.mode;
   applyLook(facts);
   setSide(facts.side);
   setLayout(facts.layout);
   receive({ state: facts.state, message: facts.message, text: facts.text });
+  receiveStreamingPreview(facts.streaming_preview);
 });

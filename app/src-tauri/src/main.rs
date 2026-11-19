@@ -21,6 +21,7 @@ mod replace;
 mod report;
 mod secret;
 mod settings;
+mod streaming_preview;
 mod sys;
 mod tidy;
 mod update;
@@ -51,6 +52,7 @@ struct Voice {
 #[derive(Default)]
 struct Session {
     recorder: Mutex<Option<audio::Recorder>>,
+    streaming_preview: Mutex<streaming_preview::Preview>,
     /// Goes up whenever work starts or is cancelled; a result from an older run is dropped.
     run: AtomicU64,
     working: AtomicBool,
@@ -116,6 +118,9 @@ fn last_keys() -> Shortcut {
 fn announce(app: &AppHandle, state: &'static str, message: impl Into<String>, text: impl Into<String>) {
     let (message, text) = (message.into(), text.into());
     let session = app.state::<Session>();
+    if !matches!(state, "recording" | "working") {
+        change_streaming_preview(app, streaming_preview::Preview::clear);
+    }
     *session.state.lock().unwrap() = state;
     *session.message.lock().unwrap() = message.clone();
     *session.preview.lock().unwrap() = text.clone();
@@ -129,6 +134,42 @@ fn announce(app: &AppHandle, state: &'static str, message: impl Into<String>, te
         }
     }
     let _ = app.emit("voice", Voice { state, message, text });
+}
+
+fn change_streaming_preview(app: &AppHandle, change: impl FnOnce(&mut streaming_preview::Preview) -> bool) {
+    let resize = {
+        let session = app.state::<Session>();
+        let mut preview = session.streaming_preview.lock().unwrap();
+        let was_visible = preview.visible();
+        if !change(&mut preview) {
+            return;
+        }
+        let _ = app.emit("voice-preview", &*preview);
+        preview.visible() != was_visible
+    };
+    if resize {
+        let handle = app.clone();
+        let _ = app.run_on_main_thread(move || {
+            let visible = handle.state::<Session>().streaming_preview.lock().unwrap().visible();
+            layout::show_streaming_preview(&handle, visible);
+        });
+    }
+}
+
+fn report_segment(app: &AppHandle, segment: audio::Segment) {
+    change_streaming_preview(app, |preview| {
+        let changed = preview.update(segment.recording_id, |view| {
+            if segment.sequence != view.segments + 1 {
+                return false;
+            }
+            view.segments = segment.sequence;
+            true
+        });
+        if changed {
+            let _ = app.emit("voice-segment", segment);
+        }
+        changed
+    });
 }
 
 /// Announces a change and gives the window the shape that suits it.
@@ -450,6 +491,7 @@ fn toggle(app: &AppHandle) {
     let session = app.state::<Session>();
     if session.working.swap(false, Ordering::SeqCst) {
         session.run.fetch_add(1, Ordering::SeqCst);
+        change_streaming_preview(app, streaming_preview::Preview::clear);
         session.rewrite.lock().unwrap().take();
         deliver::end();
         idle(app, "已取消");
@@ -465,17 +507,27 @@ fn toggle(app: &AppHandle) {
     }
     let prefs = Settings::load();
     let spot = deliver::begin();
+    let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
+    let segments: Option<audio::SegmentListener> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
+        change_streaming_preview(app, |preview| {
+            preview.begin(run);
+            true
+        });
+        let handle = app.clone();
+        Some((run, Box::new(move |segment| report_segment(&handle, segment))))
+    } else {
+        None
+    };
     let meter = app.clone();
-    let started = audio::Recorder::start(prefs.microphone_name.clone(), move |peak| {
+    let started = audio::Recorder::start_with_segments(prefs.microphone_name.clone(), move |peak| {
         let _ = meter.emit("level", peak);
-    });
+    }, segments);
     match started {
         Ok(recorder) => {
             // The program's name only, never what is in it, so a report says where the dictation was going.
             let program = (spot.process != 0).then(|| apps::program(spot.process)).flatten().unwrap_or_else(|| "無".into());
             report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
             *session.recorder.lock().unwrap() = Some(recorder);
-            let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
             // While the user speaks: the connection to an online service is opened, and words typed
             // to fix earlier dictations are picked up, which needs those dictations to have been kept.
             let ahead = prefs.clone();
@@ -538,6 +590,7 @@ fn stop_at_limit(app: AppHandle, run: u64) {
 fn discard(app: &AppHandle) {
     let session = app.state::<Session>();
     session.run.fetch_add(1, Ordering::SeqCst);
+    change_streaming_preview(app, streaming_preview::Preview::clear);
     session.working.store(false, Ordering::SeqCst);
     session.recorder.lock().unwrap().take();
     session.kept.lock().unwrap().take();
@@ -743,6 +796,7 @@ struct Facts {
     state: &'static str,
     message: String,
     text: String,
+    streaming_preview: streaming_preview::Preview,
     mode: String,
     /// "windows" or "macos", so the page can name this system's keys.
     platform: &'static str,
@@ -760,6 +814,7 @@ fn facts(app: AppHandle, keys: State<'_, Keys>, session: State<'_, Session>) -> 
         platform: sys::PLATFORM,
         message: session.message.lock().unwrap().clone(),
         text: session.preview.lock().unwrap().clone(),
+        streaming_preview: session.streaming_preview.lock().unwrap().clone(),
     }
 }
 
