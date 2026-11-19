@@ -426,6 +426,9 @@ class Input {
     // current key found it.
     struct Loan { Text syllable; wchar_t key=0; };
     std::optional<Loan> lent, owed;
+    // A medial typed after keys that are said without it, as ㄨ after ㄈㄥ: left out, as ㄈㄨㄥ is, until
+    // the next key shows it began a syllable of its own. `held` is `spare` as the current key found it.
+    std::optional<wchar_t> spare, held;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
     void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;}
     // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
@@ -842,7 +845,7 @@ public:
     size_t currentIndex() const { return highlighted; }
     bool active() const { return !raw.empty() || !syllables.empty(); }
     bool selecting() const { return picking; }
-    void clear(){ raw.clear(); syllables.clear(); settled.clear(); firstLimit=0; caret.reset(); leavePicking(); }
+    void clear(){ raw.clear(); syllables.clear(); settled.clear(); firstLimit=0; caret.reset(); spare.reset(); leavePicking(); }
     Text preview() const {
         if(!caret)return best(0)+dict.reading(raw);
         return cut(*caret,false)+dict.reading(raw)+cut(*caret,true);
@@ -1002,7 +1005,7 @@ public:
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
         added.reset();committed.reset();typed.reset();
-        loose=implied;implied=0;owed=lent;lent.reset();
+        loose=implied;implied=0;owed=lent;lent.reset();held=spare;spare.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
         if(key&controlKey){
@@ -1187,6 +1190,12 @@ public:
         }
         wchar_t ch=codeKey(key,layout);
         const bool toneKey=ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7';
+        // The medial left out a key ago began the next syllable after all when this key goes on from it:
+        // ㄈㄥ ㄨ then ㄟ is ㄈㄥ and ㄨㄟ, and a tone makes it ㄈㄥ and ㄨ with that tone.
+        if(held && !raw.empty() && syllables.size()<128){
+            const Text began=Text(1,*held)+ch;
+            if((toneKey?dict.byCode.count(began)!=0:startsCode(began)) && finishSyllable(true,true)){raw=Text(1,*held);++loose;owed.reset();}
+        }
         if(!raw.empty() && syllables.size()<128){
             // The keys of one syllable may come in any order: each takes its own place, initial, medial,
             // final, then tone. Keys that already spell a syllable are left as they are unless the new key
@@ -1205,6 +1214,9 @@ public:
                     const Text joined=syllableOrder(raw+ch);
                     // ㄈㄨ then ㄥ, or ㄐ then ㄨ, is on its way to a syllable under its usual spelling.
                     if(forward?(startsCode(joined) || startsRespelled(joined) || (!said && dict.reachable(joined))):(!said && dict.reachable(joined))){keep(joined);return {};}
+                    // A medial the syllable is said without changes nothing, whenever it is typed: ㄈㄥ then ㄨ
+                    // is ㄈㄨㄥ, which is ㄈㄥ.
+                    if(!toned && spoken(raw) && !joined.empty() && standardSpelling(joined)==raw){spare=ch;implied=loose;lent=owed;return {};}
                 } else if(!said && !toned){
                     // A second key for a part that is already filled replaces the first, as when the wrong
                     // initial was pressed: ㄉ then ㄊ is ㄊ.
