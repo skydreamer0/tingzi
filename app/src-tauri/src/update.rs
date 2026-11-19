@@ -44,15 +44,18 @@ pub struct Release {
 /// What the last check found, kept so the settings page can show it without asking again.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Record {
-    /// Seconds since 1970 when GitHub was last asked.
+    /// Seconds since 1970 of the last successful check.
     checked: u64,
+    /// Seconds since 1970 when the automatic check last asked, whether or not it got an answer.
+    #[serde(default)]
+    tried: u64,
     latest: Option<Release>,
 }
 
 #[derive(Serialize)]
 pub struct UpdateState {
     current: &'static str,
-    /// Seconds since 1970 of the last check; 0 when there has not been one.
+    /// Seconds since 1970 of the last successful check; 0 when there has not been one.
     checked: u64,
     /// The newer release, if the last check found one.
     offered: Option<Release>,
@@ -82,6 +85,10 @@ pub fn newer(current: &str, offered: &str) -> bool {
 /// Whether a day has passed since `checked`. A clock set back counts as due, so a wrong date cannot stop the checks for good.
 fn due(checked: u64, now: u64) -> bool {
     now < checked || now - checked >= DAY
+}
+
+fn automatic_check_due(record: &Record, now: u64) -> bool {
+    due(record.checked.max(record.tried), now)
 }
 
 fn now() -> u64 {
@@ -181,12 +188,13 @@ fn from_page(installer: Option<(&str, &str)>) -> Option<Release> {
 /// Asks now, keeps the answer, and returns what the page shows.
 fn check_now() -> Result<UpdateState, String> {
     let latest = ask()?;
-    store(&Record { checked: now(), latest: Some(latest) });
-    Ok(state())
+    let checked = now();
+    let record = Record { checked, tried: checked, latest: Some(latest) };
+    store(&record);
+    Ok(state(record))
 }
 
-fn state() -> UpdateState {
-    let record = load();
+fn state(record: Record) -> UpdateState {
     let current = env!("CARGO_PKG_VERSION");
     UpdateState {
         current,
@@ -220,11 +228,17 @@ pub fn start(app: &AppHandle) {
 }
 
 fn look(app: &AppHandle, asked: &mut Option<String>) {
-    let earlier = load().latest.map(|release| release.version);
-    let state = if due(load().checked, now()) { check_now().unwrap_or_else(|reason| {
-        crate::report::note(format!("自動檢查更新失敗：{reason}"));
-        state()
-    }) } else { state() };
+    let mut record = load();
+    let earlier = record.latest.as_ref().map(|release| release.version.clone());
+    let tried = now();
+    let state = if automatic_check_due(&record, tried) {
+        record.tried = tried;
+        store(&record);
+        check_now().unwrap_or_else(|reason| {
+            crate::report::note(format!("自動檢查更新失敗：{reason}"));
+            state(record)
+        })
+    } else { state(record) };
     let Some(offered) = state.offered.clone() else { return };
     if earlier.as_deref() != Some(&offered.version) {
         let _ = app.emit("update", &state);
@@ -266,7 +280,7 @@ fn short(version: &str) -> &str {
 
 #[tauri::command]
 pub fn update_state() -> UpdateState {
-    state()
+    state(load())
 }
 
 /// The page's button: asks even when the automatic check is off, because the user pressed it.
@@ -339,7 +353,7 @@ fn run_installer(file: &Path, quiet: bool) -> bool {
 /// for this system, opens the release page. Returns what the page tells the user.
 #[tauri::command(async)]
 pub fn update_install(app: AppHandle) -> Result<String, String> {
-    let offered = state().offered.ok_or("目前已是最新版。")?;
+    let offered = state(load()).offered.ok_or("目前已是最新版。")?;
     let Some(installer) = offered.installer else {
         return if crate::dialogs::open(&offered.page) {
             Ok("已開啟下載頁，請依頁面說明安裝新版。".into())
@@ -386,6 +400,16 @@ mod tests {
         assert!(!due(1_800_000_000, 1_800_000_000 + DAY - 1));
         assert!(due(1_800_000_000, 1_800_000_000 + DAY));
         assert!(due(1_800_000_000, 1_700_000_000));
+    }
+
+    #[test]
+    fn a_failed_automatic_check_waits_a_day() {
+        let mut record: Record = serde_json::from_value(json!({ "checked": DAY, "latest": null })).unwrap();
+        assert_eq!(record.tried, 0);
+        assert!(!automatic_check_due(&record, 2 * DAY - 1));
+        record.tried = 2 * DAY;
+        assert!(!automatic_check_due(&record, 3 * DAY - 1));
+        assert!(automatic_check_due(&record, 3 * DAY));
     }
 
     fn answer(assets: serde_json::Value) -> serde_json::Value {
