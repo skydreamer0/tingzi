@@ -6,7 +6,7 @@ from pathlib import Path
 import re
 import zipfile
 
-VERSION = '0.8.0'
+VERSION = '0.9.0'
 ROOT_FILES = ['TingziTextService32.dll', 'TingziTextService64.dll', 'TingziSetup32.exe', 'TingziSetup64.exe', 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'RemoveTingzi.cmd', 'VoiceShortcuts.ps1', 'README.md', 'tingzi.svg', 'Tingzi.cin', 'phrases.txt', 'pairs.txt', 'pairs-NOTICE.txt', 'McBopomofo-LICENSE.txt']
 FLOAT_FILES = ['TingziFloat.exe', 'LICENSE']
 # Every licence name that may appear in a dependency's licence expression has been reviewed for redistribution.
