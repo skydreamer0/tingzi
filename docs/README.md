@@ -3,7 +3,7 @@
 | 我想做什麼 | 從哪裡開始 |
 | --- | --- |
 | 安裝、使用或移除 | [Windows 使用手冊](../windows/README.md) |
-| 建置或試用準備中的 macOS 版 | [macOS 說明](../macos/README.md) |
+| 安裝、建置或試用準備中的 macOS 版 | [macOS 說明](../macos/README.md) |
 | 查看各版本改了什麼 | [變更紀錄](../CHANGELOG.md) |
 | 回報問題、建置、執行測試或發行新版 | [貢獻指南](../CONTRIBUTING.md) · [開發指南](development/README.md) |
 | 讓 AI 程式代理（Codex、Claude Code）在這個儲存庫工作 | [AGENTS.md](../AGENTS.md) · [專案 skill](../.claude/skills/) |

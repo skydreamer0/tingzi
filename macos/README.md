@@ -1,8 +1,28 @@
-# 聽字・語音輸入｜macOS（準備中）
+# 聽字・語音輸入｜macOS（預覽）
 
 macOS 版只有語音輸入：螢幕邊緣的聽字圖示、錄音、辨識、把文字貼回原本的程式，以及設定頁。注音輸入法是 Windows 的文字服務，macOS 版沒有；打注音請用 macOS 內建的注音輸入法。
 
-**目前狀態：** 還沒有發行，也還沒有在 Mac 上實際執行驗收。程式碼已能以 macOS 為目標通過型別檢查；完整的編譯、測試與打包由 GitHub Actions 的 macOS 工作流程執行。下面的步驟是給想先試用或協助測試的人。
+**目前狀態：** 還沒有在 Mac 上實際執行驗收。編譯、測試與打包由 GitHub Actions 的 macOS 工作流程執行。0.9.0 之後的版本，[Releases](https://github.com/skydreamer0/tingzi/releases/latest) 會附上磁碟映像檔 `Tingzi-<版本>-macos.dmg`；0.9.0 以前只能自行建置。
+
+## 安裝
+
+需要 macOS 11 以上，Apple 晶片與 Intel 的 Mac 都能用。
+
+1. 從 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`。
+2. 想確認檔案完整時，在「終端機」執行 `shasum -a 256 ~/Downloads/Tingzi-<版本>-macos.dmg`，結果要和同一頁的 `.sha256` 檔一樣。
+3. 打開下載的檔案，會出現一個視窗，把「Tingzi」拖到旁邊的「應用程式」資料夾，再在 Finder 側邊欄按「聽字」旁的退出鈕。
+4. 到「應用程式」資料夾打開「Tingzi」。
+
+**第一次開啟被擋下時：** 聽字沒有 Apple 的開發者簽章，也沒有經過 Apple 公證，第一次開啟時 macOS 會說無法確認它沒有惡意軟體。
+
+- macOS 15 以後：先按「完成」，到「系統設定 > 隱私權與安全性」，在「安全性」一段找到聽字被阻擋的訊息，按「強制打開」，輸入密碼後再按「打開」。在 Finder 按右鍵選「打開」已經不能略過這個檢查。
+- macOS 14 以前：在 Finder 對「Tingzi」按右鍵選「打開」，再按「打開」。
+
+允許一次之後，之後開啟就不會再問。
+
+**更新：** 下載新版的磁碟映像檔，同樣把「Tingzi」拖到「應用程式」資料夾，選「取代」。設定、自訂詞與學習資料存在個人資料夾，不會受影響。因為沒有開發者簽章，更新後 macOS 可能再問一次麥克風和輔助使用權限；如果「輔助使用」裡聽字已經打開卻還是不能貼入，把它從清單移除（按「−」）再重新加入。
+
+**移除：** 結束聽字（選單列圖示 > 結束），把「應用程式」裡的「Tingzi」丟到垃圾桶。要一併刪掉設定與自訂詞，再刪除 `~/Library/Application Support/Tingzi`；開過「登入時啟動」的話，也刪除 `~/Library/LaunchAgents/app.tingzi.voice.plist`。
 
 ## 建置
 
@@ -12,7 +32,7 @@ macOS 版只有語音輸入：螢幕邊緣的聽字圖示、錄音、辨識、�
 bash macos/build.sh
 ```
 
-完成後會有 `.build/macos/Tingzi.app` 和同一個資料夾裡的 ZIP。程式只做了本機簽章，沒有 Developer ID；拿到別台 Mac 上第一次開啟時，要在 Finder 對它按右鍵選「打開」。
+需要用 rustup 安裝的 Rust，腳本會加入 Apple 晶片與 Intel 兩種目標。完成後會有 `.build/macos/Tingzi.app`，以及同一個資料夾裡的磁碟映像檔 `Tingzi-<版本>-macos.dmg` 和它的 `.sha256`。程式同時支援兩種 Mac，但只做了本機簽章，沒有 Developer ID；拿到別台 Mac 上第一次開啟時，照上面「第一次開啟被擋下時」的步驟允許。`bash macos/check_dmg.sh .build/macos/Tingzi-<版本>-macos.dmg` 會檢查磁碟映像檔的內容、雜湊與簽章。
 
 只想跑測試或開發版：
 
@@ -29,7 +49,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 1. 開啟 `Tingzi.app`。它是選單列程式，不會出現在 Dock；選單列和螢幕邊緣各有一顆聽字圖示。
 2. 第一次錄音時，macOS 會詢問是否允許使用**麥克風**。
 3. 第一次要把文字貼回其他程式時，macOS 會要求**輔助使用**權限（系統設定 > 隱私權與安全性 > 輔助使用）。允許之前，文字只會複製到剪貼簿並留在浮窗，自己按 Command＋V 貼上。
-4. 重新建置後簽章會改變，macOS 可能再問一次這兩項權限。
+4. 重新建置或更新到新版後簽章會改變，macOS 可能再問一次這兩項權限。
 5. 第一次在這台 Mac 開啟時，設定視窗會帶你選麥克風、選辨識方式，並在文字編輯裡練習一句。每一步都可以略過，之後可以在「關於」頁按「首次設定」重來。
 
 ## 和 Windows 版不同的地方
@@ -47,7 +67,7 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 | 登入時啟動 | 在 `~/Library/LaunchAgents/app.tingzi.voice.plist` 寫一個啟動項目 |
 | 個人資料 | `~/Library/Application Support/Tingzi` |
 | 回報問題 | 和 Windows 版一樣在「關於」頁或選單列選單按「回報問題…」；操作記錄是個人資料夾裡的 `tingzi-log.txt` |
-| 檢查更新 | 和 Windows 版一樣在「關於」頁檢查與提示，但還沒有 macOS 的安裝程式，所以按鈕是「開啟下載頁」 |
+| 檢查更新 | 和 Windows 版一樣在「關於」頁檢查與提示，但不會自動安裝；按「開啟下載頁」下載新的磁碟映像檔，照上面「更新」的步驟換掉 |
 | 注音頁 | 只留下自訂詞；鍵盤配置、文字範本、本機學習等注音輸入法的項目不顯示 |
 
 ## 邊講邊出字
@@ -69,4 +89,4 @@ cargo run --manifest-path app/src-tauri/Cargo.toml
 - 在實機上驗收錄音、三種辨識方式、AI 潤稿、貼入、快捷鍵、選單列選單與設定頁。
 - Developer ID 簽章與公證；目前其他 Mac 開啟時會看到 Gatekeeper 警告。
 - 應用程式圖示目前由 256 px 的圖放大，之後換成完整尺寸的圖示。
-- 一份程式同時支援 Apple 晶片與 Intel；目前建置出來的只適用於建置它的那種 Mac。
+- 在設定頁直接下載並安裝新版。

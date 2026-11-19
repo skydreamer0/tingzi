@@ -19,10 +19,14 @@ jobs:
       - uses: actions/checkout@v4
       - name: Test
         run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
-      - name: Build Tingzi.app
+      - name: Build Tingzi.app and the disk image
         run: bash macos/build.sh
+      - name: Check the disk image
+        run: bash macos/check_dmg.sh .build/macos/Tingzi-*-macos.dmg
       - uses: actions/upload-artifact@v4
         with:
           name: Tingzi-macos
-          path: .build/macos/*.zip
+          path: |
+            .build/macos/*.dmg
+            .build/macos/*.dmg.sha256
           if-no-files-found: error

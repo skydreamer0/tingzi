@@ -41,7 +41,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 | 平台 | 狀態 | 取得方式 |
 | --- | --- | --- |
 | Windows 10／11（x64） | 預覽版 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
-| macOS | 準備中，尚未發行 | 只有語音輸入，沒有注音；目前只能[自行建置](macos/README.md) |
+| macOS 11 以上 | 準備中，尚未實機驗收 | 只有語音輸入，沒有注音；0.9.0 之後的版本在 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`，拖到「應用程式」資料夾，見 [macOS 說明](macos/README.md) |
 
 **Windows 安裝步驟**
 
@@ -54,7 +54,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 > [!NOTE]
 > 這是預覽版。安裝程式沒有數位簽章，Windows 可能會顯示「Windows 已保護您的電腦」，按「其他資訊」再按「仍要執行」。下載頁附有 `.sha256` 檔，可以核對下載的檔案是否完整。
 >
-> macOS 版自行建置出的 `Tingzi.app` 只有本機簽章，沒有 Developer ID，也沒有經過 Apple 公證，第一次開啟時要在 Finder 按右鍵選「打開」。
+> macOS 版只有本機簽章，沒有 Apple 的開發者簽章，也沒有經過 Apple 公證。第一次開啟會被擋下，要到「系統設定 > 隱私權與安全性」按「強制打開」（macOS 14 以前在 Finder 按右鍵選「打開」）。
 
 ## 快速上手
 

@@ -1,7 +1,8 @@
 name: Release
 
 # Pushing a tag such as v0.8.0 builds the Windows installer the same way the Windows workflow does and
-# attaches only the installer and its .sha256 to a draft release for that tag. The draft's notes come from
+# attaches only the installer and its .sha256 to a draft release for that tag. The macOS job then adds the
+# disk image Tingzi-<version>-macos.dmg and its .sha256 to the same draft. The draft's notes come from
 # .github/release-notes.md and the version's section of CHANGELOG.md. A draft is visible to the
 # maintainers only; it reaches users when a maintainer edits the notes and presses "Publish release".
 on:
@@ -64,4 +65,35 @@ jobs:
         with:
           name: Tingzi-release
           path: .build/installer/*
+          if-no-files-found: error
+
+  macos:
+    needs: windows
+    runs-on: macos-latest
+    env:
+      TAG: ${{ inputs.tag || github.ref_name }}
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+      - name: Test
+        run: cargo test --locked --manifest-path app/src-tauri/Cargo.toml
+      - name: Build Tingzi.app and the disk image
+        run: bash macos/build.sh
+      - name: Check the disk image
+        run: bash macos/check_dmg.sh .build/macos/Tingzi-*-macos.dmg
+      - name: Attach the disk image to the draft release
+        run: |
+          dmg="$(ls .build/macos/Tingzi-*-macos.dmg)"
+          version="$(basename "$dmg" | sed 's/^Tingzi-\(.*\)-macos\.dmg$/\1/')"
+          if [ "v$version" != "$TAG" ]; then echo "The tag $TAG does not match the version in the build ($version)."; exit 1; fi
+          gh release upload "$TAG" "$dmg" "$dmg.sha256" --clobber
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Tingzi-release-macos
+          path: |
+            .build/macos/*.dmg
+            .build/macos/*.dmg.sha256
           if-no-files-found: error
