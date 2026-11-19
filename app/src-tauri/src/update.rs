@@ -14,6 +14,8 @@ use tauri::{AppHandle, Emitter};
 const LATEST: &str = "https://api.github.com/repos/skydreamer0/tingzi/releases/latest";
 /// Every address taken from the answer must start with one of these, so a changed or forged answer cannot send the user elsewhere.
 const PAGES: &str = "https://github.com/skydreamer0/tingzi/releases/";
+/// Leads to the latest release's page; read when the API refuses to answer.
+const LATEST_PAGE: &str = "https://github.com/skydreamer0/tingzi/releases/latest";
 const DOWNLOADS: &str = "https://github.com/skydreamer0/tingzi/releases/download/";
 const DAY: u64 = 24 * 60 * 60;
 /// How long after start the automatic check waits, so it does not compete with the first dictation.
@@ -124,7 +126,9 @@ fn user_agent() -> String {
     format!("Tingzi/{}", env!("CARGO_PKG_VERSION"))
 }
 
-/// Asks GitHub for the latest release.
+/// Asks GitHub for the latest release. GitHub's API answers only 60 questions an hour from one
+/// network without signing in, and refuses the rest with 403 or 429; then the release page, which
+/// has no such limit, is read instead.
 fn ask() -> Result<Release, String> {
     let failed = "無法檢查更新，請確認網路連線。";
     let answer = fetch::client(LATEST)?
@@ -134,10 +138,44 @@ fn ask() -> Result<Release, String> {
         .send()
         .map_err(|_| failed)?;
     if !answer.status().is_success() {
-        return Err(failed.into());
+        let status = answer.status().as_u16();
+        return from_page(crate::sys::UPDATE_INSTALLER).ok_or_else(|| {
+            crate::report::note(format!("檢查更新：GitHub 回應 {status}，下載頁也讀不到"));
+            if matches!(status, 403 | 429) { "GitHub 暫時限制了這個網路的查詢次數，請過一小時再檢查。" } else { failed }.into()
+        });
     }
     let answer = answer.json::<serde_json::Value>().map_err(|_| failed)?;
     read_release(&answer, crate::sys::UPDATE_INSTALLER).ok_or_else(|| "更新資訊的格式不對，請到專案首頁查看。".into())
+}
+
+/// The version in the address `releases/latest` leads to, such as `.../releases/tag/v0.9.0`.
+fn tag_of_page(page: &str) -> Option<String> {
+    let tag = page.strip_prefix(PAGES)?.strip_prefix("tag/")?;
+    parts(tag)?;
+    Some(tag.to_owned())
+}
+
+/// The latest release found without the API: `releases/latest` leads to its page, and the installer
+/// and its checksum are at the addresses every release uses. There are no notes; the page has them.
+fn from_page(installer: Option<(&str, &str)>) -> Option<Release> {
+    let client = fetch::client(LATEST_PAGE).ok()?;
+    let head = |url: &str| client.head(url).header("User-Agent", user_agent()).send().ok().filter(|answer| answer.status().is_success());
+    let page = head(LATEST_PAGE)?.url().to_string();
+    let version = tag_of_page(&page)?;
+    let installer = installer.and_then(|(starts, ends)| {
+        let name = format!("{starts}{}{ends}", short(&version));
+        let url = format!("{DOWNLOADS}{version}/{name}");
+        let checksum = format!("{url}.sha256");
+        // The header is read directly: the body of an answer to HEAD is empty, whatever the file's size.
+        let size = head(&url)?
+            .headers()
+            .get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|length| length.to_str().ok()?.parse::<u64>().ok())
+            .filter(|size| *size > 0)?;
+        head(&checksum)?;
+        Some(Asset { name, url, size, checksum })
+    });
+    Some(Release { version, notes: String::new(), page, installer })
 }
 
 /// Asks now, keeps the answer, and returns what the page shows.
@@ -405,6 +443,15 @@ mod tests {
         let mut unnamed = answer(json!([]));
         unnamed["tag_name"] = json!("nightly");
         assert_eq!(read_release(&unnamed, WINDOWS), None);
+    }
+
+    #[test]
+    fn reads_the_version_from_the_release_page() {
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases/tag/v0.9.0").as_deref(), Some("v0.9.0"));
+        // Without releases, `latest` stays on the list of releases.
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases"), None);
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases/tag/nightly"), None);
+        assert_eq!(tag_of_page("https://example.com/skydreamer0/tingzi/releases/tag/v0.9.0"), None);
     }
 
     #[test]
