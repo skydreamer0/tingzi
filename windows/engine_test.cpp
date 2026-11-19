@@ -264,6 +264,14 @@ int wmain(int argc,wchar_t** argv) {
     expect(shows({'J',VK_OEM_2,'Z',VK_SPACE},{'Z',VK_OEM_2,VK_SPACE}),"and when its keys came out of order");
     expect(shows({'J','V',VK_OEM_COMMA,'6'},{'V','M',VK_OEM_COMMA,'6'}),"with the medial first");
     expect(shows({'V','J','6',VK_OEM_COMMA,'S','U','3'},{'V','M',VK_OEM_COMMA,'6','S','U','3'}),"or the tone a key early");
+    type({'Z',VK_OEM_2,'J'});
+    expect(input.displayRuns().active==L"ㄈㄥ" && input.displayRuns().before.empty(),"a medial the syllable is said without is left out when it comes last");
+    input.clear();
+    expect(shows({'Z',VK_OEM_2,'J',VK_SPACE},{'Z',VK_OEM_2,VK_SPACE}),"and the syllable ends as it would without it");
+    expect(shows({'1','I','J',VK_SPACE},{'1','I',VK_SPACE}),"after the other final too");
+    expect(shows({'Z',VK_OEM_2,'J','2','K','7'},{'Z',VK_OEM_2,VK_SPACE,'2','K','7'}),"and when the next syllable ends it");
+    expect(shows({'Z',VK_OEM_2,'J','O','4'},{'Z',VK_OEM_2,VK_SPACE,'J','O','4'}),"unless the key after it goes on from the medial, which then began the next syllable");
+    expect(shows({'Z',VK_OEM_2,'J','4'},{'Z',VK_OEM_2,VK_SPACE,'J','4'}),"or a tone makes the medial a syllable of its own");
     enter("ZJ ");
     expect(input.preview().size()==1 && input.preview()!=L"ㄈ","a spelling that is a syllable is left alone");
     input.clear();
