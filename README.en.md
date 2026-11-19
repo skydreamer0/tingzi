@@ -42,7 +42,7 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 | Platform | Status | How to get it |
 | --- | --- | --- |
 | Windows 10/11 (x64) | Preview | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
-| macOS 11 or later | In progress, not yet tested on a real Mac | Voice input only, no Zhuyin; for versions after 0.9.0, download `Tingzi-<version>-macos.dmg` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and drag it to Applications; see the [macOS notes](macos/README.md) |
+| macOS 11 or later | In progress, not yet tested on a real Mac | Voice input only, no Zhuyin; from 0.10.0 onward, download `Tingzi-<version>-macos.dmg` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and drag it to Applications; see the [macOS notes](macos/README.md) |
 
 **Installing on Windows**
 

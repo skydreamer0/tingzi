@@ -8,6 +8,8 @@
 
 ## [尚未發行]
 
+## [0.10.0] - 2026-11-20
+
 ### 新增
 
 - macOS：發行頁附上磁碟映像檔 `Tingzi-<版本>-macos.dmg`，打開後把聽字拖到「應用程式」資料夾就裝好了，Apple 晶片與 Intel 的 Mac 都能用。程式沒有 Apple 的開發者簽章，第一次開啟要到「系統設定 > 隱私權與安全性」按「強制打開」。
@@ -151,7 +153,8 @@
 - 語音：以自訂詞校正同音字、取代規則，以及依程式套用不同設定。
 - 語音：保留最近 50 則辨識紀錄，Alt＋Shift＋Z 可以再次貼上上一則。
 
-[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.9.0...HEAD
+[尚未發行]: https://github.com/skydreamer0/tingzi/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/skydreamer0/tingzi/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/skydreamer0/tingzi/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/skydreamer0/tingzi/compare/v0.7.7...v0.8.0
 [0.7.7]: https://github.com/skydreamer0/tingzi/compare/v0.7.6...v0.7.7

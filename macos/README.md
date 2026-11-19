@@ -2,7 +2,7 @@
 
 macOS 版只有語音輸入：螢幕邊緣的聽字圖示、錄音、辨識、把文字貼回原本的程式，以及設定頁。注音輸入法是 Windows 的文字服務，macOS 版沒有；打注音請用 macOS 內建的注音輸入法。
 
-**目前狀態：** 還沒有在 Mac 上實際執行驗收。編譯、測試與打包由 GitHub Actions 的 macOS 工作流程執行。0.9.0 之後的版本，[Releases](https://github.com/skydreamer0/tingzi/releases/latest) 會附上磁碟映像檔 `Tingzi-<版本>-macos.dmg`；0.9.0 以前只能自行建置。
+**目前狀態：** 還沒有在 Mac 上實際執行驗收。編譯、測試與打包由 GitHub Actions 的 macOS 工作流程執行。自 0.10.0 起，[Releases](https://github.com/skydreamer0/tingzi/releases/latest) 會附上磁碟映像檔 `Tingzi-<版本>-macos.dmg`；0.9.0（含）以前沒有提供磁碟映像檔，可自行建置。
 
 ## 安裝
 
