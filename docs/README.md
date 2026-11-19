@@ -13,4 +13,5 @@
 | 了解產品名稱、識別與安裝位置 | [產品識別](specs/tingzi-product.md) |
 | 規劃一般用戶缺少的功能與介面改善 | [一般用戶體驗規格](specs/general-user-experience.md) |
 | 了解 AI 潤稿的做法與設定頁的約定 | [AI 潤稿規格](specs/ai-refine.md) |
+| 查看 Codex 錄音時逐句顯示、停止後一次貼入的設計 | [邊講邊出字規格（準備中）](specs/streaming-asr.md) |
 | 了解注音與語音浮窗共用的學習資料、從改字學詞的做法 | [本機學習資料規格](specs/learning-data.md) |
