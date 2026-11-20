@@ -408,6 +408,9 @@ class Input {
     std::shared_ptr<const std::vector<Sentence>> sentences;
     std::optional<Sentence> committed;
     size_t symbolGroup=0;
+    // Replacing a punctuation mark still in this composition, not text in the host document.
+    std::optional<size_t> symbolTarget;
+    std::optional<size_t> bracketSide;
     // The syllable whose character is being chosen while the list is open.
     size_t target=0;
     // True when the user moved the caret to reach the target, rather than choosing from the left.
@@ -426,8 +429,26 @@ class Input {
     // current key found it.
     struct Loan { Text syllable; wchar_t key=0; };
     std::optional<Loan> lent, owed;
+    // A medial typed after keys that are said without it, as ㄨ after ㄈㄥ: left out, as ㄈㄨㄥ is, until
+    // the next key shows it began a syllable of its own. `held` is `spare` as the current key found it.
+    std::optional<wchar_t> spare, held;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
-    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;}
+    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;symbolTarget.reset();bracketSide.reset();}
+    std::optional<size_t> symbolBeforeCaret() const {
+        const size_t at=caret.value_or(syllables.size());
+        if(!raw.empty() || !at || !symbol(syllables[at-1]))return {};
+        return at-1;
+    }
+    static std::optional<size_t> sideOfBracket(const Text& mark) {
+        const auto& brackets=symbolGroups[1].marks;
+        const auto found=std::find(brackets.begin(),brackets.end(),mark);
+        if(found==brackets.end())return {};
+        return size_t(found-brackets.begin())%2;
+    }
+    void openSymbols(std::optional<size_t> replace={},std::optional<size_t> related={}) {
+        leavePicking();
+        symbolMode=true;picking=true;symbolTarget=replace;bracketSide=related;
+    }
     // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
     std::vector<Sentence> recalled() const {
         std::vector<Sentence> found;
@@ -842,7 +863,7 @@ public:
     size_t currentIndex() const { return highlighted; }
     bool active() const { return !raw.empty() || !syllables.empty(); }
     bool selecting() const { return picking; }
-    void clear(){ raw.clear(); syllables.clear(); settled.clear(); firstLimit=0; caret.reset(); leavePicking(); }
+    void clear(){ raw.clear(); syllables.clear(); settled.clear(); firstLimit=0; caret.reset(); spare.reset(); leavePicking(); }
     Text preview() const {
         if(!caret)return best(0)+dict.reading(raw);
         return cut(*caret,false)+dict.reading(raw)+cut(*caret,true);
@@ -859,8 +880,8 @@ public:
             auto list=choices();
             if(recallMode && highlighted<list.size())return {{},list[highlighted].text,{}};
             if(symbolMode && highlighted<list.size()){
-                const size_t at=caret.value_or(syllables.size());
-                return {cut(at,false),list[highlighted].text,cut(at,true)};
+                const size_t at=symbolTarget.value_or(caret.value_or(syllables.size()));
+                return {cut(at,false),list[highlighted].text,cut(at+(symbolTarget?1:0),true)};
             }
             if(highlighted<list.size()) {
                 const auto& choice=list[highlighted];
@@ -877,7 +898,13 @@ public:
     std::vector<Choice> choices(bool favoredFirst) const {
         std::vector<Choice> result;
         if(recallMode){for(const auto& said:recalled())result.push_back({said.text,0});return result;}
-        if(symbolMode){for(const wchar_t* mark:symbolGroups[symbolGroup].marks)result.push_back({mark,0});return result;}
+        if(symbolMode){
+            const auto& marks=symbolGroups[bracketSide?1:symbolGroup].marks;
+            if(bracketSide){
+                for(size_t i=*bracketSide;i<marks.size();i+=2)result.push_back({marks[i],0});
+            }else for(const wchar_t* mark:marks)result.push_back({mark,0});
+            return result;
+        }
         auto pos=target;
         if(pos>=syllables.size()) return result;
         if(nearMode){
@@ -954,6 +981,7 @@ public:
     }
     Text listTitle() const {
         if(recallMode)return L"打過的句子";
+        if(bracketSide)return *bracketSide ? L"符號・右括號" : L"符號・左括號";
         if(symbolMode)return Text(L"符號・")+symbolGroups[symbolGroup].name+L"（Tab 換類別）";
         return nearMode?L"近音字":L"注音選字";
     }
@@ -996,13 +1024,14 @@ public:
         if(shifted) return !punctuation(key,true,layout).empty() || (key==VK_RETURN && active());
         if(dict.keys.count(codeKey(key,layout))) return true;
         if(!punctuation(key,false,layout).empty() || key==VK_OEM_3) return true;
+        if(key==VK_UP && symbolBeforeCaret())return true;
         return active() && (key==VK_BACK || key==VK_ESCAPE || key==VK_RETURN || key==VK_SPACE || key==VK_DOWN || key==VK_END || key==VK_TAB
             || key==VK_LEFT || key==VK_RIGHT || key==VK_HOME || key==VK_DELETE);
     }
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
         added.reset();committed.reset();typed.reset();
-        loose=implied;implied=0;owed=lent;lent.reset();
+        loose=implied;implied=0;owed=lent;lent.reset();held=spare;spare.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
         if(key&controlKey){
@@ -1027,7 +1056,11 @@ public:
             if(list.empty()){leavePicking();return {};}
             if(key==VK_TAB){
                 if(recallMode)return {};
-                if(symbolMode){symbolGroup=(symbolGroup+1)%std::size(symbolGroups);page=0;highlighted=0;return {};}
+                if(symbolMode){
+                    if(bracketSide){bracketSide.reset();symbolGroup=1;}
+                    else symbolGroup=(symbolGroup+1)%std::size(symbolGroups);
+                    page=0;highlighted=0;return {};
+                }
                 nearMode=!nearMode;page=0;highlighted=0;
                 if(choices().empty())nearMode=false;
                 return {};
@@ -1053,7 +1086,12 @@ public:
                     return scripted(picked.text);
                 }
                 if(symbolMode){
+                    const auto replace=symbolTarget;
                     leavePicking();
+                    if(replace){
+                        syllables[*replace]=Text(1,symbolMark)+picked.text;
+                        return {};
+                    }
                     if(!active())return picked.text;
                     if(syllables.size()<128)insertSyllable(Text(1,symbolMark)+picked.text);
                     return {};
@@ -1098,7 +1136,15 @@ public:
         }
         if(key==VK_OEM_3){
             if(!raw.empty() && !finishSyllable())return {};
-            symbolMode=true;symbolGroup=0;picking=true;page=0;highlighted=0;return {};
+            openSymbols();return {};
+        }
+        if(key==VK_UP || key==VK_DOWN){
+            if(const auto replace=symbolBeforeCaret()){
+                if(key==VK_UP){openSymbols(replace);return {};}
+                if(const auto side=sideOfBracket(syllables[*replace].substr(1))){
+                    openSymbols(replace,side);return {};
+                }
+            }
         }
         if(key==VK_LEFT || key==VK_RIGHT || key==VK_HOME){
             // The caret moves only between finished syllables.
@@ -1187,6 +1233,12 @@ public:
         }
         wchar_t ch=codeKey(key,layout);
         const bool toneKey=ch==L'3'||ch==L'4'||ch==L'6'||ch==L'7';
+        // The medial left out a key ago began the next syllable after all when this key goes on from it:
+        // ㄈㄥ ㄨ then ㄟ is ㄈㄥ and ㄨㄟ, and a tone makes it ㄈㄥ and ㄨ with that tone.
+        if(held && !raw.empty() && syllables.size()<128){
+            const Text began=Text(1,*held)+ch;
+            if((toneKey?dict.byCode.count(began)!=0:startsCode(began)) && finishSyllable(true,true)){raw=Text(1,*held);++loose;owed.reset();}
+        }
         if(!raw.empty() && syllables.size()<128){
             // The keys of one syllable may come in any order: each takes its own place, initial, medial,
             // final, then tone. Keys that already spell a syllable are left as they are unless the new key
@@ -1205,6 +1257,9 @@ public:
                     const Text joined=syllableOrder(raw+ch);
                     // ㄈㄨ then ㄥ, or ㄐ then ㄨ, is on its way to a syllable under its usual spelling.
                     if(forward?(startsCode(joined) || startsRespelled(joined) || (!said && dict.reachable(joined))):(!said && dict.reachable(joined))){keep(joined);return {};}
+                    // A medial the syllable is said without changes nothing, whenever it is typed: ㄈㄥ then ㄨ
+                    // is ㄈㄨㄥ, which is ㄈㄥ.
+                    if(!toned && spoken(raw) && !joined.empty() && standardSpelling(joined)==raw){spare=ch;implied=loose;lent=owed;return {};}
                 } else if(!said && !toned){
                     // A second key for a part that is already filled replaces the first, as when the wrong
                     // initial was pressed: ㄉ then ㄊ is ㄊ.

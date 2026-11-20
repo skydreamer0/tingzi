@@ -182,8 +182,8 @@ function showEngine() {
   const streaming = byId('streaming-asr');
   streaming.disabled = engine !== 'codex';
   byId('streaming-asr-note').textContent = streaming.disabled
-    ? '實驗功能。使用 Codex 時可開啟。'
-    : '實驗功能。啟用後，錄音中會逐句經 Codex 傳到 ChatGPT 辨識。';
+    ? '實驗功能。使用 Codex 線上辨識時可開啟。'
+    : '實驗功能。每次停頓後，浮窗逐句顯示辨識結果，不會立刻打進輸入欄。停錄後才依送出設定處理全文。錄音片段會經 Codex 傳到 ChatGPT 辨識。';
   byId('local-model-row').hidden = engine !== 'local';
   byId('gpu-row').hidden = engine !== 'local' || !(local.gpu_ready || local.gpu_offer);
   byId('update-row').hidden = engine !== 'local' || !local.updates.length;

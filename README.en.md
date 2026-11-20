@@ -42,7 +42,7 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 | Platform | Status | How to get it |
 | --- | --- | --- |
 | Windows 10/11 (x64) | Preview | Download `Tingzi-Setup-<version>-x64.exe` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) (a ZIP up to 0.7.7) |
-| macOS 11 or later | In progress, not yet tested on a real Mac | Voice input only, no Zhuyin; for versions after 0.9.0, download `Tingzi-<version>-macos.dmg` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and drag it to Applications; see the [macOS notes](macos/README.md) |
+| macOS 11 or later | In progress, not yet tested on a real Mac | Voice input only, no Zhuyin; from 0.10.0 onward, download `Tingzi-<version>-macos.dmg` from [Releases](https://github.com/skydreamer0/tingzi/releases/latest) and drag it to Applications; see the [macOS notes](macos/README.md) |
 
 **Installing on Windows**
 
@@ -77,7 +77,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 
 ![The voice bar, the edit card shown after a field change, and its six states](docs/images/voice-bar.svg)
 
-- **An always-available bar**: normally just an icon at the screen edge, which you can drag to the left or right side. It expands while recording, recognizing and refining, and shows whether the current sentence is being recognized online or locally.
+- **An always-available bar**: normally just an icon at the screen edge, which you can drag to the left or right side. It expands while recording, recognizing and refining, and shows whether the current sentence is being recognized online or locally. The editor and bar fold back toward the edge where the icon sits.
 - **No pasting into the wrong field**: if you move to another field while recording, the text isn't pasted there. It stays in an editable card and is already on the clipboard.
 - **Spoken-language cleanup**: removes leading fillers such as 嗯 and 呃 and stuttered repeats, and adds Chinese punctuation, without rewriting the sentence.
 - **Custom words and replacement rules**: names and terms you add are spelled correctly first. For words that are always misheard, or English capitalization, add rules of the form "what was heard → what to write".
@@ -92,7 +92,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 - **Built-in Zhuyin engine**: no other input method is needed. Supports the Standard (Dachen) and Eten layouts.
 - **Whole-phrase conversion**: characters are chosen by how common each word is and which words usually follow each other, so 程式編輯 (program editing) doesn't become 城市編輯 (city editing).
 - **Fix one character mid-phrase**: while composing, move with ← → to the character you want to change. Tab forces a word break; while choosing, Tab shows near-sounding characters.
-- **Punctuation, symbols and templates**: Shift plus a punctuation key gives full-width punctuation, and `` ` `` opens a symbol table. Frequently used addresses or replies can be saved as templates.
+- **Punctuation, symbols and templates**: Shift plus a punctuation key gives full-width punctuation, and `` ` `` opens the symbol table even when not composing. Press Up after a symbol still in the composition to replace it, or Down after a bracket for alternatives on the same side. Frequently used addresses or replies can be saved as templates.
 - **First-key recall**: type only the first Zhuyin symbol of each character and press Space to bring back a sentence you've typed before (requires local learning).
 
 The full key table and settings reference are in the [Windows manual](windows/README.md) (Chinese).

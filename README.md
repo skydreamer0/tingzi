@@ -41,7 +41,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 | 平台 | 狀態 | 取得方式 |
 | --- | --- | --- |
 | Windows 10／11（x64） | 預覽版 | [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-Setup-<版本>-x64.exe`（0.7.7 以前是 ZIP） |
-| macOS 11 以上 | 準備中，尚未實機驗收 | 只有語音輸入，沒有注音；0.9.0 之後的版本在 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`，拖到「應用程式」資料夾，見 [macOS 說明](macos/README.md) |
+| macOS 11 以上 | 準備中，尚未實機驗收 | 只有語音輸入，沒有注音；自 0.10.0 起可在 [Releases](https://github.com/skydreamer0/tingzi/releases/latest) 下載 `Tingzi-<版本>-macos.dmg`，拖到「應用程式」資料夾，見 [macOS 說明](macos/README.md) |
 
 **Windows 安裝步驟**
 
@@ -76,7 +76,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 ![語音浮條的組成、換了欄位時的編輯卡與六種狀態](docs/images/voice-bar.svg)
 
-- **常駐浮條**：平常只是螢幕邊緣的一顆圖示，可以拖到左側或右側；錄音、辨識、潤稿時展開顯示狀態，並標示這一句用的是線上還是本機辨識。
+- **常駐浮條**：平常只是螢幕邊緣的一顆圖示，可以拖到左側或右側；錄音、辨識、潤稿時展開顯示狀態，並標示這一句用的是線上還是本機辨識。 編輯區與浮條會往圖示所在的一側收合。
 - **換欄也不會貼錯**：錄音途中換了欄位，文字不會貼到別的地方，而是留在可以修改的編輯卡裡，也已複製到剪貼簿。
 - **整理口語**：去掉句首的「嗯、呃」和口吃重複，補上中文標點，不改寫句子。
 - **自訂詞與取代規則**：人名、專有名詞優先寫對；固定聽錯的詞或英文大小寫，可以用「聽到的字 → 要換成的字」修正。
@@ -91,7 +91,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 - **內建注音引擎**：不需要安裝其他輸入法，支援標準（大千）與倚天鍵盤。
 - **整句選字**：依字詞的常用程度與「哪些詞常接在一起」的統計選字，例如「程式編輯」不會變成「城市編輯」。
 - **在句中改字**：組字時用 ← → 移到要改的字，只改那一個；Tab 強制斷詞，選字時按 Tab 看近音字。
-- **標點、符號表與範本**：Shift 加標點鍵打全形標點，`` ` `` 開啟符號表；常用的地址或回覆可以存成範本。
+- **標點、符號表與範本**：Shift 加標點鍵打全形標點，`` ` `` 可在有無組字時開啟符號表；游標在尚未送出的符號後，按 ↑ 可換成別的符號，括號後按 ↓ 可換成同側括號。常用的地址或回覆可以存成範本。
 - **首碼快打**：只打每個字的第一個注音再按空白鍵，就能叫出之前打過的整句（需開啟本機學習）。
 
 完整的按鍵表與設定說明見 [Windows 使用手冊](windows/README.md)。
