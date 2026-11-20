@@ -40,7 +40,7 @@ jobs:
           Set-Content "$src\InstallTingzi.cmd" "@echo off`r`necho ran from %~dp0`r`nexit /b 42" -Encoding ascii
           Set-Content "$src\TingziFloat\LICENSE" 'x'
           python -c "import sys,zipfile,pathlib; s=pathlib.Path(sys.argv[1]); z=zipfile.ZipFile(sys.argv[2],'w',zipfile.ZIP_DEFLATED); [z.write(p, p.relative_to(s).as_posix()) for p in s.rglob('*') if p.is_file()]; z.close()" $src "$work\payload.zip"
-          function Try($name, $lines) {
+          function Probe($name, $lines) {
             Write-Host "===== $name"
             $bat = Join-Path $env:RUNNER_TEMP "$name.cmd"
             Set-Content $bat (@('@echo off') + $lines) -Encoding ascii
@@ -63,5 +63,5 @@ jobs:
             $lines += "`"%SystemRoot%\System32\cmd.exe`" /c `"`"$dest\InstallTingzi.cmd`" /quiet > `"$work\out$case.txt`" 2>&1`""
             $lines += 'echo script exit %errorlevel%'
             $lines += "type `"$work\out$case.txt`""
-            Try "case$case" $lines
+            Probe "case$case" $lines
           }
