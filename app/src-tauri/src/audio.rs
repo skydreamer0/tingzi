@@ -45,6 +45,17 @@ impl SegmentAudio {
             .get(range).ok_or_else(|| DAMAGED.to_string())?.to_vec();
         Ok(wav(&resample(&samples, self.rate)))
     }
+
+    /// The recording from sample `start` to its end, trimmed like a whole recording; None when too
+    /// little sound is left there to be worth recognising. Call it after the recording has stopped.
+    pub fn encode_from(&self, start: usize) -> Result<Option<Vec<u8>>, String> {
+        let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
+            .get(start..).ok_or_else(|| DAMAGED.to_string())?.to_vec();
+        if sound(&samples, self.rate).is_none() || too_short(&samples, self.rate) {
+            return Ok(None);
+        }
+        Ok(Some(wav(&resample(trim(&samples, self.rate), self.rate))))
+    }
 }
 
 type SegmentNotice = Box<dyn Fn(SegmentEvent) + Send>;
