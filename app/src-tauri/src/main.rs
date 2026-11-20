@@ -755,6 +755,10 @@ fn toggle(app: &AppHandle) {
             // The program's name only, never what is in it, so a report says where the dictation was going.
             let program = (spot.process != 0).then(|| apps::program(spot.process)).flatten().unwrap_or_else(|| "無".into());
             report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
+            let substitute = recorder.substitute().map(str::to_owned);
+            if let Some(note) = &substitute {
+                report::note(note.clone());
+            }
             *session.recorder.lock().unwrap() = Some(Recording { recorder, engine: prefs.engine() });
             // While the user speaks: the connection to an online service is opened, and words typed
             // to fix earlier dictations are picked up, which needs those dictations to have been kept.
@@ -766,6 +770,10 @@ fn toggle(app: &AppHandle) {
                 }
             });
             show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
+            // The window keeps this above the timer until the recording ends.
+            if let Some(note) = substitute {
+                let _ = app.emit("microphone", note);
+            }
             stop_at_limit(app.clone(), run);
         }
         Err(reason) => {
