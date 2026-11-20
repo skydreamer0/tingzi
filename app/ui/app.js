@@ -21,7 +21,7 @@ function receiveStreamingPreview(preview) {
   if (preview.fallback || preview.pending > 0) {
     const line = document.createElement('p');
     line.className = 'pending';
-    line.textContent = preview.fallback ? '停止錄音後將辨識全文' : '辨識中…';
+    line.textContent = preview.fallback ? '停止錄音後會辨識還沒出字的部分' : '辨識中…';
     lines.push(line);
   }
   streamingPreview.replaceChildren(...lines);

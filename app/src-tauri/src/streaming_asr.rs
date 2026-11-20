@@ -118,7 +118,8 @@ impl Queue {
     }
 }
 
-fn join(sentences: &[String]) -> String {
+/// Joins recognised sentences in order; only two ASCII letters or digits meeting get a space between them.
+pub fn join(sentences: &[String]) -> String {
     let mut text = String::new();
     for sentence in sentences {
         if text
