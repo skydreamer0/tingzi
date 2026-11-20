@@ -475,6 +475,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             (Some(live), _, transcript) => {
                 // A sentence failed part-way: only the recording after the last recognised sentence is heard again.
                 if transcript == Some(streaming_asr::Transcript::FullRecording) {
+                    report::note("逐句辨識中斷，補辨識剩下的錄音");
                     working(&app, run, "辨識剩下的錄音・再點一下取消");
                     let from = live.typing.lock().unwrap().heard_to();
                     let audio = live.audio.lock().unwrap().clone();
