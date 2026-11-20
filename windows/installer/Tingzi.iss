@@ -234,6 +234,13 @@ begin
       Log('  ' + Lines[I]);
 end;
 
+// 放進 PowerShell 單引號字串裡的路徑：路徑裡的單引號要寫兩次。
+function PowerShellQuoted(Value: String): String;
+begin
+  StringChangeEx(Value, '''', '''''', True);
+  Result := '''' + Value + '''';
+end;
+
 // 在複製任何檔案、登記應用程式清單之前註冊輸入法。這裡回傳文字就會停止安裝並顯示原因，
 // 不會留下半套的安裝；AfterInstall 裡丟出例外只會顯示錯誤，安裝照樣完成。
 function PrepareToInstall(var NeedsRestart: Boolean): String;
@@ -248,10 +255,14 @@ begin
   Archive := ExpandConstant('{tmp}\payload.zip');
   Payload := ExpandConstant('{tmp}\payload');
   Output := ExpandConstant('{tmp}\install-output.txt');
+  // 直接用 .NET 解開，不用 Expand-Archive：從 PowerShell 7 開啟安裝程式時，Windows PowerShell 會沿用
+  // PowerShell 7 的模組路徑，載入它附的 Microsoft.PowerShell.Archive，結果什麼都沒解開卻回報成功。
+  // 所以解開後還要確認安裝腳本真的在。
   if not Exec(ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe'),
-      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Expand-Archive -LiteralPath ''' + Archive + ''' -DestinationPath ''' + Payload + ''' -Force"',
-      '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) then
+      '-NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference = ''Stop''; Add-Type -AssemblyName System.IO.Compression.FileSystem; [System.IO.Compression.ZipFile]::ExtractToDirectory(' + PowerShellQuoted(Archive) + ', ' + PowerShellQuoted(Payload) + ')"',
+      '', SW_HIDE, ewWaitUntilTerminated, Code) or (Code <> 0) or not FileExists(Payload + '\InstallTingzi.cmd') then
   begin
+    Log('Unpacking payload.zip failed (code ' + IntToStr(Code) + ').');
     Result := '無法解開安裝內容（代碼 ' + IntToStr(Code) + '）。請重新下載安裝程式。';
     exit;
   end;
