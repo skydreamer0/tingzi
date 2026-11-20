@@ -46,6 +46,11 @@ impl SegmentAudio {
         Ok(wav(&resample(&samples, self.rate)))
     }
 
+    /// How long this many samples of the recording last.
+    pub fn millis(&self, samples: usize) -> usize {
+        samples * 1000 / (self.rate as usize).max(1)
+    }
+
     /// The recording from sample `start` to its end, trimmed like a whole recording; None when too
     /// little sound is left there to be worth recognising. Call it after the recording has stopped.
     pub fn encode_from(&self, start: usize) -> Result<Option<Vec<u8>>, String> {

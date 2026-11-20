@@ -2,6 +2,14 @@ use super::{sound_threshold, sound_window, SHORTEST_SOUND_MS};
 use std::collections::VecDeque;
 use std::ops::Range;
 
+/// A pause this long ends a sentence.
+const PAUSE_MS: usize = 600;
+/// Once a sentence has run this long, a breath ends it, so text keeps coming to someone who speaks on.
+const LONG_SENTENCE_MS: usize = 3000;
+const BREATH_MS: usize = 300;
+/// A sentence spoken without even a breath is cut when it has run this long.
+const LONGEST_SENTENCE_SECONDS: usize = 6;
+
 #[derive(Clone, Copy)]
 struct Window {
     start: usize,
@@ -118,7 +126,9 @@ impl Segmenter {
 
     fn cut_at_pause(&mut self) -> Option<Range<usize>> {
         let phrase = self.phrase.as_ref()?;
-        if self.end - phrase.voice.end < self.rate * 600 / 1000 || !self.long_enough(&phrase.voice)
+        let long = phrase.voice.end - phrase.start >= self.rate * LONG_SENTENCE_MS / 1000;
+        let pause = if long { BREATH_MS } else { PAUSE_MS };
+        if self.end - phrase.voice.end < self.rate * pause / 1000 || !self.long_enough(&phrase.voice)
         {
             return None;
         }
@@ -129,7 +139,7 @@ impl Segmenter {
 
     fn cut_at_limit(&mut self) -> Option<Range<usize>> {
         let phrase = self.phrase.as_ref()?;
-        if self.end < phrase.start + self.rate * 15 {
+        if self.end < phrase.start + self.rate * LONGEST_SENTENCE_SECONDS {
             return None;
         }
         let phrase = self.phrase.take().unwrap();
@@ -253,6 +263,16 @@ mod tests {
     }
 
     #[test]
+    fn a_breath_ends_a_sentence_that_has_run_long() {
+        let breath = [(3_000, 0.5), (300, 0.0), (500, 0.5), (600, 0.0)];
+        assert_eq!(cut(1000, 157, &breath), [0..3250, 3250..4050]);
+        // Before three seconds the same breath is part of the sentence, which then ends at the next one.
+        let early = [(2_400, 0.5), (300, 0.0), (500, 0.5), (300, 0.0), (400, 0.5), (600, 0.0)];
+        assert_eq!(cut(1000, 157, &early), [0..3450, 3450..4150]);
+        assert_eq!(cut(1000, 157, &[(3_000, 0.5), (280, 0.0), (500, 0.5)]), [0..3780]);
+    }
+
+    #[test]
     fn silence_and_expired_loud_peaks_do_not_hold_open_a_sentence() {
         assert!(cut(1000, 157, &[(40_000, 0.001)]).is_empty());
         assert_eq!(
@@ -264,8 +284,8 @@ mod tests {
             [0..450, 950..1650]
         );
         assert_eq!(
-            cut(1000, 157, &[(180, 0.5), (15_000, 0.0), (200, 0.5)]),
-            [15000..15380]
+            cut(1000, 157, &[(180, 0.5), (6_000, 0.0), (200, 0.5)]),
+            [6000..6380]
         );
     }
 
@@ -281,32 +301,32 @@ mod tests {
         assert_eq!(short_tail.finish(), (None, true));
 
         let short_start = advance(Segmenter::new(1000), &[0.5; 180], &[]);
-        let gap = advance(short_start, &[0.0; 15_000], &[]);
+        let gap = advance(short_start, &[0.0; 6_000], &[]);
         assert!(gap.incomplete());
         let tail = advance(gap, &[0.5; 200], &[]);
-        assert_eq!(tail.finish(), (Some(15000..15380), true));
+        assert_eq!(tail.finish(), (Some(6000..6380), true));
     }
 
     #[test]
     fn forced_cuts_use_the_quietest_complete_window_and_keep_the_suffix() {
-        let s = advance(Segmenter::new(1000), &vec![0.5; 14_000], &[]);
+        let s = advance(Segmenter::new(1000), &vec![0.5; 5_000], &[]);
         let s = advance(s, &[0.1; 40], &[]);
         let s = advance(s, &[0.6; 240], &[]);
         let s = advance(s, &[0.1; 20], &[]);
         let s = advance(s, &[0.5; 699], &[]);
-        let s = advance(s, &[0.5], &[0..14300]);
-        assert_eq!(s.finish(), (Some(14300..15000), false));
+        let s = advance(s, &[0.5], &[0..5300]);
+        assert_eq!(s.finish(), (Some(5300..6000), false));
         assert_eq!(
-            cut(1000, 4096, &[(30_200, 0.5)]),
-            [0..15000, 15000..30000, 30000..30200]
+            cut(1000, 4096, &[(12_200, 0.5)]),
+            [0..6000, 6000..12000, 12000..12200]
         );
     }
 
     #[test]
     fn forced_cut_ties_choose_the_latest_window_and_assign_the_suffix_once() {
-        let mut input = vec![0.5; 15_000];
-        input[14_000..14_020].fill(0.1);
-        input[14_500..14_520].fill(0.1);
+        let mut input = vec![0.5; 6_000];
+        input[5_000..5_020].fill(0.1);
+        input[5_500..5_520].fill(0.1);
 
         for block in [137, 4096] {
             let mut segmenter = Segmenter::new(1000);
@@ -316,8 +336,8 @@ mod tests {
                 segmenter = next;
                 segments.extend(ready);
             }
-            assert_eq!(segments, [0..14_520]);
-            assert_eq!(segmenter.finish(), (Some(14_520..15_000), false));
+            assert_eq!(segments, [0..5_520]);
+            assert_eq!(segmenter.finish(), (Some(5_520..6_000), false));
         }
     }
 

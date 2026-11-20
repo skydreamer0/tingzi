@@ -253,7 +253,11 @@ fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<st
                     let replaced = || handle.state::<Session>().run.load(Ordering::SeqCst) != run;
                     let cancelled = || abandoned() || replaced();
                     let end = range.end;
+                    // How long each sentence was and how long it took to come back, to tune where sentences are cut.
+                    let length = audio.millis(range.len());
+                    let began = Instant::now();
                     let heard = recognise::run(Engine::Codex, &prefs, audio.encode(range)?, &cancelled)?;
+                    report::note(format!("逐句辨識：語音 {length} ms，辨識 {} ms，{} 字", began.elapsed().as_millis(), heard.chars().count()));
                     if let Some(live) = live.as_deref().filter(|_| !heard.trim().is_empty() && !replaced()) {
                         type_sentence(live, &heard, end, &replaced);
                     }
