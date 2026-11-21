@@ -94,21 +94,17 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
     bool widthSwitch(ITfContext* c,WPARAM k) const {
         return k==VK_SPACE && (GetKeyState(VK_SHIFT)&0x8000) && !otherModifier() && !losingFocus && input && c && !input->active() && !input->selecting();
     }
-    // The key as one full-width character for the engine to commit, or 0 when it is not a printable key.
-    WPARAM literal(ITfContext* c,WPARAM k,LPARAM flags) const {
-        if(!fullWidth || losingFocus || !input || !c || input->active() || input->selecting() || otherModifier())return 0;
+    static WPARAM printable(WPARAM k,LPARAM flags,bool wide) {
         BYTE state[256];wchar_t typed[4];
         // Flag 4 asks Windows to translate without disturbing dead-key state.
         if(!GetKeyboardState(state) || ToUnicode(UINT(k),UINT((flags>>16)&0xff),state,typed,4,4)!=1)return 0;
-        if(typed[0]==L' ')return literalKey|0x3000;
-        return typed[0]>0x20 && typed[0]<0x7f?literalKey|WPARAM(typed[0]+0xfee0):0;
+        if(typed[0]<0x20 || typed[0]>0x7e)return 0;
+        if(!wide)return typed[0];
+        return typed[0]==L' '?0x3000:typed[0]+0xfee0;
     }
     static WPARAM withShift(WPARAM k){return (GetKeyState(VK_SHIFT)&0x8000)?(k|shiftKey):k;}
     static bool shift(WPARAM k){return k==VK_SHIFT || k==VK_LSHIFT || k==VK_RSHIFT;}
-    static bool shortcut(){
-        return ((GetKeyState(VK_CONTROL)|GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN))&0x8000)!=0;
-    }
-    bool canSwitch() const {return input && !input->active() && !input->selecting() && !shortcut();}
+    bool canSwitch() const {return input && !input->selecting() && !otherModifier();}
     void indicateMode(){
 #ifndef TINGZI_STANDALONE
         for(auto name:{chinese?L"Local\\TingziChinese":L"Local\\TingziEnglish",fullWidth?L"Local\\TingziFullWidth":L"Local\\TingziHalfWidth"}){
@@ -244,8 +240,29 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
         });
     }
     // The key as the engine takes it, or 0 when it is not for the engine.
-    WPARAM engineKey(ITfContext* c,WPARAM key) const {
-        if(losingFocus || !chinese || !input || !c || (composingIn && c!=composingIn.Get()))return 0;
+    WPARAM engineKey(ITfContext* c,WPARAM key,LPARAM flags) const {
+        if(losingFocus || !input || !c || (composingIn && c!=composingIn.Get()))return 0;
+        if(!chinese){
+            if(otherModifier())return 0;
+            if(!input->active()){
+                // With nothing being composed, English keys go to the program, full-width when that is on.
+                if(!fullWidth || input->selecting())return 0;
+                const WPARAM ch=printable(key,flags,true);
+                return ch?literalKey|ch:0;
+            }
+            if(c!=composingIn.Get())return 0;
+            switch(key){
+            case VK_BACK: case VK_RETURN: case VK_ESCAPE: case VK_UP: case VK_DOWN:
+            case VK_LEFT: case VK_RIGHT: case VK_HOME: case VK_DELETE:
+                return key;
+            case VK_END:
+                return caretEndKey;
+            default:
+                if(input->selecting())return 0;
+                const WPARAM ch=printable(key,flags,fullWidth);
+                return ch?letterKey|ch:0;
+            }
+        }
         if((GetKeyState(VK_MENU)|GetKeyState(VK_LWIN)|GetKeyState(VK_RWIN)) & 0x8000)return 0;
         if(GetKeyState(VK_CONTROL)&0x8000){
             // Ctrl alone with a digit keeps characters as a word; every other Ctrl shortcut belongs to the application.
@@ -253,9 +270,13 @@ class Service final:public ITfTextInputProcessorEx, public ITfKeyEventSink, publ
             return !(GetKeyState(VK_SHIFT)&0x8000) && input->wants(kept)?kept:0;
         }
         const WPARAM typed=withShift(key);
-        return input->wants(typed)?typed:0;
+        if(input->wants(typed))return typed;
+        if(fullWidth && !input->active() && !input->selecting()){
+            const WPARAM ch=printable(key,flags,true);
+            if(ch)return literalKey|ch;
+        }
+        return 0;
     }
-    bool wants(ITfContext* c,WPARAM key) const {return engineKey(c,key)!=0;}
     void endLater(){
         hideCompositionUI();
         if(!composition || !composingIn)return;
@@ -330,7 +351,7 @@ public:
     STDMETHODIMP OnTestKeyDown(ITfContext* c,WPARAM k,LPARAM flags,BOOL* eat) override {
         if(!eat)return E_POINTER;
         if(!shift(k))shiftPending=false;
-        *eat=shift(k)?canSwitch():(widthSwitch(c,k) || wants(c,k) || literal(c,k,flags));return S_OK;
+        *eat=shift(k)?canSwitch():(widthSwitch(c,k) || engineKey(c,k,flags));return S_OK;
     }
     STDMETHODIMP OnKeyDown(ITfContext* c,WPARAM k,LPARAM flags,BOOL* eat) override {
         if(!eat)return E_POINTER;
@@ -340,8 +361,7 @@ public:
         }
         shiftPending=false;
         if(widthSwitch(c,k)){fullWidth=!fullWidth;indicateMode();*eat=TRUE;return S_OK;}
-        const WPARAM wanted=engineKey(c,k);
-        const WPARAM typed=wanted?wanted:literal(c,k,flags);
+        const WPARAM typed=engineKey(c,k,flags);
         *eat=FALSE;if(!typed)return S_OK;
         auto session=new KeyEdit(this,c,typed);HRESULT result=E_FAIL;
         HRESULT hr=c->RequestEditSession(client,session,TF_ES_SYNC|TF_ES_READWRITE,&result);
