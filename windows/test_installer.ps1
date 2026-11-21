@@ -39,6 +39,9 @@ Check (Test-Path $dll) 'the registered text service exists'
 $profileKey = 'HKLM:\SOFTWARE\Microsoft\CTF\TIP\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\LanguageProfile\0x00000404\{CD4317C3-FFB3-4D28-BD1A-7BD8480EBB65}'
 Check ((Get-ItemProperty $profileKey).IconFile -eq $dll) 'the Traditional Chinese input profile points to the installed service'
 Check (Test-Path "$root\v$($entry.DisplayVersion)\TingziFloat\TingziFloat.exe") 'the voice window is installed'
+foreach ($name in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll') {
+    Check (Test-Path "$root\v$($entry.DisplayVersion)\TingziFloat\$name") "the Visual C++ runtime for local Whisper is installed ($name)"
+}
 
 # Personal data that must survive an upgrade and a removal that keeps data.
 $data = Join-Path $env:LOCALAPPDATA 'Tingzi'

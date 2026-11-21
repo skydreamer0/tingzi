@@ -500,6 +500,12 @@ pub fn whisper_program(root: &Path, _gpu: bool) -> Option<PathBuf> {
         .find(|program| program.is_file())
 }
 
+/// whisper-cli on macOS needs nothing placed beside it.
+pub fn whisper_runtime(_folder: &Path) {}
+
+/// whisper-cli on macOS needs nothing placed beside it.
+pub fn copy_runtime(_carried: &Path, _folder: &Path) {}
+
 /// Nothing to look for: no separate build is downloaded on macOS.
 pub fn gpu_driver() -> bool {
     false
