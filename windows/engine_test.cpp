@@ -138,6 +138,14 @@ int wmain(int argc,wchar_t** argv) {
     input.setLayout(KeyLayout::ETen);
     enter("NE3HZ3");
     expect(input.press(VK_RETURN)==L"你好","ETen layout types the same words");
+    enter("DE84BZ3"); // 電腦, with B (ㄅ) pressed next to N (ㄋ).
+    expect(input.preview().size()==2 && input.preview().back()!=L'腦',"an ETen typo is not replaced automatically");
+    input.press(VK_END);input.press(VK_TAB);
+    const auto nearby=input.choices();
+    const auto brain=std::find_if(nearby.begin(),nearby.end(),[](const Choice& c){return c.text==L"腦";});
+    expect(brain!=nearby.end() && brain-nearby.begin()<9,"an ETen physical neighbour is on the first page");
+    input.press('1'+(brain-nearby.begin()));
+    expect(input.press(VK_RETURN)==L"電腦","the chosen ETen correction is committed");
     enter("T");expect(input.displayRuns().active==L"ㄊ","ETen key shows its own symbol");
     input.clear();input.setLayout(KeyLayout::Standard);
 
