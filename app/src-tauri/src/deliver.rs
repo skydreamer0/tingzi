@@ -181,6 +181,11 @@ impl Outcome {
     fn cancelled() -> Self {
         Self { copied: false, inserted: false, cancelled: true, expand: false, message: "已取消" }
     }
+
+    /// A dictation whose every sentence was typed while it was being recorded; nothing is left to deliver.
+    pub fn typed() -> Self {
+        Self { copied: false, inserted: true, cancelled: false, expand: false, message: "已逐句插入文字" }
+    }
 }
 
 /// The clipboard, the keyboard and the target window, behind a seam so delivery can be tested.
@@ -195,6 +200,39 @@ pub trait Desk {
     /// Writes straight into a standard text box, without the clipboard. False when the field is not one.
     fn write_directly(&mut self, text: &str) -> bool;
     fn paste(&mut self) -> bool;
+    /// Whether a modifier key is down, as the recording shortcut is while it is held to talk.
+    fn held(&mut self) -> bool;
+}
+
+/// How typing a sentence went while its recording was still running.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Typed {
+    Inserted,
+    /// Not now: a key is held or the clipboard is busy. The text waits for the next sentence or the end.
+    Later,
+    /// The user is no longer where recording started.
+    Gone,
+}
+
+/// Types `text` where recording started while the user is still speaking. Unlike `deliver` it does not
+/// wait for the shortcut to be released, and leaves the clipboard alone when the paste keys cannot be pressed.
+pub fn type_now(text: &str, desk: &mut dyn Desk, cancelled: &dyn Fn() -> bool) -> Typed {
+    if text.is_empty() || cancelled() {
+        return Typed::Later;
+    }
+    if !desk.still_there() {
+        return Typed::Gone;
+    }
+    if desk.write_directly(text) {
+        return Typed::Inserted;
+    }
+    if desk.held() || !desk.copy(text) || !desk.clipboard_holds(text) || cancelled() {
+        return Typed::Later;
+    }
+    if !desk.still_there() {
+        return Typed::Gone;
+    }
+    if desk.paste() { Typed::Inserted } else { Typed::Later }
 }
 
 /// Copies and inserts `text` according to `mode`. Never pastes more than once, and never pastes
@@ -294,6 +332,10 @@ impl Desk for Desktop {
     fn paste(&mut self) -> bool {
         !crate::sys::modifier_held() && crate::sys::press_paste()
     }
+
+    fn held(&mut self) -> bool {
+        crate::sys::modifier_held()
+    }
 }
 
 #[cfg(test)]
@@ -317,6 +359,7 @@ mod tests {
         pastes: u32,
         waits: u32,
         cancel_on_wait: Option<std::rc::Rc<Cell<bool>>>,
+        keys_held: bool,
     }
 
     impl Desk for Fake {
@@ -350,6 +393,9 @@ mod tests {
         fn paste(&mut self) -> bool {
             self.pastes += 1;
             true
+        }
+        fn held(&mut self) -> bool {
+            self.keys_held
         }
     }
 
@@ -463,6 +509,46 @@ mod tests {
         assert_eq!(desk.written.as_deref(), Some("原生欄位結果"));
         assert_eq!(desk.pastes, 0);
         assert!(!outcome.copied && outcome.inserted && outcome.expand);
+    }
+
+    #[test]
+    fn a_sentence_is_typed_while_recording_without_waiting_for_the_shortcut() {
+        let mut desk = Fake::default();
+        assert_eq!(type_now("第一句。", &mut desk, &never), Typed::Inserted);
+        assert_eq!(desk.copies, ["第一句。"]);
+        assert_eq!((desk.pastes, desk.waits), (1, 0));
+        // A standard text box takes the text without the clipboard, even while the shortcut is held.
+        let mut desk = Fake { text_box: true, keys_held: true, ..Fake::default() };
+        assert_eq!(type_now("第二句。", &mut desk, &never), Typed::Inserted);
+        assert_eq!(desk.written.as_deref(), Some("第二句。"));
+        assert!(desk.copies.is_empty());
+        assert_eq!(desk.pastes, 0);
+    }
+
+    #[test]
+    fn a_sentence_waits_while_keys_are_held_or_the_clipboard_is_not_ours() {
+        let mut held = Fake { keys_held: true, ..Fake::default() };
+        assert_eq!(type_now("按住說話", &mut held, &never), Typed::Later);
+        assert!(held.copies.is_empty());
+        assert_eq!(held.pastes, 0);
+        let mut busy = Fake { clipboard_busy: true, ..Fake::default() };
+        assert_eq!(type_now("剪貼簿忙碌", &mut busy, &never), Typed::Later);
+        let mut changed = Fake { clipboard_good_for: Some(0), ..Fake::default() };
+        assert_eq!(type_now("剪貼簿已變更", &mut changed, &never), Typed::Later);
+        let mut cancelled = Fake::default();
+        assert_eq!(type_now("已取消", &mut cancelled, &|| true), Typed::Later);
+        assert_eq!((busy.pastes, changed.pastes, cancelled.pastes, cancelled.there_asked), (0, 0, 0, 0));
+    }
+
+    #[test]
+    fn a_sentence_is_not_typed_once_the_user_has_moved_away() {
+        let mut gone = Fake { there_for: Some(0), ..Fake::default() };
+        assert_eq!(type_now("不能貼錯地方", &mut gone, &never), Typed::Gone);
+        assert!(gone.copies.is_empty());
+        // The user leaves between the first check and the paste.
+        let mut leaving = Fake { there_for: Some(1), ..Fake::default() };
+        assert_eq!(type_now("不能貼錯地方", &mut leaving, &never), Typed::Gone);
+        assert_eq!((gone.pastes, leaving.pastes), (0, 0));
     }
 
     #[test]

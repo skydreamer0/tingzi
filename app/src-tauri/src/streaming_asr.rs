@@ -31,6 +31,8 @@ enum Admission {
 pub struct Queue {
     status: Status,
     accepted: usize,
+    /// Sentences the recogniser has answered, including those it heard no words in.
+    answered: usize,
     running: bool,
     waiting: VecDeque<Range<usize>>,
     sentences: Vec<String>,
@@ -75,9 +77,16 @@ impl Queue {
         if self.status != Status::Active {
             return None;
         }
+        // A sentence with no words in it, such as a cough or a breath, is skipped rather than ending the
+        // sentence-by-sentence text: the recording carries on without it.
         match heard {
-            Ok(text) if !text.trim().is_empty() => self.sentences.push(text.trim().to_owned()),
-            _ => {
+            Ok(text) => {
+                self.answered += 1;
+                if !text.trim().is_empty() {
+                    self.sentences.push(text.trim().to_owned());
+                }
+            }
+            Err(_) => {
                 self.fallback();
                 return None;
             }
@@ -109,7 +118,7 @@ impl Queue {
             Status::Fallback => Some(Transcript::FullRecording),
             Status::Active if self.running => None,
             Status::Active
-                if self.sentences.is_empty() || self.sentences.len() != self.accepted =>
+                if self.sentences.is_empty() || self.answered != self.accepted =>
             {
                 Some(Transcript::FullRecording)
             }
@@ -118,7 +127,8 @@ impl Queue {
     }
 }
 
-fn join(sentences: &[String]) -> String {
+/// Joins recognised sentences in order; only two ASCII letters or digits meeting get a space between them.
+pub fn join(sentences: &[String]) -> String {
     let mut text = String::new();
     for sentence in sentences {
         if text
@@ -246,16 +256,13 @@ mod tests {
 
     #[test]
     fn errors_empty_responses_overflow_and_missing_segments_use_the_full_recording() {
-        for result in [Err("失敗"), Err("逾時"), Err("429"), Ok(" \n ")] {
+        for result in [Err("失敗"), Err("逾時"), Err("429")] {
             let mut queue = Queue::default();
             queue.push(1, 0..1);
             queue.complete(Ok("第一句".into()));
             queue.push(2, 1..2);
             queue.push(3, 2..3);
-            assert_eq!(
-                queue.complete(result.map(str::to_owned).map_err(str::to_owned)),
-                None
-            );
+            assert_eq!(queue.complete(result.map(str::to_owned).map_err(str::to_owned)), None);
             assert_eq!(queue.pending(), 0);
             assert!(queue.sentences().is_empty());
             assert_eq!(queue.transcript(), Some(Transcript::FullRecording));
@@ -344,7 +351,7 @@ mod tests {
 
     #[test]
     fn empty_tail_timeout_and_rate_limit_fall_back_once_and_clear_preview() {
-        for result in [Ok(" \n ".into()), Err("timeout".into()), Err("429".into())] {
+        for result in [Err("timeout".into()), Err("429".into())] {
             let recognise = answers(vec![Ok("先前句子".into()), result]);
             let requests = Arc::new(Requests::default());
             let (published, states) = mpsc::channel();
@@ -360,6 +367,33 @@ mod tests {
             assert!(fallback);
             assert!(sentences.is_empty());
         }
+    }
+
+    #[test]
+    fn a_sentence_with_no_words_is_skipped_without_falling_back() {
+        let mut queue = Queue::default();
+        for sequence in 1..=3 {
+            queue.push(sequence, sequence..sequence + 1);
+        }
+        assert_eq!(queue.complete(Ok("第一句，".into())), Some(2..3));
+        assert_eq!(queue.complete(Ok(" \n ".into())), Some(3..4));
+        assert_eq!(queue.transcript(), None);
+        assert_eq!(queue.complete(Ok("第三句。".into())), None);
+        assert!(!queue.fell_back());
+        assert_eq!(queue.transcript(), Some(Transcript::Sentences("第一句，第三句。".into())));
+
+        // An empty tail leaves the earlier sentences as the transcript.
+        let recognise = answers(vec![Ok("先前句子".into()), Ok(" ".into())]);
+        let requests = Arc::new(Requests::default());
+        requests.submit(1, 0..1, recognise.clone(), |_| {});
+        requests.submit(2, 1..2, recognise, |_| {});
+        assert_eq!(requests.finish(), Transcript::Sentences("先前句子".into()));
+
+        // With no words anywhere, the whole recording is heard again.
+        let mut queue = Queue::default();
+        queue.push(1, 0..1);
+        queue.complete(Ok(String::new()));
+        assert_eq!(queue.transcript(), Some(Transcript::FullRecording));
     }
 
     #[test]
