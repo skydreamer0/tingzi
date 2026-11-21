@@ -127,11 +127,20 @@ Install 'mixed-folder-install'
 Set-Content (Join-Path $root 'unrelated.txt') 'unrelated file'
 New-Item -ItemType Directory (Join-Path $root 'v1.notes') | Out-Null
 Set-Content (Join-Path $root 'v1.notes\sentinel.txt') 'unrelated folder'
+foreach ($name in 'v0.99.0', 'v0.6.0') {
+    New-Item -ItemType Directory (Join-Path $root $name) | Out-Null
+    Set-Content (Join-Path $root "$name\sentinel.txt") 'unverified version folder'
+}
 Uninstall 'mixed-folder-uninstall'
 Check (!(Test-Path $uninstallKey)) 'mixed-folder uninstall removes the apps entry'
 Check (!(Test-Path (Join-Path $root "v$($entry.DisplayVersion)"))) 'mixed-folder uninstall removes the owned version folder'
 Check ((Get-Content (Join-Path $root 'unrelated.txt')) -eq 'unrelated file') 'mixed-folder uninstall preserves an unrelated file'
 Check ((Get-Content (Join-Path $root 'v1.notes\sentinel.txt')) -eq 'unrelated folder') 'mixed-folder uninstall preserves an unrelated subfolder'
+foreach ($name in 'v0.99.0', 'v0.6.0') {
+    Check ((Get-Content (Join-Path $root "$name\sentinel.txt")) -eq 'unverified version folder') "unverified version folder survives: $name"
+    Check ((Get-Content (Join-Path $logs 'mixed-folder-uninstall.log') -Raw).Contains("Leaving unrelated or unverified install-root item: $root\$name")) "unverified version folder is logged: $name"
+    Remove-Item (Join-Path $root $name) -Recurse
+}
 Check (@(Get-ChildItem $root).Count -eq 2) 'mixed-folder uninstall leaves only unrelated items'
 Remove-Item (Join-Path $root 'unrelated.txt')
 Remove-Item (Join-Path $root 'v1.notes') -Recurse

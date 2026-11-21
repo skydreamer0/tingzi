@@ -88,6 +88,7 @@ var
   DeletePersonalData: Boolean;
   FloatWasRunning_: Boolean;
   UninstallRestartRequired: Boolean;
+  RegisteredUninstallVersion: String;
 
 function MoveFileExForUninstall(ExistingName: String; NewName: Integer; Flags: Cardinal): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall uninstallonly';
@@ -106,8 +107,14 @@ begin
 end;
 
 function InitializeUninstall: Boolean;
+var
+  Active: String;
 begin
   Result := not UninstallRootIsLink;
+  if Result and RegQueryStringValue(HKLM64,
+    'SOFTWARE\Classes\CLSID\{#ServiceClsid}\InprocServer32', '', Active) then
+    if CompareText(ExtractFileName(Active), 'TingziTextService64.dll') = 0 then
+      RegisteredUninstallVersion := ExtractFileDir(Active);
 end;
 
 function IsProgramVersion(const Name: String): Boolean;
@@ -130,6 +137,26 @@ begin
     else
       exit;
   Result := (Dots = 2) and (Digits > 0);
+end;
+
+function IsInstalledProgramVersion(const Path, Name: String): Boolean;
+var
+  KnownVersion: Boolean;
+begin
+  Result := False;
+  if not IsProgramVersion(Name) or (UninstallFileAttributes(Path) and $400 <> 0) then exit;
+  if not FileExists(Path + '\TingziTextService64.dll') then exit;
+  if CompareText(Path, RegisteredUninstallVersion) = 0 then
+    Result := True
+  else
+  begin
+    KnownVersion := Pos('|' + Name + '|',
+      '|v0.6.0|v0.6.1|v0.6.2|v0.6.3|v0.6.4|v0.6.5|v0.6.6|v0.7.0|v0.7.1|' +
+      'v0.7.2|v0.7.3|v0.7.4|v0.7.5|v0.7.6|v0.7.7|v0.8.0|v0.9.0|v0.10.0|v{#AppVersion}|') > 0;
+    Result := KnownVersion and FileExists(Path + '\TingziFloat\TingziFloat.exe') and
+      (UninstallFileAttributes(Path + '\TingziFloat') and $400 = 0);
+  end;
+  if Result then Log('Verified installed Tingzi version: ' + Path);
 end;
 
 function IsProgramRootFile(const Name: String): Boolean;
@@ -248,7 +275,7 @@ begin
         if (Entry.Name <> '.') and (Entry.Name <> '..') then
         begin
           Child := Root + '\' + Entry.Name;
-          if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and IsProgramVersion(Entry.Name) then
+          if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and IsInstalledProgramVersion(Child, Entry.Name) then
           begin
             if Entry.Attributes and $400 = 0 then
               RemoveProgramTree(Child)
@@ -260,7 +287,7 @@ begin
           else
           begin
             OnlyOwnedItems := False;
-            Log('Leaving unrelated install-root item: ' + Child);
+            Log('Leaving unrelated or unverified install-root item: ' + Child);
           end;
         end;
       until not FindNext(Entry);
