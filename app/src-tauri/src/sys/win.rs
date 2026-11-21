@@ -580,9 +580,15 @@ const WHISPER_RUNTIME: [&str; 4] = ["msvcp140.dll", "vcruntime140.dll", "vcrunti
 
 /// Puts the runtime the voice window carries into `folder`, beside the Whisper program, where Windows looks
 /// before the system folder. The program then runs on a computer without the Visual C++ Redistributable,
-/// or with an older one. A file already there with the same size is left alone.
+/// or with an older one.
 pub fn whisper_runtime(folder: &Path) {
-    let Some(carried) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) else { return };
+    if let Some(carried) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) {
+        copy_runtime(&carried, folder);
+    }
+}
+
+/// Copies the runtime from `carried` into `folder`. A file already there with the same size is left alone.
+pub fn copy_runtime(carried: &Path, folder: &Path) {
     for name in WHISPER_RUNTIME {
         let (from, to) = (carried.join(name), folder.join(name));
         let Ok(size) = std::fs::metadata(&from).map(|meta| meta.len()) else { continue };

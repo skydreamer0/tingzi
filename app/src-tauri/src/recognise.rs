@@ -278,6 +278,18 @@ fn model_file(name: &str) -> Option<PathBuf> {
     roots().into_iter().map(|root| root.join("downloads").join(name)).find(|model| model.is_file())
 }
 
+/// The folders in the app's own folder that hold the Whisper programs it downloads.
+const OWN_PROGRAMS: [&str; 2] = ["engine-cpu", "engine-gpu"];
+
+/// Gives a program the app downloaded into `root` the runtime it may lack, copied from `carried`.
+/// A program set up by hand, in `whisper-v1.9.2` or a folder named by `voice-root.txt`, keeps its own files.
+fn repair_runtime(program: &Path, root: &Path, carried: &Path) {
+    let Some(home) = program.parent() else { return };
+    if OWN_PROGRAMS.iter().any(|folder| home == root.join(folder).join("Release").as_path()) {
+        crate::sys::copy_runtime(carried, home);
+    }
+}
+
 /// The Whisper program on this computer: the one that uses the graphics card when `gpu`, else the plain one.
 pub fn local_program(gpu: bool) -> Option<PathBuf> {
     roots().iter().find_map(|root| crate::sys::whisper_program(root, gpu))
@@ -377,8 +389,8 @@ fn run_whisper(parts: &Parts, folder: &Path, wav: &[u8], cancelled: &dyn Fn() ->
     // Half the logical processors, between four and eight, measured fastest for short clips.
     let threads = (std::thread::available_parallelism().map_or(4, |count| count.get()) / 2).clamp(4, 8);
     // A program downloaded by an earlier version may still lack the runtime it needs.
-    if let Some(home) = parts.program.parent() {
-        crate::sys::whisper_runtime(home);
+    if let Some(carried) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) {
+        repair_runtime(&parts.program, &own_root(), &carried);
     }
     let mut command = Command::new(&parts.program);
     command.args(["-l", "zh", "-otxt", "-np", "-nt", "-t", &threads.to_string()]);
@@ -507,5 +519,41 @@ mod tests {
         let broken = serde_json::from_str::<serde_json::Value>("{").unwrap_err();
         let response = CodexAsrError::ParseAuth { path: PathBuf::from("<transcribe response>"), source: broken };
         assert!(explain(response).contains("回傳的內容"));
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn the_runtime_goes_only_beside_the_apps_own_programs() {
+        let base = std::env::temp_dir().join("TingziVoice").join(format!("runtime-test-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let (carried, root) = (base.join("app"), base.join("whisper"));
+        let names = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll"];
+        std::fs::create_dir_all(&carried).unwrap();
+        for name in names {
+            std::fs::write(carried.join(name), "carried").unwrap();
+        }
+        let own = [root.join("engine-cpu").join("Release"), root.join("engine-gpu").join("Release")];
+        // Set up by hand: the folder the app also looks in, and one named by voice-root.txt.
+        let external = [root.join("whisper-v1.9.2").join("Release"), base.join("by-hand").join("engine-cpu").join("Release")];
+        for home in own.iter().chain(&external) {
+            std::fs::create_dir_all(home).unwrap();
+            std::fs::write(home.join("whisper-cli.exe"), "program").unwrap();
+        }
+        for home in &external {
+            std::fs::write(home.join("vcomp140.dll"), "the engine's own build").unwrap();
+        }
+        for home in own.iter().chain(&external) {
+            repair_runtime(&home.join("whisper-cli.exe"), &root, &carried);
+        }
+        for home in &own {
+            for name in names {
+                assert_eq!(std::fs::read_to_string(home.join(name)).unwrap(), "carried", "{}", home.display());
+            }
+        }
+        for home in &external {
+            assert_eq!(std::fs::read_to_string(home.join("vcomp140.dll")).unwrap(), "the engine's own build", "{}", home.display());
+            assert!(names[..3].iter().all(|name| !home.join(name).exists()), "{}", home.display());
+        }
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
