@@ -95,6 +95,9 @@ function MoveFileExForUninstall(ExistingName: String; NewName: Integer; Flags: C
 function UninstallFileAttributes(Name: String): Cardinal;
   external 'GetFileAttributesW@kernel32.dll stdcall uninstallonly';
 
+function UninstallTickCount: Cardinal;
+  external 'GetTickCount@kernel32.dll stdcall uninstallonly';
+
 function UninstallRootIsLink: Boolean;
 begin
   Result := UninstallFileAttributes(ExpandConstant('{app}')) and $400 <> 0;
@@ -147,6 +150,34 @@ begin
     ((Extension = '.exe') or (Extension = '.dat') or (Extension = '.msg'));
 end;
 
+procedure RemoveOwnedFile(const Path: String);
+var
+  Pending, Unique: String;
+  Attempt: Integer;
+begin
+  if DeleteFile(Path) then exit;
+  Pending := Path;
+  if Pos('.tingzi-delete-', ExtractFileName(Path)) = 0 then
+  begin
+    Unique := Path + '.tingzi-delete-' + IntToStr(UninstallTickCount);
+    Attempt := 0;
+    while FileExists(Unique + '-' + IntToStr(Attempt)) do
+      Attempt := Attempt + 1;
+    Unique := Unique + '-' + IntToStr(Attempt);
+    if RenameFile(Path, Unique) then
+    begin
+      Pending := Unique;
+      Log('Renamed locked owned file for removal: ' + Path + ' -> ' + Pending);
+    end;
+    if Pending = Path then
+      Log('Could not rename locked owned file; scheduling original path: ' + Path);
+  end;
+  if not MoveFileExForUninstall(Pending, 0, 4) then
+    RaiseException('Cannot schedule removal of ' + Pending + ': ' + SysErrorMessage(DLLGetLastError));
+  Log('Removal pending reboot: ' + Pending);
+  UninstallRestartRequired := True;
+end;
+
 procedure RemoveProgramTree(const Path: String);
 var
   Entry: TFindRec;
@@ -168,7 +199,10 @@ begin
             if Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
               Removed := RemoveDir(Child)
             else
-              Removed := DeleteFile(Child);
+            begin
+              RemoveOwnedFile(Child);
+              Removed := True;
+            end;
             if not Removed then
             begin
               if not MoveFileExForUninstall(Child, 0, 4) then
@@ -216,15 +250,7 @@ begin
               Log('Leaving version directory reparse point: ' + Child);
           end
           else if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0) and IsProgramRootFile(Entry.Name) then
-          begin
-            if not DeleteFile(Child) then
-            begin
-              if not MoveFileExForUninstall(Child, 0, 4) then
-                RaiseException('Cannot schedule removal of ' + Child + ': ' + SysErrorMessage(DLLGetLastError));
-              UninstallRestartRequired := True;
-              Log('Removal pending reboot: ' + Child);
-            end;
-          end
+            RemoveOwnedFile(Child)
           else
           begin
             OnlyOwnedItems := False;

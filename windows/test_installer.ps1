@@ -63,7 +63,18 @@ Set-Content -LiteralPath (Join-Path $root 'phrases.txt') -Value 'legacy word lis
 New-Item -ItemType Directory -Force (Join-Path (Split-Path $dll) 'empty-uninstall-test\nested') | Out-Null
 $locked = $null
 if ($LockProgramFiles) {
-    $locked = [IO.File]::Open($dll, 'Open', 'Read', 'Read')
+    Add-Type @'
+using System;
+using System.Runtime.InteropServices;
+public static class TingziUninstallLock {
+    [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    public static extern IntPtr LoadLibraryEx(string path, IntPtr file, uint flags);
+    [DllImport("kernel32.dll")]
+    public static extern bool FreeLibrary(IntPtr module);
+}
+'@
+    $locked = [TingziUninstallLock]::LoadLibraryEx($dll, [IntPtr]::Zero, 1)
+    Check ($locked -ne [IntPtr]::Zero) 'the test holds the IME DLL mapped as an image'
 }
 try {
 Start-Process -FilePath $entry.UninstallString.Trim('"') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs 'uninstall.log') + '"') -Wait
@@ -76,8 +87,11 @@ for ($i = 0; $i -lt $pending.Count; $i += 2) {
     if ($pending[$i + 1] -eq '') { $deletions += $pending[$i] -replace '^(\*\d+)?\\\?\?\\', '' }
 }
 if ($LockProgramFiles) {
-    Check (Test-Path $dll) 'the locked DLL is still present before reboot'
-    Check ($deletions -contains $dll) 'the locked DLL is scheduled for deletion at reboot'
+    Check (!(Test-Path $dll)) 'the locked DLL was renamed away from the install path'
+    Check ($deletions -notcontains $dll) 'the original DLL path is not pending deletion'
+    $renamed = @(Get-ChildItem (Split-Path $dll) -Filter 'TingziTextService64.dll.tingzi-delete-*')
+    Check ($renamed.Count -eq 1) 'the locked DLL has a unique pending-removal name'
+    Check ($deletions -contains $renamed[0].FullName) 'only the renamed DLL path is scheduled for deletion'
 }
 $remaining = @(Get-ChildItem $root -Recurse -Force -ErrorAction SilentlyContinue)
 if (Test-Path $root) { $remaining += Get-Item $root }
@@ -88,8 +102,17 @@ Check ($LockProgramFiles -or !(Test-Path $root)) 'the whole program directory is
 Check (Test-Path (Join-Path $data 'installer-test.txt')) 'personal data is kept'
 Check ((Get-FileHash (Join-Path $data 'kept-after-uninstall\Tingzi.cin')).Hash -eq $wordListHash) 'the local word list is preserved outside Program Files'
 Check ((Get-Content (Join-Path $data 'kept-after-uninstall\legacy-root\phrases.txt')) -eq 'legacy word list') 'legacy root word lists are preserved separately'
+if ($LockProgramFiles) {
+    Install 'reinstall-before-reboot'
+    Check (Test-Path $dll) 'reinstall before reboot creates a fresh DLL at the original path'
+    Check ((Get-FileHash $dll).Hash -eq (Get-FileHash $renamed[0].FullName).Hash) 'reinstalled DLL matches the locked old DLL'
+    $removeDirectoryFailed = $false
+    try { [IO.Directory]::Delete((Split-Path $dll)) } catch [IO.IOException] { $removeDirectoryFailed = $true }
+    Check $removeDirectoryFailed 'non-recursive directory deletion refuses a non-empty reinstalled version'
+    Check (Test-Path $dll) 'non-recursive directory deletion leaves reinstalled contents intact'
+}
 } finally {
-    if ($locked) { $locked.Dispose() }
+    if ($locked -and $locked -ne [IntPtr]::Zero) { [TingziUninstallLock]::FreeLibrary($locked) | Out-Null }
 }
 Write-Host 'Installer checks passed.'
 
@@ -97,6 +120,8 @@ function Uninstall($name) {
     $command = (Get-ItemProperty $uninstallKey).UninstallString.Trim('"')
     Start-Process -FilePath $command -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs "$name.log") + '"') -Wait
 }
+
+if ($LockProgramFiles) { Uninstall 'reinstall-cleanup' }
 
 Install 'mixed-folder-install'
 Set-Content (Join-Path $root 'unrelated.txt') 'unrelated file'
