@@ -62,8 +62,7 @@ $wordListHash = (Get-FileHash (Join-Path (Split-Path $dll) 'Tingzi.cin')).Hash
 Set-Content -LiteralPath (Join-Path $root 'phrases.txt') -Value 'legacy word list'
 New-Item -ItemType Directory -Force (Join-Path (Split-Path $dll) 'empty-uninstall-test\nested') | Out-Null
 $locked = $null
-if ($LockProgramFiles) {
-    Add-Type @'
+Add-Type @'
 using System;
 using System.Runtime.InteropServices;
 public static class TingziUninstallLock {
@@ -73,6 +72,7 @@ public static class TingziUninstallLock {
     public static extern bool FreeLibrary(IntPtr module);
 }
 '@
+if ($LockProgramFiles) {
     $locked = [TingziUninstallLock]::LoadLibraryEx($dll, [IntPtr]::Zero, 1)
     Check ($locked -ne [IntPtr]::Zero) 'the test holds the IME DLL mapped as an image'
 }
@@ -158,3 +158,32 @@ Remove-Item (Join-Path $root 'junction-sentinel.txt')
 Uninstall 'junction-restored-uninstall'
 Check (!(Test-Path $root)) 'restoring the real install directory permits normal cleanup'
 Write-Host 'Uninstall ownership checks passed.'
+
+Install 'legacy-root-install'
+$pad = Join-Path $root 'TingziPad.exe'
+Copy-Item $dll $pad
+$legacyFiles = 'TingziKeyboard.exe', 'TingziLearning.exe', 'TingziVersion.exe', 'InstallTingzi.cmd', 'tingzi.svg', 'pairs.txt', 'pairs-NOTICE.txt', 'THIRD-PARTY-NOTICES.txt'
+foreach ($name in $legacyFiles) { Set-Content (Join-Path $root $name) 'legacy program file' }
+$padImage = [TingziUninstallLock]::LoadLibraryEx($pad, [IntPtr]::Zero, 1)
+Check ($padImage -ne [IntPtr]::Zero) 'the test holds the legacy root pad mapped as an image'
+try {
+    Uninstall 'legacy-root-uninstall'
+    Check (!(Test-Path $pad)) 'the locked legacy pad is renamed away from its original path'
+    $pendingPad = @(Get-ChildItem $root -Filter 'TingziPad.exe.tingzi-delete-*')
+    Check ($pendingPad.Count -eq 1) 'the locked legacy pad has a unique pending-removal name'
+    $pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager').PendingFileRenameOperations
+    $deletions = @()
+    for ($i = 0; $i -lt $pending.Count; $i += 2) {
+        if ($pending[$i + 1] -eq '') { $deletions += $pending[$i] -replace '^(\*\d+)?\\\?\?\\', '' }
+    }
+    Check ($deletions -notcontains $pad) 'the original legacy pad path is not pending deletion'
+    Check ($deletions -contains $pendingPad[0].FullName) 'the renamed legacy pad is scheduled for reboot deletion'
+    Check ($deletions -contains $root) 'the owned-only legacy root is scheduled for reboot deletion'
+    foreach ($name in $legacyFiles) { Check (!(Test-Path (Join-Path $root $name))) "legacy root program file is removed: $name" }
+    Check (@(Get-ChildItem $root).Count -eq 1) 'only the reboot-pending legacy pad remains in the root'
+} finally {
+    [TingziUninstallLock]::FreeLibrary($padImage) | Out-Null
+}
+Remove-Item $pendingPad[0].FullName
+[IO.Directory]::Delete($root)
+Write-Host 'Legacy root cleanup checks passed.'

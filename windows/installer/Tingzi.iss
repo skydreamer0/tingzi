@@ -135,12 +135,18 @@ end;
 function IsProgramRootFile(const Name: String): Boolean;
 var
   LowerName, Extension: String;
+  PendingSuffix: Integer;
 begin
   LowerName := Lowercase(Name);
+  PendingSuffix := Pos('.tingzi-delete-', LowerName);
+  if PendingSuffix > 0 then
+    LowerName := Copy(LowerName, 1, PendingSuffix - 1);
   Result := Pos('|' + LowerName + '|',
     '|tingzisetup64.exe|tingzisetup32.exe|tingzitextservice64.dll|tingzitextservice32.dll|' +
     'readme.md|removetingzi.cmd|voiceshortcuts.ps1|tingzi.cin|phrases.txt|' +
-    'mcbopomofo-license.txt|acknowledgements.md|tingzi.ico|') > 0;
+    'mcbopomofo-license.txt|acknowledgements.md|tingzi.ico|tingzipad.exe|' +
+    'tingzikeyboard.exe|tingzilearning.exe|tingziversion.exe|installtingzi.cmd|' +
+    'tingzi.svg|pairs.txt|pairs-notice.txt|third-party-notices.txt|') > 0;
   if Result or (Length(LowerName) <> 12) then exit;
   Extension := Copy(LowerName, 9, 4);
   Result := (Copy(LowerName, 1, 5) = 'unins') and
