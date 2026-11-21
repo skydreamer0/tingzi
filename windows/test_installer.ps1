@@ -49,6 +49,9 @@ Check ($dll) 'the text service is registered for the whole machine'
 Check ($dll -like "$root\v$($entry.DisplayVersion)\TingziTextService64.dll") "the text service is registered from the version folder ($dll)"
 Check (Test-Path $dll) 'the registered text service exists'
 Check (Test-Path "$root\v$($entry.DisplayVersion)\TingziFloat\TingziFloat.exe") 'the voice window is installed'
+foreach ($name in 'msvcp140.dll', 'vcruntime140.dll', 'vcruntime140_1.dll', 'vcomp140.dll') {
+    Check (Test-Path "$root\v$($entry.DisplayVersion)\TingziFloat\$name") "the Visual C++ runtime for local Whisper is installed ($name)"
+}
 
 # Personal data that must survive an upgrade and a removal that keeps data.
 $data = Join-Path $env:LOCALAPPDATA 'Tingzi'

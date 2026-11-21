@@ -376,6 +376,10 @@ fn run_whisper(parts: &Parts, folder: &Path, wav: &[u8], cancelled: &dyn Fn() ->
     let record = std::fs::File::create(&log).map_err(|_| "無法寫入暫存檔")?;
     // Half the logical processors, between four and eight, measured fastest for short clips.
     let threads = (std::thread::available_parallelism().map_or(4, |count| count.get()) / 2).clamp(4, 8);
+    // A program downloaded by an earlier version may still lack the runtime it needs.
+    if let Some(home) = parts.program.parent() {
+        crate::sys::whisper_runtime(home);
+    }
     let mut command = Command::new(&parts.program);
     command.args(["-l", "zh", "-otxt", "-np", "-nt", "-t", &threads.to_string()]);
     if !parts.gpu {

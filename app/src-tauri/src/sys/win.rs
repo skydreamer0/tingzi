@@ -575,6 +575,23 @@ pub fn whisper_program(root: &Path, gpu: bool) -> Option<PathBuf> {
     folders.iter().map(|folder| root.join(folder).join("Release").join("whisper-cli.exe")).find(|program| program.is_file())
 }
 
+/// The Visual C++ runtime that whisper.cpp's Windows builds need but do not include. The voice window carries it.
+const WHISPER_RUNTIME: [&str; 4] = ["msvcp140.dll", "vcruntime140.dll", "vcruntime140_1.dll", "vcomp140.dll"];
+
+/// Puts the runtime the voice window carries into `folder`, beside the Whisper program, where Windows looks
+/// before the system folder. The program then runs on a computer without the Visual C++ Redistributable,
+/// or with an older one. A file already there with the same size is left alone.
+pub fn whisper_runtime(folder: &Path) {
+    let Some(carried) = std::env::current_exe().ok().and_then(|exe| Some(exe.parent()?.to_path_buf())) else { return };
+    for name in WHISPER_RUNTIME {
+        let (from, to) = (carried.join(name), folder.join(name));
+        let Ok(size) = std::fs::metadata(&from).map(|meta| meta.len()) else { continue };
+        if std::fs::metadata(&to).map(|meta| meta.len()).ok() != Some(size) {
+            let _ = std::fs::copy(&from, &to);
+        }
+    }
+}
+
 fn system_file(name: &str) -> PathBuf {
     PathBuf::from(std::env::var_os("SystemRoot").unwrap_or_else(|| "C:\\Windows".into())).join("System32").join(name)
 }
