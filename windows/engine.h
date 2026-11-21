@@ -37,6 +37,8 @@ inline Segmenter configuredSegmenter() {
 }
 // Standard is the Daqian layout the word list is keyed by; ETen keys are translated to it.
 enum class KeyLayout { Standard, ETen };
+inline constexpr wchar_t daqianKeys[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
+inline constexpr wchar_t etenKeys[]=L"bpmfdtnlvkhg7c,./j;'sexuaorwiqzy890-=1234";
 inline KeyLayout configuredLayout() {
     DWORD value=0, bytes=sizeof(value);
     if(RegGetValueW(HKEY_CURRENT_USER,engineKey,L"KeyboardLayout",RRF_RT_REG_DWORD,nullptr,&value,&bytes)==ERROR_SUCCESS && value==1)
@@ -126,10 +128,9 @@ inline Text folder(HMODULE module) {
 }
 // Which part of a syllable a key fills: 0 initial, 1 medial, 2 final, 3 tone; -1 for no Zhuyin key.
 inline int syllablePart(wchar_t key){
-    static constexpr wchar_t order[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
-    const wchar_t* at=key?std::wcschr(order,key):nullptr;
+    const wchar_t* at=key?std::wcschr(daqianKeys,key):nullptr;
     if(!at)return -1;
-    const size_t i=size_t(at-order);
+    const size_t i=size_t(at-daqianKeys);
     return i<21?0:i<24?1:i<37?2:3;
 }
 // The keys of one syllable in reading order, initial, medial, final then tone, as the word list spells
@@ -366,14 +367,16 @@ inline wchar_t keyChar(WPARAM key) {
     default: return 0;
     }
 }
+inline wchar_t translateKey(wchar_t ch,KeyLayout from,KeyLayout to) {
+    if(from==to || !ch)return ch;
+    const wchar_t* source=from==KeyLayout::ETen?etenKeys:daqianKeys;
+    const wchar_t* target=to==KeyLayout::ETen?etenKeys:daqianKeys;
+    const wchar_t* at=std::wcschr(source,ch);
+    return at?target[at-source]:0;
+}
 // The key as the word list spells it, or 0 when the layout has no symbol on that key.
 inline wchar_t codeKey(WPARAM key,KeyLayout layout=KeyLayout::Standard) {
-    const wchar_t ch=keyChar(key);
-    if(layout==KeyLayout::Standard || !ch)return ch;
-    static constexpr wchar_t eten[]  =L"bpmfdtnlvkhg7c,./j;'sexuaorwiqzy890-=1234";
-    static constexpr wchar_t daqian[]=L"1qaz2wsxedcrfv5tgbyhnujm8ik,9ol.0p;/-7634";
-    const wchar_t* at=std::wcschr(eten,ch);
-    return at?daqian[at-eten]:0;
+    return translateKey(keyChar(key),layout,KeyLayout::Standard);
 }
 // Full-width punctuation for a key, or empty when the key has none in this layout.
 inline Text punctuation(WPARAM key,bool shifted,KeyLayout layout) {
@@ -647,16 +650,18 @@ class Input {
             Text candidate=mark?stem+mark:stem;
             if(candidate!=code && std::find(codes.begin(),codes.end(),candidate)==codes.end())codes.push_back(candidate);
         }
-        // A key touching the intended one on the standard layout, keeping the tone, when that spells a syllable.
+        // Find neighbours on the physical keyboard, not in the word list's Daqian spelling.
         // Each row sits half a key to the right of the one above it.
-        static const Text rows[]={L"1234567890-",L"qwertyuiop",L"asdfghjkl;",L"zxcvbnm,./"};
+        static const Text rows[]={L"1234567890-=",L"qwertyuiop",L"asdfghjkl;'",L"zxcvbnm,./"};
         for(size_t i=0;i<base.size();++i) for(int r=0;r<4;++r){
-            const size_t c=rows[r].find(base[i]);
+            const size_t c=rows[r].find(translateKey(base[i],KeyLayout::Standard,layout));
             if(c==Text::npos)continue;
             const std::pair<int,int> touching[]={{r,int(c)-1},{r,int(c)+1},{r-1,int(c)},{r-1,int(c)+1},{r+1,int(c)},{r+1,int(c)-1}};
             for(auto [row,column]:touching){
                 if(row<0 || row>3 || column<0 || column>=int(rows[row].size()))continue;
-                Text candidate=base;candidate[i]=rows[row][size_t(column)];
+                const wchar_t replacement=translateKey(rows[row][size_t(column)],layout,KeyLayout::Standard);
+                if(!replacement)continue;
+                Text candidate=base;candidate[i]=replacement;
                 if(tone)candidate+=tone;
                 if(candidate!=code && dict.byCode.count(candidate) && std::find(codes.begin(),codes.end(),candidate)==codes.end())codes.push_back(candidate);
             }

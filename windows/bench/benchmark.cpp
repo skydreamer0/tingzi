@@ -62,10 +62,10 @@ std::vector<Piece> pieces(const Text& reading){
     }
     return out;
 }
-// The keys for one syllable on the standard layout; a syllable without a tone mark ends with Space.
+// The keys for one syllable on the selected layout; a syllable without a tone mark ends with Space.
 // Two marks describe fast typing: a leading ^ presses the tone before the syllable's last key, and a
 // trailing ! leaves out the Space that ends a first-tone syllable.
-std::vector<WPARAM> keysFor(const Dictionary& d,Text syllable,bool& known){
+std::vector<WPARAM> keysFor(const Dictionary& d,KeyLayout layout,Text syllable,bool& known){
     static std::map<Text,wchar_t> byName;
     if(byName.empty())for(const auto& [key,name]:d.keys)byName[name]=key;
     const bool early=!syllable.empty() && syllable.front()==L'^';
@@ -76,13 +76,14 @@ std::vector<WPARAM> keysFor(const Dictionary& d,Text syllable,bool& known){
     for(wchar_t ch:syllable){
         auto found=byName.find(Text(1,ch));
         if(found==byName.end()){known=false;continue;}
-        const wchar_t k=found->second;
+        const wchar_t k=translateKey(found->second,KeyLayout::Standard,layout);
         WPARAM vk=0;
         if(k>=L'a' && k<=L'z')vk=WPARAM(k-32);
         else if(k>=L'0' && k<=L'9')vk=WPARAM(k);
         else switch(k){
             case L',':vk=VK_OEM_COMMA;break; case L'.':vk=VK_OEM_PERIOD;break; case L';':vk=VK_OEM_1;break;
-            case L'/':vk=VK_OEM_2;break; case L'-':vk=VK_OEM_MINUS;break; default:known=false;
+            case L'/':vk=VK_OEM_2;break; case L'-':vk=VK_OEM_MINUS;break;
+            case L'\'':vk=VK_OEM_7;break; case L'=':vk=VK_OEM_PLUS;break; default:known=false;
         }
         if(vk)keys.push_back(vk);
     }
@@ -92,9 +93,9 @@ std::vector<WPARAM> keysFor(const Dictionary& d,Text syllable,bool& known){
     if(early && toned && keys.size()>=3)std::swap(keys[keys.size()-1],keys[keys.size()-2]);
     return keys;
 }
-std::vector<WPARAM> keysFor(const Dictionary& d,const std::vector<Text>& syllables,bool& known){
+std::vector<WPARAM> keysFor(const Dictionary& d,KeyLayout layout,const std::vector<Text>& syllables,bool& known){
     std::vector<WPARAM> keys;
-    for(const auto& syllable:syllables){auto more=keysFor(d,syllable,known);keys.insert(keys.end(),more.begin(),more.end());}
+    for(const auto& syllable:syllables){auto more=keysFor(d,layout,syllable,known);keys.insert(keys.end(),more.begin(),more.end());}
     return keys;
 }
 size_t distance(const Text& a,const Text& b){
@@ -112,8 +113,8 @@ size_t distance(const Text& a,const Text& b){
 }
 // True when the intended text at `at` is on the first page of the candidate list there, or of the
 // near-sound list that Tab switches to.
-bool reachable(const Dictionary& d,Segmenter mode,const std::vector<WPARAM>& keys,size_t at,size_t count,const Text& intended){
-    Input input(d);input.setSegmenter(mode);input.setLayout(KeyLayout::Standard);input.setSimplifiedOutput(false);
+bool reachable(const Dictionary& d,Segmenter mode,KeyLayout layout,const std::vector<WPARAM>& keys,size_t at,size_t count,const Text& intended){
+    Input input(d);input.setSegmenter(mode);input.setLayout(layout);input.setSimplifiedOutput(false);
     for(WPARAM key:keys)input.press(key);
     if(at+1==count)input.press(VK_END);
     else{input.press(VK_HOME);for(size_t i=0;i<=at;++i)input.press(VK_RIGHT);input.press(VK_DOWN);}
@@ -153,13 +154,14 @@ int wmain(int argc,wchar_t** argv){
     for(Segmenter mode:{Segmenter::Path,Segmenter::Staged}){
         misses<<"\n### "<<name(mode)<<"\n\n";
         for(const auto& c:cases){
+            const auto layout=c.category==L"eten-typo"?KeyLayout::ETen:KeyLayout::Standard;
             auto& tally=tallies[{name(mode),narrow(c.category)}];
             Text got,plainWant;size_t wrong=0,reach=0;bool known=true;
             for(wchar_t ch:c.text)if(ch!=L' ')plainWant+=ch;
             for(const auto& piece:pieces(c.reading)){
                 if(piece.latin){got+=piece.text;continue;}
-                const auto keys=keysFor(d,piece.syllables,known);
-                Input input(d);input.setSegmenter(mode);input.setLayout(KeyLayout::Standard);input.setSimplifiedOutput(false);
+                const auto keys=keysFor(d,layout,piece.syllables,known);
+                Input input(d);input.setSegmenter(mode);input.setLayout(layout);input.setSimplifiedOutput(false);
                 for(WPARAM key:keys){
                     const auto start=Clock::now();
                     input.press(key);
@@ -173,7 +175,7 @@ int wmain(int argc,wchar_t** argv){
                 if(part.size()==piece.syllables.size() && want.size()==part.size())
                     for(size_t i=0;i<part.size();++i)if(part[i]!=want[i]){
                         ++wrong;
-                        if(reachable(d,mode,keys,i,part.size(),want))++reach;
+                        if(reachable(d,mode,layout,keys,i,part.size(),want))++reach;
                     }
                 got+=part;
             }

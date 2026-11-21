@@ -91,7 +91,7 @@ If you'd rather hold a key while you talk and send on release, choose 按住說�
 
 - **Built-in Zhuyin engine**: no other input method is needed. Supports the Standard (Dachen) and Eten layouts.
 - **Whole-phrase conversion**: characters are chosen by how common each word is and which words usually follow each other, so 程式編輯 (program editing) doesn't become 城市編輯 (city editing).
-- **Fix one character mid-phrase**: while composing, move with ← → to the character you want to change. Tab forces a word break; while choosing, Tab shows near-sounding characters.
+- **Fix one character mid-phrase**: while composing, move with ← → to the character you want to change. Tab forces a word break; while choosing, Tab shows near-sounding characters and suggestions for neighboring keys on the Daqian or ETen layout.
 - **Punctuation, symbols and templates**: Shift plus a punctuation key gives full-width punctuation, and `` ` `` opens the symbol table even when not composing. Press Up after a symbol still in the composition to replace it, or Down after a bracket for alternatives on the same side. Frequently used addresses or replies can be saved as templates.
 - **First-key recall**: type only the first Zhuyin symbol of each character and press Space to bring back a sentence you've typed before (requires local learning).
 
