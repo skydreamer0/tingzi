@@ -109,7 +109,7 @@ Choose a recognition method on the 語音 (Voice) settings page. Where your audi
 
 | Method | Where the audio goes | What you need |
 | --- | --- | --- |
-| Local Whisper | Stays on your computer | Download a model and whisper.cpp from the settings page with one click; the source, size and license are listed before downloading, and models you no longer need can be deleted. With an NVIDIA GPU you can also download an acceleration package |
+| Local Whisper | Stays on your computer | Download a model and whisper.cpp from the settings page with one click; the source, size and license are listed before downloading, and models you no longer need can be deleted; you do not need to install the Visual C++ runtime separately. With an NVIDIA GPU you can also download an acceleration package |
 | Your own online service | The OpenAI-compatible transcription service you enter (for example OpenAI or Groq), along with your custom words | Your own API key, billed by that service. If the URL is `localhost`, the audio stays on your computer |
 | Codex online recognition (unofficial) | ChatGPT | A working Codex sign-in on this computer |
 

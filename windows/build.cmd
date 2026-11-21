@@ -50,5 +50,14 @@ cl %FLAGS% /LD windows\service.cpp "%OBJ%\tingzi.res" /Fo"%OBJ%\service.obj" /Fe
 cl %FLAGS% windows\setup.cpp /Fo"%OBJ%\setup.obj" /Fe"%OUTPUT%\TingziSetup%2.exe" /link /MANIFEST:EMBED /manifestinput:windows\compatibility.manifest /MANIFESTUAC:"level='asInvoker' uiAccess='false'" ole32.lib advapi32.lib shell32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\keyboard.cpp /Fo"%OBJ%\keyboard.obj" /Fe"%OUTPUT%\TingziKeyboard.exe" /link /MANIFEST:EMBED ole32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\learning_cli.cpp /Fo"%OBJ%\learning.obj" /Fe"%OUTPUT%\TingziLearning.exe" /link /MANIFEST:EMBED winsqlite3.lib shell32.lib ole32.lib uuid.lib || exit /b 1
+if "%1"=="x64" call :runtime || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\upgrade.cpp /Fo"%OBJ%\upgrade.obj" /Fe"%OUTPUT%\TingziVersion.exe" /link /MANIFEST:EMBED /manifestinput:windows\compatibility.manifest advapi32.lib ole32.lib uuid.lib || exit /b 1
+exit /b 0
+
+:runtime
+rem whisper.cpp's Windows program needs the Visual C++ runtime and does not include it. The voice window
+rem carries these files and puts them beside that program, so it runs on a computer without the runtime.
+if not exist "%OUTPUT%\TingziFloat" mkdir "%OUTPUT%\TingziFloat"
+for /d %%d in ("%VCToolsRedistDir%x64\Microsoft.VC*.CRT") do for %%f in (msvcp140.dll vcruntime140.dll vcruntime140_1.dll) do copy /y "%%d\%%f" "%OUTPUT%\TingziFloat\" >nul || exit /b 1
+for /d %%d in ("%VCToolsRedistDir%x64\Microsoft.VC*.OpenMP") do copy /y "%%d\vcomp140.dll" "%OUTPUT%\TingziFloat\" >nul || exit /b 1
 exit /b 0

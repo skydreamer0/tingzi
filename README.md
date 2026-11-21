@@ -108,7 +108,7 @@ Traditional Chinese voice and Zhuyin input for Windows.
 
 | 辨識方式 | 錄音送到哪裡 | 需要什麼 |
 | --- | --- | --- |
-| 本機 Whisper | 留在自己的電腦 | 在設定頁一鍵下載模型與 whisper.cpp；下載前列出來源、大小與授權，不用的模型可以刪除。有 NVIDIA 顯示卡可以另外下載加速元件 |
+| 本機 Whisper | 留在自己的電腦 | 在設定頁一鍵下載模型與 whisper.cpp；下載前列出來源、大小與授權，不用的模型可以刪除，也不必另外安裝 Visual C++ 執行階段。有 NVIDIA 顯示卡可以另外下載加速元件 |
 | 自選線上服務 | 你填的 OpenAI 格式轉寫服務（例如 OpenAI、Groq），會一併送出自訂詞 | 自備金鑰，費用依該服務計算；網址是 `localhost` 時錄音留在自己的電腦 |
 | Codex 線上辨識（非官方） | ChatGPT | 這台電腦上有效的 Codex 登入 |
 

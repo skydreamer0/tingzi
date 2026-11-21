@@ -83,7 +83,8 @@ int run(){
     {
         fs::create_directory(dest);if(!safeDirectory(dest))return 5;
         fs::create_directory(dest/L"TingziFloat");if(!safeDirectory(dest/L"TingziFloat"))return 5;
-        const wchar_t* names[]={L"README.md",L"THIRD-PARTY-NOTICES.txt",L"pairs.txt",L"pairs-NOTICE.txt",L"TingziFloat\\LICENSE",a,b,L"TingziKeyboard.exe",L"TingziLearning.exe",L"TingziSetup64.exe",L"TingziSetup32.exe",L"TingziFloat\\TingziFloat.exe"};
+        const wchar_t* names[]={L"README.md",L"THIRD-PARTY-NOTICES.txt",L"pairs.txt",L"pairs-NOTICE.txt",L"TingziFloat\\LICENSE",a,b,L"TingziKeyboard.exe",L"TingziLearning.exe",L"TingziSetup64.exe",L"TingziSetup32.exe",L"TingziFloat\\TingziFloat.exe",
+            L"TingziFloat\\msvcp140.dll",L"TingziFloat\\vcruntime140.dll",L"TingziFloat\\vcruntime140_1.dll",L"TingziFloat\\vcomp140.dll"};
         dropOldAsides(dest);dropOldAsides(dest/L"TingziFloat");
         for(const auto* name:names)if(!placeProduct(source/name,dest/name))return 6;
         const fs::path active=fs::path(x64.old).parent_path();
