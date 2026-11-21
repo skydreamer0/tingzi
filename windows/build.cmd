@@ -46,7 +46,7 @@ set "OBJ=%PRODUCT%\%1"
 if not exist "%OBJ%" mkdir "%OBJ%"
 set "FLAGS=/nologo /std:c++17 /O2 /MT /EHsc /utf-8 /DUNICODE /D_UNICODE /DNOMINMAX"
 rc /nologo /i windows /fo "%OBJ%\tingzi.res" windows\tingzi.rc || exit /b 1
-cl %FLAGS% /LD windows\service.cpp "%OBJ%\tingzi.res" /Fo"%OBJ%\service.obj" /Fe"%OUTPUT%\TingziTextService%2.dll" /link /def:windows\exports.def /implib:"%OBJ%\service.lib" winsqlite3.lib shell32.lib ole32.lib uuid.lib oleaut32.lib advapi32.lib user32.lib gdi32.lib ole32.lib uuid.lib || exit /b 1
+cl %FLAGS% /LD windows\service.cpp "%OBJ%\tingzi.res" /Fo"%OBJ%\service.obj" /Fe"%OUTPUT%\TingziTextService%2.dll" /link /def:windows\exports.def /implib:"%OBJ%\service.lib" winsqlite3.lib shell32.lib ole32.lib uuid.lib oleaut32.lib advapi32.lib user32.lib gdi32.lib || exit /b 1
 cl %FLAGS% windows\setup.cpp /Fo"%OBJ%\setup.obj" /Fe"%OUTPUT%\TingziSetup%2.exe" /link /MANIFEST:EMBED /manifestinput:windows\compatibility.manifest /MANIFESTUAC:"level='asInvoker' uiAccess='false'" ole32.lib advapi32.lib shell32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\keyboard.cpp /Fo"%OBJ%\keyboard.obj" /Fe"%OUTPUT%\TingziKeyboard.exe" /link /MANIFEST:EMBED ole32.lib uuid.lib || exit /b 1
 if "%1"=="x64" cl %FLAGS% windows\learning_cli.cpp /Fo"%OBJ%\learning.obj" /Fe"%OUTPUT%\TingziLearning.exe" /link /MANIFEST:EMBED winsqlite3.lib shell32.lib ole32.lib uuid.lib || exit /b 1
