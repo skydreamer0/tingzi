@@ -1,6 +1,6 @@
 ﻿# Installs, upgrades over, and removes the single installer on a disposable Windows machine, such as the
 # GitHub runner. It really registers the input method, so do not run it on a computer you use.
-param([Parameter(Mandatory)][string]$Installer)
+param([Parameter(Mandatory)][string]$Installer, [switch]$LockProgramFiles)
 $ErrorActionPreference = 'Stop'
 $uninstallKey = 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\{D8B8670C-C282-48DE-8673-AFC4631934BA}_is1'
 $serviceKey = 'Registry::HKEY_LOCAL_MACHINE\SOFTWARE\Classes\CLSID\{B6ECF4B2-9955-4C24-9BA8-3F7641F0792B}\InprocServer32'
@@ -55,10 +55,37 @@ Check ((Get-ItemProperty $serviceKey).'(default)' -eq $dll) 'running the install
 Check ((Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall' | Where-Object { (Get-ItemProperty $_.PSPath).DisplayName -eq '聽字・注音與語音輸入法' }).Count -eq 1) 'the apps list has one entry'
 
 # A silent removal keeps personal data. The uninstaller hands over to a copy of itself, so wait for the entry to go.
+$wordListHash = (Get-FileHash (Join-Path (Split-Path $dll) 'Tingzi.cin')).Hash
+Set-Content -LiteralPath (Join-Path $root 'phrases.txt') -Value 'legacy word list'
+New-Item -ItemType Directory -Force (Join-Path $root 'empty-uninstall-test\nested') | Out-Null
+$locked = $null
+if ($LockProgramFiles) {
+    $locked = [IO.File]::Open($dll, 'Open', 'Read', 'Read')
+}
+try {
 Start-Process -FilePath $entry.UninstallString.Trim('"') -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs 'uninstall.log') + '"') -Wait
 for ($i = 0; $i -lt 120 -and (Test-Path $uninstallKey); $i++) { Start-Sleep -Seconds 1 }
 Check (!(Test-Path $uninstallKey)) 'the apps list entry is gone'
 Check (!(Test-Path $serviceKey)) 'the text service is no longer registered'
-Check (!(Test-Path $dll)) 'the program files are gone'
+$pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations
+$deletions = @()
+for ($i = 0; $i -lt $pending.Count; $i += 2) {
+    if ($pending[$i + 1] -eq '') { $deletions += $pending[$i] -replace '^(\*\d+)?\\\?\?\\', '' }
+}
+if ($LockProgramFiles) {
+    Check (Test-Path $dll) 'the locked DLL is still present before reboot'
+    Check ($deletions -contains $dll) 'the locked DLL is scheduled for deletion at reboot'
+}
+$remaining = @(Get-ChildItem $root -Recurse -Force -ErrorAction SilentlyContinue)
+if (Test-Path $root) { $remaining += Get-Item $root }
+foreach ($item in $remaining) {
+    Check ($deletions -contains $item.FullName) "remaining path is pending deletion: $($item.FullName)"
+}
+Check ($LockProgramFiles -or !(Test-Path $root)) 'the whole program directory is gone when no files are locked'
 Check (Test-Path (Join-Path $data 'installer-test.txt')) 'personal data is kept'
+Check ((Get-FileHash (Join-Path $data 'kept-after-uninstall\Tingzi.cin')).Hash -eq $wordListHash) 'the local word list is preserved outside Program Files'
+Check ((Get-Content (Join-Path $data 'kept-after-uninstall\legacy-root\phrases.txt')) -eq 'legacy word list') 'legacy root word lists are preserved separately'
+} finally {
+    if ($locked) { $locked.Dispose() }
+}
 Write-Host 'Installer checks passed.'

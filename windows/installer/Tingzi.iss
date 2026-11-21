@@ -80,11 +80,6 @@ Filename: "{app}\v{#AppVersion}\TingziFloat\TingziFloat.exe"; Flags: nowait runa
 Filename: "{sys}\taskkill.exe"; Parameters: "/f /im TingziFloat.exe"; Flags: runhidden; RunOnceId: "StopFloat"
 Filename: "{cmd}"; Parameters: "/c """"{app}\RemoveTingzi.cmd"" /quiet"""; Flags: runhidden; RunOnceId: "RemoveTingzi"
 
-[UninstallDelete]
-; RemoveTingzi.cmd 只刪根目錄的檔案；各版本的子目錄由這裡刪。
-Type: filesandordirs; Name: "{app}\v0.*"
-Type: dirifempty; Name: "{app}"
-
 [Code]
 var
   WasInstalled: Boolean;
@@ -92,6 +87,61 @@ var
   InstallProgressPage: TOutputMarqueeProgressWizardPage;
   DeletePersonalData: Boolean;
   FloatWasRunning_: Boolean;
+  UninstallRestartRequired: Boolean;
+
+function MoveFileExForUninstall(ExistingName: String; NewName: Integer; Flags: Cardinal): Boolean;
+  external 'MoveFileExW@kernel32.dll stdcall uninstallonly';
+
+procedure RemoveProgramTree(const Path: String);
+var
+  Entry: TFindRec;
+  Child: String;
+  Removed: Boolean;
+begin
+  if FindFirst(Path + '\*', Entry) then
+  begin
+    try
+      repeat
+        if (Entry.Name <> '.') and (Entry.Name <> '..') then
+        begin
+          Child := Path + '\' + Entry.Name;
+          if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and
+             (Entry.Attributes and $400 = 0) then
+            RemoveProgramTree(Child)
+          else
+          begin
+            if Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0 then
+              Removed := RemoveDir(Child)
+            else
+              Removed := DeleteFile(Child);
+            if not Removed then
+            begin
+              if not MoveFileExForUninstall(Child, 0, 4) then
+                RaiseException('Cannot schedule removal of ' + Child + ': ' + SysErrorMessage(DLLGetLastError));
+              Log('Removal pending reboot: ' + Child);
+              UninstallRestartRequired := True;
+            end;
+          end;
+        end;
+      until not FindNext(Entry);
+    finally
+      FindClose(Entry);
+    end;
+  end;
+  if DirExists(Path) and not RemoveDir(Path) then
+  begin
+    if not MoveFileExForUninstall(Path, 0, 4) then
+      RaiseException('Cannot schedule removal of ' + Path + ': ' + SysErrorMessage(DLLGetLastError));
+    Log('Removal pending reboot: ' + Path);
+    UninstallRestartRequired := True;
+  end;
+end;
+
+function UninstallNeedRestart: Boolean;
+begin
+  RemoveProgramTree(ExpandConstant('{app}'));
+  Result := UninstallRestartRequired;
+end;
 
 function ServiceKey: String;
 begin
@@ -327,18 +377,27 @@ end;
 
 // 個人資料夾以外，使用者可能換過的本機詞表與語音資料夾設定放在目前使用的版本子目錄裡。
 // 保留個人資料時，先把它們複製到個人資料夾，避免隨程式目錄一起刪除。
+procedure KeepUninstallFile(const Source, Destination: String);
+begin
+  if FileExists(Source) then
+    if not ForceDirectories(ExtractFileDir(Destination)) or
+       not FileCopy(Source, Destination, False) then
+      RaiseException('Cannot preserve ' + Source + ' in ' + Destination);
+end;
+
 procedure KeepLocalWordLists;
 var
   Active, Kept: String;
 begin
+  Kept := ExpandConstant('{localappdata}\Tingzi\kept-after-uninstall');
+  KeepUninstallFile(ExpandConstant('{app}\Tingzi.cin'), Kept + '\legacy-root\Tingzi.cin');
+  KeepUninstallFile(ExpandConstant('{app}\phrases.txt'), Kept + '\legacy-root\phrases.txt');
   if not RegQueryStringValue(HKLM64, ServiceKey, '', Active) then
     exit;
   Active := ExtractFileDir(Active);
-  Kept := ExpandConstant('{localappdata}\Tingzi\kept-after-uninstall');
-  ForceDirectories(Kept);
-  if FileExists(Active + '\Tingzi.cin') then FileCopy(Active + '\Tingzi.cin', Kept + '\Tingzi.cin', False);
-  if FileExists(Active + '\phrases.txt') then FileCopy(Active + '\phrases.txt', Kept + '\phrases.txt', False);
-  if FileExists(Active + '\TingziFloat\voice-root.txt') then FileCopy(Active + '\TingziFloat\voice-root.txt', Kept + '\voice-root.txt', False);
+  KeepUninstallFile(Active + '\Tingzi.cin', Kept + '\Tingzi.cin');
+  KeepUninstallFile(Active + '\phrases.txt', Kept + '\phrases.txt');
+  KeepUninstallFile(Active + '\TingziFloat\voice-root.txt', Kept + '\voice-root.txt');
 end;
 
 // 輸入法登記在整台電腦，但 Windows 只在「把它加進鍵盤清單」的使用者那裡列出。安裝程式以系統管理員身分執行，
