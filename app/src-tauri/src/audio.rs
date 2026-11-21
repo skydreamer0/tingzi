@@ -1,6 +1,7 @@
 //! Microphone capture: records the chosen input and hands back 16 kHz mono WAV bytes.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::borrow::Cow;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
@@ -40,6 +41,7 @@ pub struct CaptureLevels {
     pub kept_ms: usize,
     pub peak_dbfs: i32,
     pub rms_dbfs: i32,
+    pub gain_db: i32,
     pub speech_detected: bool,
 }
 
@@ -72,7 +74,8 @@ impl SegmentAudio {
     pub fn encode(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
         let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
             .get(range).ok_or_else(|| DAMAGED.to_string())?.to_vec();
-        Ok(wav(&resample(&samples, self.rate)))
+        let rms = sound(&samples, self.rate).map(|(start, end)| levels(&samples[start..end]).1);
+        Ok(encode_with_gain(&samples, self.rate, rms).0)
     }
 
     /// How long this many samples of the recording last.
@@ -85,10 +88,13 @@ impl SegmentAudio {
     pub fn encode_from(&self, start: usize) -> Result<Option<Vec<u8>>, String> {
         let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
             .get(start..).ok_or_else(|| DAMAGED.to_string())?.to_vec();
-        if sound(&samples, self.rate).is_none() || too_short(&samples, self.rate) {
+        let Some((first, last)) = sound(&samples, self.rate) else { return Ok(None) };
+        if shorter_than_word(last - first, self.rate) {
             return Ok(None);
         }
-        Ok(Some(wav(&resample(trim(&samples, self.rate), self.rate))))
+        let rms = levels(&samples[first..last]).1;
+        let kept = trim_with_sound(&samples, self.rate, Some((first, last)));
+        Ok(Some(encode_with_gain(kept, self.rate, Some(rms)).0))
     }
 }
 
@@ -247,11 +253,7 @@ impl SegmentReader {
 fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture {
     let speech = sound(samples, rate);
     let measured = speech.map_or(samples, |(start, end)| &samples[start..end]);
-    let (peak, squares) = measured.iter().fold((0.0f64, 0.0), |(peak, squares), &sample| {
-        let value = f64::from(sample);
-        (peak.max(value.abs()), squares + value * value)
-    });
-    let rms = (squares / measured.len().max(1) as f64).sqrt();
+    let (peak, rms) = levels(measured);
     // A finite floor keeps silent and empty recordings numeric in the report.
     let dbfs = |value: f64| (20.0 * value.max(1e-6).log10()).round() as i32;
     let millis = |len: usize| (len as u64 * 1000 / u64::from(rate)) as usize;
@@ -264,19 +266,24 @@ fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture
         None
     };
     let kept = if reason.is_some() { &[][..] } else { trim_with_sound(samples, rate, speech) };
+    let (wav, gain_db) = match reason {
+        Some(reason) => (Err(reason.into()), 0),
+        None => {
+            let (wav, gain_db) = encode_with_gain(kept, rate, speech.map(|_| rms));
+            (Ok(wav), gain_db)
+        }
+    };
     FinishedCapture {
         levels: CaptureLevels {
             captured_ms: millis(samples.len()),
             kept_ms: millis(kept.len()),
             peak_dbfs: dbfs(peak),
             rms_dbfs: dbfs(rms),
+            gain_db,
             speech_detected: speech.is_some(),
         },
         failed,
-        wav: match reason {
-            Some(reason) => Err(reason.into()),
-            None => Ok(wav(&resample(kept, rate))),
-        },
+        wav,
     }
 }
 
@@ -345,6 +352,13 @@ fn missing(name: &str) -> String {
 
 fn substitute_note(wanted: &str, used: &str) -> String {
     format!("{wanted}目前不能用，改用 {} 預設的{used}", crate::sys::SYSTEM)
+}
+
+pub fn low_rate_note(rate: u32) -> Option<String> {
+    (rate <= 16_000).then(|| {
+        let khz = f64::from(rate) / 1000.0;
+        format!("這支麥克風目前是通話音質（{khz} kHz），辨識可能較不準。可改用電腦或 USB 麥克風")
+    })
 }
 
 fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
@@ -448,8 +462,8 @@ const SHORTEST_SOUND_MS: usize = 200;
 /// Whether there is too little here to be worth recognising: a brush of the shortcut, or one brief
 /// noise in an otherwise quiet recording. Recognisers tend to make words up from such clips.
 /// A longer recording in which nothing stands out is not judged here; the recogniser answers with no text.
-fn too_short(samples: &[f32], rate: u32) -> bool {
-    let length = sound(samples, rate).map_or(samples.len(), |(start, end)| end - start);
+fn too_short(samples: &[f32], rate: u32, speech: Option<(usize, usize)>) -> bool {
+    let length = speech.map_or(samples.len(), |(start, end)| end - start);
     shorter_than_word(length, rate)
 }
 
@@ -459,6 +473,7 @@ fn shorter_than_word(length: usize, rate: u32) -> bool {
 
 /// Drops the silence before and after speech, keeping a quarter second on each side.
 /// Less audio means a smaller upload and a faster answer; a recording with no clear speech is left whole.
+#[cfg(test)]
 fn trim(samples: &[f32], rate: u32) -> &[f32] {
     trim_with_sound(samples, rate, sound(samples, rate))
 }
@@ -472,6 +487,50 @@ fn trim_with_sound(samples: &[f32], rate: u32, speech: Option<(usize, usize)>) -
         return samples;
     }
     &samples[start..end]
+}
+
+fn levels(samples: &[f32]) -> (f64, f64) {
+    let (peak, squares) = samples.iter().fold((0.0f64, 0.0), |(peak, squares), &sample| {
+        let value = f64::from(sample);
+        (peak.max(value.abs()), squares + value * value)
+    });
+    (peak, (squares / samples.len().max(1) as f64).sqrt())
+}
+
+fn encode_with_gain(samples: &[f32], rate: u32, speech_rms: Option<f64>) -> (Vec<u8>, i32) {
+    let Some(rms) = speech_rms else { return (wav(&resample(samples, rate)), 0) };
+    let gain = (0.1 / rms).clamp(1.0, 10.0);
+    let mut gained = if gain > 1.0 {
+        Cow::Owned(samples.iter().map(|&sample| (f64::from(sample) * gain) as f32).collect())
+    } else {
+        Cow::Borrowed(samples)
+    };
+    if exceeds_peak_limit(&gained) {
+        limit_peaks(gained.to_mut());
+    }
+    let mut output = resample(&gained, rate);
+    // The anti-aliasing filter can overshoot its input peaks.
+    if rate > TARGET_RATE && exceeds_peak_limit(&output) {
+        limit_peaks(&mut output);
+    }
+    (wav(&output), (20.0 * gain.log10()).round() as i32)
+}
+
+const PEAK_LIMIT: f32 = 0.891_250_9; // -1 dBFS
+
+fn exceeds_peak_limit(samples: &[f32]) -> bool {
+    samples.iter().any(|sample| sample.abs() > PEAK_LIMIT)
+}
+
+fn limit_peaks(samples: &mut [f32]) {
+    const KNEE: f32 = 0.8;
+    let headroom = PEAK_LIMIT - KNEE;
+    for sample in samples {
+        let excess = sample.abs() - KNEE;
+        if excess > 0.0 {
+            *sample = (PEAK_LIMIT - headroom / (1.0 + excess / headroom)).copysign(*sample);
+        }
+    }
 }
 
 fn resample(samples: &[f32], rate: u32) -> Vec<f32> {
@@ -620,10 +679,12 @@ pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
     if mono.is_empty() {
         return Err("這個音檔沒有聲音".into());
     }
-    if too_short(&mono, rate) {
+    let speech = sound(&mono, rate);
+    if too_short(&mono, rate, speech) {
         return Err(TOO_SHORT.into());
     }
-    Ok(wav(&resample(&mono, rate)))
+    let rms = speech.map(|(start, end)| levels(&mono[start..end]).1);
+    Ok(encode_with_gain(&mono, rate, rms).0)
 }
 
 #[cfg(test)]
@@ -655,7 +716,7 @@ mod tests {
         assert_eq!((&*info.name, info.rate, info.channels, info.format), ("測試麥克風", 16_000, 2, cpal::SampleFormat::I16));
         let capture = recorder.finish().unwrap();
         assert_eq!(capture.levels, CaptureLevels {
-            captured_ms: 6000, kept_ms: 1500, peak_dbfs: -6, rms_dbfs: -8, speech_detected: true,
+            captured_ms: 6000, kept_ms: 1500, peak_dbfs: -6, rms_dbfs: -8, gain_db: 0, speech_detected: true,
         });
         assert_eq!(capture.wav.unwrap().len(), 44 + 24_000 * 2);
     }
@@ -677,9 +738,80 @@ mod tests {
         }
         let silent = encode_recording(&[0.001; 16_000], 16_000, false);
         assert_eq!(silent.levels, CaptureLevels {
-            captured_ms: 1000, kept_ms: 1000, peak_dbfs: -60, rms_dbfs: -60, speech_detected: false,
+            captured_ms: 1000, kept_ms: 1000, peak_dbfs: -60, rms_dbfs: -60, gain_db: 0, speech_detected: false,
         });
         assert!(silent.wav.is_ok());
+    }
+
+    fn pcm_samples(wav: &[u8]) -> Vec<f32> {
+        wav[44..].chunks_exact(2).map(|sample| {
+            f32::from(i16::from_le_bytes([sample[0], sample[1]])) / 32767.0
+        }).collect()
+    }
+
+    #[test]
+    fn quiet_speech_uses_up_to_twenty_db_of_gain() {
+        for (input, gain_db, expected_rms) in [
+            (0.008, 20, 0.08),
+            (0.01, 20, 0.1),
+            (10f32.powf(-26.0 / 20.0), 6, 0.1),
+        ] {
+            let speech: Vec<_> = [input, -input].into_iter().cycle().take(16_000).collect();
+            let capture = encode_recording(&speech, 16_000, false);
+            assert!(capture.levels.speech_detected);
+            assert_eq!(capture.levels.gain_db, gain_db);
+            let (_, rms) = levels(&pcm_samples(&capture.wav.unwrap()));
+            assert!((rms - expected_rms).abs() < 0.000_04, "RMS was {rms}");
+        }
+    }
+
+    #[test]
+    fn loud_speech_and_silence_only_keep_their_levels() {
+        for (sample, speech_detected) in [(0.5, true), (0.0, false), (0.001, false)] {
+            let samples = vec![sample; 16_000];
+            let capture = encode_recording(&samples, 16_000, false);
+            assert_eq!(capture.levels.speech_detected, speech_detected);
+            assert_eq!(capture.levels.gain_db, 0);
+            assert_eq!(capture.wav.unwrap(), wav(&samples));
+        }
+    }
+
+    #[test]
+    fn a_loud_transient_is_limited_when_quiet_speech_gets_gain() {
+        for rate in [16_000, 48_000] {
+            let mut samples = vec![0.08; rate as usize];
+            samples[rate as usize / 2..rate as usize / 2 + 24].fill(-0.95);
+            let capture = encode_recording(&samples, rate, false);
+            assert!(capture.levels.gain_db > 0);
+            let output = pcm_samples(&capture.wav.unwrap());
+            let (peak, _) = levels(&output);
+            assert!((0.8..=10f64.powf(-1.0 / 20.0)).contains(&peak), "peak was {peak}");
+            assert!((output[100] - 0.1).abs() < 0.01);
+        }
+    }
+
+    #[test]
+    fn segments_and_wav_files_use_their_own_speech_level() {
+        let quiet = vec![0.02; 16_000];
+        let mut samples = vec![0.5; 16_000];
+        samples.extend_from_slice(&quiet);
+        let audio = SegmentAudio { samples: Arc::new(Mutex::new(samples)), rate: 16_000 };
+        let expected = wav(&[0.1; 16_000]);
+        assert_eq!(audio.encode(16_000..32_000).unwrap(), expected);
+        assert_eq!(audio.encode_from(16_000).unwrap().unwrap(), expected);
+        assert_eq!(normalise(&wav(&quiet)).unwrap(), expected);
+    }
+
+    #[test]
+    fn low_rate_microphone_note_reports_the_actual_rate() {
+        for (rate, khz) in [(8_000, "8"), (11_025, "11.025"), (16_000, "16")] {
+            assert_eq!(low_rate_note(rate), Some(format!(
+                "這支麥克風目前是通話音質（{khz} kHz），辨識可能較不準。可改用電腦或 USB 麥克風"
+            )));
+        }
+        for rate in [16_001, 44_100, 48_000] {
+            assert_eq!(low_rate_note(rate), None);
+        }
     }
 
     #[test]
@@ -814,6 +946,7 @@ mod tests {
     #[test]
     fn a_brief_noise_is_not_sent_but_a_single_word_is() {
         let rate = 16_000usize;
+        let too_short = |samples: &[f32]| super::too_short(samples, rate as u32, sound(samples, rate as u32));
         let quiet_then = |milliseconds: usize| {
             let mut recording = vec![0.001f32; rate];
             recording.extend(std::iter::repeat_n(0.5, rate * milliseconds / 1000));
@@ -821,14 +954,14 @@ mod tests {
             recording
         };
         // A click or a key press.
-        assert!(too_short(&quiet_then(60), rate as u32));
+        assert!(too_short(&quiet_then(60)));
         // One syllable.
-        assert!(!too_short(&quiet_then(260), rate as u32));
+        assert!(!too_short(&quiet_then(260)));
         // The shortcut brushed, with nothing said.
-        assert!(too_short(&vec![0.001; rate / 10], rate as u32));
-        assert!(too_short(&[], rate as u32));
+        assert!(too_short(&vec![0.001; rate / 10]));
+        assert!(too_short(&[]));
         // A long quiet recording is left for the recogniser to answer.
-        assert!(!too_short(&vec![0.0; rate * 2], rate as u32));
+        assert!(!too_short(&vec![0.0; rate * 2]));
     }
 
     #[test]
