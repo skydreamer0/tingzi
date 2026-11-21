@@ -250,11 +250,6 @@ impl Settings {
             None => Mode::Preview,
         }
     }
-
-    /// The recording shortcut as the user reads it.
-    pub fn gesture(&self) -> String {
-        self.hotkey().label()
-    }
 }
 
 #[cfg(test)]
@@ -293,7 +288,7 @@ mod tests {
         assert_eq!((saved.modifiers, saved.record_key, saved.simplified, saved.online), (6, 84, true, true));
         assert_eq!(saved.mode(), Mode::Copy);
         let [control, _, shift, _] = crate::sys::MODIFIER_KEYS;
-        assert_eq!(saved.gesture(), format!("{control}+{shift}+T"));
+        assert_eq!(saved.hotkey().label(), format!("{control}+{shift}+T"));
         assert_eq!(saved.problem(), None);
         assert!(saved.use_phrases);
         assert_eq!(saved.engine(), Engine::Codex);
@@ -403,7 +398,7 @@ mod tests {
         let clash = Settings { modifiers: 3, record_key: u32::from(b'V'), ..Settings::default() };
         assert!(clash.problem().is_some());
         assert_eq!(Settings { modifiers: 6, record_key: u32::from(b'V'), ..Settings::default() }.problem(), None);
-        assert_eq!(Settings { record_key: 0, ..Settings::default() }.gesture(), "停用");
+        assert_eq!(Settings { record_key: 0, ..Settings::default() }.hotkey().label(), "停用");
         assert!(Settings { modifiers: 5, record_key: u32::from(b'Z'), ..Settings::default() }.problem().is_some());
     }
 }
