@@ -411,9 +411,10 @@ impl Sound {
             Ok(capture) => capture,
             Err(reason) => return (Err(reason), false),
         };
-        let audio::CaptureLevels { captured_ms, kept_ms, peak_dbfs, rms_dbfs, speech_detected } = capture.levels;
+        let audio::CaptureLevels { captured_ms, kept_ms, peak_dbfs, rms_dbfs, gain_db, speech_detected } = capture.levels;
         let measured = if speech_detected { "語音" } else { "全段" };
-        report::note(format!("錄音結束，收音 {captured_ms} ms，{measured}峰值 {peak_dbfs} dBFS，均方根 {rms_dbfs} dBFS，裁切後 {kept_ms} ms"));
+        let noise_suppression = if capture.noise_suppression { "開啟" } else { "關閉" };
+        report::note(format!("錄音結束，收音 {captured_ms} ms，{measured}峰值 {peak_dbfs} dBFS，均方根 {rms_dbfs} dBFS，裁切後 {kept_ms} ms，增益 +{gain_db} dB，降噪{noise_suppression}"));
         if capture.failed {
             report::note(audio::MICROPHONE_LOST);
         }
@@ -782,7 +783,7 @@ fn toggle(app: &AppHandle) {
     };
     let meter = app.clone();
     let disconnect = app.clone();
-    let started = audio::Recorder::start_with_segments(prefs.microphone_name.clone(), move |peak| {
+    let started = audio::Recorder::start_with_segments(prefs.microphone_name.clone(), prefs.noise_suppression, move |peak| {
         if meter.state::<Session>().run.load(Ordering::SeqCst) == run {
             let _ = meter.emit("level", peak);
         }
@@ -804,8 +805,9 @@ fn toggle(app: &AppHandle) {
             report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
             let audio::CaptureInfo { name, rate, channels, format } = recorder.info();
             report::note(format!("錄音麥克風 {name:?}，取樣率 {rate} Hz，{channels} 聲道，取樣格式 {format:?}"));
-            let substitute = recorder.substitute().map(str::to_owned);
-            if let Some(note) = &substitute {
+            let notes: Vec<_> = [recorder.substitute().map(str::to_owned), audio::low_rate_note(*rate)]
+                .into_iter().flatten().collect();
+            for note in &notes {
                 report::note(note.clone());
             }
             *session.recorder.lock().unwrap() = Some(Recording { recorder, engine: prefs.engine() });
@@ -820,8 +822,8 @@ fn toggle(app: &AppHandle) {
             });
             show(app, "recording", if prefs.hold_to_talk { "錄音中，放開快捷鍵送出" } else { "錄音中，再按一次停止" }, "", false);
             // The window keeps this above the timer until the recording ends.
-            if let Some(note) = substitute {
-                let _ = app.emit("microphone", note);
+            if !notes.is_empty() {
+                let _ = app.emit("microphone", notes.join("・"));
             }
             stop_at_limit(app.clone(), run);
         }
@@ -910,7 +912,8 @@ fn import(app: &AppHandle, chosen: Option<std::path::PathBuf>) {
                 return;
             }
         }
-        let sound = std::fs::read(&file).map_err(|_| "無法讀取這個音檔".to_string()).and_then(|bytes| audio::normalise(&bytes));
+        let sound = std::fs::read(&file).map_err(|_| "無法讀取這個音檔".to_string())
+            .and_then(|bytes| audio::normalise(&bytes, prefs.noise_suppression));
         let handle = app.clone();
         let _ = app.run_on_main_thread(move || match sound {
             Ok(wav) if !busy(&handle) => recognise(&handle, Sound::Wav(wav), prefs.engine(), None),
@@ -1271,7 +1274,8 @@ fn transcribe_files(arguments: &[String]) -> i32 {
     };
     for file in files {
         let started = std::time::Instant::now();
-        let sound = std::fs::read(file).map_err(|_| "無法讀取音檔".to_string()).and_then(|bytes| audio::normalise(&bytes));
+        let sound = std::fs::read(file).map_err(|_| "無法讀取音檔".to_string())
+            .and_then(|bytes| audio::normalise(&bytes, prefs.noise_suppression));
         let heard = sound.and_then(|wav| recognise::run(engine, &prefs, wav, &|| false));
         match heard {
             Ok(text) => println!("{}", deliver::convert_script(&text, false)),
