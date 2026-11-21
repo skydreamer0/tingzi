@@ -1,6 +1,7 @@
 //! Microphone capture: records the chosen input and hands back 16 kHz mono WAV bytes.
 
 use cpal::traits::{DeviceTrait, HostTrait, StreamTrait};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
@@ -12,14 +13,40 @@ use segments::Segmenter;
 const TARGET_RATE: u32 = 16_000;
 const DAMAGED: &str = "錄音資料損毀";
 const INTERRUPTED: &str = "錄音中斷";
+pub const MICROPHONE_LOST: &str = "麥克風在錄音中斷線";
+const MICROPHONE_LOST_EMPTY: &str = "麥克風在錄音中斷線，沒有可辨識的內容";
 /// Recording stops by itself after ten minutes.
 pub const LONGEST_SECONDS: usize = 600;
 
 pub struct Recorder {
     stop: Sender<()>,
-    worker: JoinHandle<Result<Vec<u8>, String>>,
+    worker: JoinHandle<Result<FinishedCapture, String>>,
+    info: CaptureInfo,
+    failed: Arc<AtomicBool>,
     /// Set when the chosen microphone could not be used and the Windows default records instead.
     substitute: Option<String>,
+}
+
+pub struct CaptureInfo {
+    pub name: String,
+    pub rate: u32,
+    pub channels: u16,
+    pub format: cpal::SampleFormat,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct CaptureLevels {
+    pub captured_ms: usize,
+    pub kept_ms: usize,
+    pub peak_dbfs: i32,
+    pub rms_dbfs: i32,
+    pub speech_detected: bool,
+}
+
+pub struct FinishedCapture {
+    pub levels: CaptureLevels,
+    pub failed: bool,
+    pub wav: Result<Vec<u8>, String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -73,7 +100,7 @@ impl Recorder {
     /// and fails when that microphone cannot be used: the microphone test checks this one only.
     /// `level` receives the peak of each buffer, from 0 to 1.
     pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
-        Self::start_capture(move || open(microphone.as_deref(), level).map(|(stream, samples, rate)| (stream, samples, rate, None)), None)
+        Self::start_capture(move || open(microphone.as_deref(), level).map(|opened| (opened, None)), None, || {})
     }
 
     /// Starts a dictation. When the chosen microphone is unplugged or cannot be opened, the Windows
@@ -83,8 +110,9 @@ impl Recorder {
         microphone: Option<String>,
         level: impl Fn(f32) + Send + Sync + 'static,
         segments: Option<SegmentListener>,
+        on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
-        Self::start_capture(move || open_or_default(microphone.as_deref(), level), segments)
+        Self::start_capture(move || open_or_default(microphone.as_deref(), level), segments, on_failure)
     }
 
     /// What the user is told when the chosen microphone gave way to the default.
@@ -92,60 +120,68 @@ impl Recorder {
         self.substitute.as_deref()
     }
 
+    pub fn info(&self) -> &CaptureInfo {
+        &self.info
+    }
+
+    pub fn failed(&self) -> bool {
+        self.failed.load(Ordering::Relaxed)
+    }
+
     fn start_capture<Stream>(
-        open: impl FnOnce() -> Result<(Stream, Arc<Mutex<Vec<f32>>>, u32, Option<String>), String> + Send + 'static,
+        open: impl FnOnce() -> Result<(Opened<Stream>, Option<String>), String> + Send + 'static,
         segments: Option<SegmentListener>,
+        on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel::<()>();
-        let (ready, started) = mpsc::channel::<Result<Option<String>, String>>();
-        let worker = thread::spawn(move || -> Result<Vec<u8>, String> {
+        let (ready, started) = mpsc::channel();
+        let worker = thread::spawn(move || -> Result<FinishedCapture, String> {
             // The stream is not Send, so the thread that opens it also owns and closes it.
-            let (stream, samples, rate, substitute) = match open() {
+            let (Opened { stream, samples, info, failed }, substitute) = match open() {
                 Ok(parts) => parts,
                 Err(reason) => {
                     let _ = ready.send(Err(reason.clone()));
                     return Err(reason);
                 }
             };
-            let _ = ready.send(Ok(substitute));
-            let reader = if let Some((recording_id, notify)) = segments {
+            let rate = info.rate;
+            let _ = ready.send(Ok((info, substitute, failed.clone())));
+            let mut reader = segments.map(|(recording_id, notify)| {
                 let audio = SegmentAudio { samples: samples.clone(), rate };
-                let mut reader = SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)));
-                loop {
-                    match stopped.recv_timeout(Duration::from_millis(20)) {
-                        Ok(()) => break Some(reader),
-                        Err(mpsc::RecvTimeoutError::Disconnected) => return Err(INTERRUPTED.into()),
-                        Err(mpsc::RecvTimeoutError::Timeout) => {
-                            let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
-                            reader = reader.read(&samples, end)?;
-                        }
-                    }
+                SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)))
+            });
+            while !failed.load(Ordering::Relaxed) {
+                match stopped.recv_timeout(Duration::from_millis(20)) {
+                    Ok(()) => break,
+                    Err(mpsc::RecvTimeoutError::Disconnected) => return Err(INTERRUPTED.into()),
+                    Err(mpsc::RecvTimeoutError::Timeout) => {}
                 }
-            } else {
-                stopped.recv().map_err(|_| INTERRUPTED.to_string())?;
-                None
-            };
+                if let Some(current) = reader.take() {
+                    let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
+                    reader = Some(current.read(&samples, end)?);
+                }
+            }
             drop(stream);
-            let captured = samples.lock().map_err(|_| DAMAGED.to_string())?;
-            let end = captured.len();
-            let captured = if let Some(reader) = reader {
-                drop(captured);
+            let failed = failed.load(Ordering::Relaxed);
+            if failed {
+                on_failure();
+            }
+            let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
+            if let Some(reader) = reader {
                 reader.finish(&samples, end)?;
-                samples.lock().map_err(|_| DAMAGED.to_string())?
-            } else {
-                captured
-            };
-            encode_recording(&captured[..end], rate)
+            }
+            let captured = samples.lock().map_err(|_| DAMAGED.to_string())?;
+            Ok(encode_recording(&captured[..end], rate, failed))
         });
         match started.recv() {
-            Ok(Ok(substitute)) => Ok(Self { stop, worker, substitute }),
+            Ok(Ok((info, substitute, failed))) => Ok(Self { stop, worker, info, substitute, failed }),
             Ok(Err(reason)) => Err(reason),
             Err(_) => Err("無法啟動錄音".into()),
         }
     }
 
-    /// Stops recording and returns the WAV file contents.
-    pub fn finish(self) -> Result<Vec<u8>, String> {
+    /// Stops recording and returns the WAV and measurements, even when the clip is too short.
+    pub fn finish(self) -> Result<FinishedCapture, String> {
         let _ = self.stop.send(());
         self.worker.join().map_err(|_| INTERRUPTED.to_string())?
     }
@@ -208,14 +244,48 @@ impl SegmentReader {
     }
 }
 
-fn encode_recording(samples: &[f32], rate: u32) -> Result<Vec<u8>, String> {
-    if too_short(samples, rate) {
-        return Err(TOO_SHORT.into());
+fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture {
+    let speech = sound(samples, rate);
+    let measured = speech.map_or(samples, |(start, end)| &samples[start..end]);
+    let (peak, squares) = measured.iter().fold((0.0f64, 0.0), |(peak, squares), &sample| {
+        let value = f64::from(sample);
+        (peak.max(value.abs()), squares + value * value)
+    });
+    let rms = (squares / measured.len().max(1) as f64).sqrt();
+    // A finite floor keeps silent and empty recordings numeric in the report.
+    let dbfs = |value: f64| (20.0 * value.max(1e-6).log10()).round() as i32;
+    let millis = |len: usize| (len as u64 * 1000 / u64::from(rate)) as usize;
+    let too_short = shorter_than_word(measured.len(), rate);
+    let reason = if failed && (speech.is_none() || too_short) {
+        Some(MICROPHONE_LOST_EMPTY)
+    } else if too_short {
+        Some(TOO_SHORT)
+    } else {
+        None
+    };
+    let kept = if reason.is_some() { &[][..] } else { trim_with_sound(samples, rate, speech) };
+    FinishedCapture {
+        levels: CaptureLevels {
+            captured_ms: millis(samples.len()),
+            kept_ms: millis(kept.len()),
+            peak_dbfs: dbfs(peak),
+            rms_dbfs: dbfs(rms),
+            speech_detected: speech.is_some(),
+        },
+        failed,
+        wav: match reason {
+            Some(reason) => Err(reason.into()),
+            None => Ok(wav(&resample(kept, rate))),
+        },
     }
-    Ok(wav(&resample(trim(samples, rate), rate)))
 }
 
-type Opened = (cpal::Stream, Arc<Mutex<Vec<f32>>>, u32);
+struct Opened<Stream = cpal::Stream> {
+    stream: Stream,
+    samples: Arc<Mutex<Vec<f32>>>,
+    info: CaptureInfo,
+    failed: Arc<AtomicBool>,
+}
 
 /// The names of the microphones Windows can record from right now.
 pub fn microphones() -> Vec<String> {
@@ -232,22 +302,20 @@ fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Resul
 }
 
 /// Opens the chosen microphone, or the system default when the chosen one is not there or will not open.
-fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync + 'static) -> Result<(cpal::Stream, Arc<Mutex<Vec<f32>>>, u32, Option<String>), String> {
+fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync + 'static) -> Result<(Opened, Option<String>), String> {
     let Some(name) = microphone else {
-        return open(None, level).map(|(stream, samples, rate)| (stream, samples, rate, None));
+        return open(None, level).map(|opened| (opened, None));
     };
     let level = Arc::new(level);
     let host = cpal::default_host();
     let shared = level.clone();
     let default = host.default_input_device();
-    let (opened, substitute) = chosen_or_default(
+    chosen_or_default(
         name,
         || find(&host, name).ok_or_else(|| missing(name)).and_then(|device| open_device(&device, move |peak| (*shared)(peak))),
         default.as_ref().and_then(|device| device.name().ok()),
         || default.as_ref().ok_or_else(String::new).and_then(|device| open_device(device, move |peak| (*level)(peak))),
-    )?;
-    let (stream, samples, rate) = opened;
-    Ok((stream, samples, rate, substitute))
+    )
 }
 
 /// Tries the chosen microphone, then the default one unless it is the same microphone. A failure of the
@@ -281,41 +349,54 @@ fn substitute_note(wanted: &str, used: &str) -> String {
 
 fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
     let config = device.default_input_config().map_err(|_| "無法讀取麥克風格式")?;
-    let channels = usize::from(config.channels().max(1));
-    let rate = config.sample_rate().0;
+    let info = CaptureInfo {
+        name: device.name().unwrap_or_else(|_| "未知".into()),
+        rate: config.sample_rate().0,
+        channels: config.channels(),
+        format: config.sample_format(),
+    };
+    let channels = usize::from(info.channels.max(1));
     let samples = Arc::new(Mutex::new(Vec::<f32>::new()));
     let sink = samples.clone();
-    let limit = rate as usize * LONGEST_SECONDS;
+    let limit = info.rate as usize * LONGEST_SECONDS;
+    let failed = Arc::new(AtomicBool::new(false));
+    let failure = failed.clone();
     // Mixes each frame down to mono and reports how loud the buffer was.
     let keep = move |frames: &mut dyn Iterator<Item = f32>| {
-        let peak = sink.lock().map(|mut held| capture_mono(&mut held, frames, channels, limit)).unwrap_or(0.0);
+        let Ok(mut held) = sink.lock() else { return };
+        if failure.load(Ordering::Relaxed) {
+            return;
+        }
+        let peak = capture_mono(&mut held, frames, channels, limit);
+        drop(held);
         level(peak.min(1.0));
     };
-    let failed = |_: cpal::StreamError| {};
-    let stream = match config.sample_format() {
+    let failure = failed.clone();
+    let mark_failed = move |_: cpal::StreamError| failure.store(true, Ordering::Relaxed);
+    let stream = match info.format {
         cpal::SampleFormat::F32 => device.build_input_stream(
             &config.into(),
             move |data: &[f32], _: &cpal::InputCallbackInfo| keep(&mut data.iter().copied()),
-            failed,
+            mark_failed,
             None,
         ),
         cpal::SampleFormat::I16 => device.build_input_stream(
             &config.into(),
             move |data: &[i16], _: &cpal::InputCallbackInfo| keep(&mut data.iter().map(|&s| f32::from(s) / 32768.0)),
-            failed,
+            mark_failed,
             None,
         ),
         cpal::SampleFormat::U16 => device.build_input_stream(
             &config.into(),
             move |data: &[u16], _: &cpal::InputCallbackInfo| keep(&mut data.iter().map(|&s| (f32::from(s) - 32768.0) / 32768.0)),
-            failed,
+            mark_failed,
             None,
         ),
         _ => return Err("不支援這支麥克風的取樣格式".into()),
     }
     .map_err(|_| format!("無法開啟麥克風，請確認 {} 的麥克風權限", crate::sys::SYSTEM))?;
     stream.play().map_err(|_| "無法開始錄音")?;
-    Ok((stream, samples, rate))
+    Ok(Opened { stream, samples, info, failed })
 }
 
 fn capture_mono(samples: &mut Vec<f32>, frames: impl Iterator<Item = f32>, channels: usize, limit: usize) -> f32 {
@@ -368,17 +449,22 @@ const SHORTEST_SOUND_MS: usize = 200;
 /// noise in an otherwise quiet recording. Recognisers tend to make words up from such clips.
 /// A longer recording in which nothing stands out is not judged here; the recogniser answers with no text.
 fn too_short(samples: &[f32], rate: u32) -> bool {
-    let shortest = rate as usize * SHORTEST_SOUND_MS / 1000;
-    match sound(samples, rate) {
-        Some((start, end)) => end - start < shortest,
-        None => samples.len() < shortest,
-    }
+    let length = sound(samples, rate).map_or(samples.len(), |(start, end)| end - start);
+    shorter_than_word(length, rate)
+}
+
+fn shorter_than_word(length: usize, rate: u32) -> bool {
+    length < (u64::from(rate) * SHORTEST_SOUND_MS as u64 / 1000) as usize
 }
 
 /// Drops the silence before and after speech, keeping a quarter second on each side.
 /// Less audio means a smaller upload and a faster answer; a recording with no clear speech is left whole.
 fn trim(samples: &[f32], rate: u32) -> &[f32] {
-    let Some((first, last)) = sound(samples, rate) else { return samples };
+    trim_with_sound(samples, rate, sound(samples, rate))
+}
+
+fn trim_with_sound(samples: &[f32], rate: u32, speech: Option<(usize, usize)>) -> &[f32] {
+    let Some((first, last)) = speech else { return samples };
     let margin = rate as usize / 4;
     let start = first.saturating_sub(margin);
     let end = (last + margin).min(samples.len());
@@ -388,13 +474,15 @@ fn trim(samples: &[f32], rate: u32) -> &[f32] {
     &samples[start..end]
 }
 
-/// Linear resampling is enough for speech going to a recogniser.
 fn resample(samples: &[f32], rate: u32) -> Vec<f32> {
     if rate == TARGET_RATE || samples.is_empty() {
         return samples.to_vec();
     }
     let step = f64::from(rate) / f64::from(TARGET_RATE);
-    let length = (samples.len() as f64 / step) as usize;
+    let length = (samples.len() as u64 * u64::from(TARGET_RATE) / u64::from(rate)) as usize;
+    if rate > TARGET_RATE {
+        return downsample(samples, rate, step, length);
+    }
     (0..length)
         .map(|i| {
             let at = i as f64 * step;
@@ -404,6 +492,63 @@ fn resample(samples: &[f32], rate: u32) -> Vec<f32> {
             samples[left] * (1.0 - mix) + samples[right] * mix
         })
         .collect()
+}
+
+fn downsample(samples: &[f32], rate: u32, step: f64, length: usize) -> Vec<f32> {
+    use std::f64::consts::PI;
+
+    if length == 0 {
+        return Vec::new();
+    }
+    let cutoff = 7_400.0 / f64::from(rate);
+    let radius = ((12.0 * step).ceil() as usize).min(512);
+    let taps = 2 * radius + 1;
+    let (mut a, mut b) = (rate, TARGET_RATE);
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    // Use exact phases for common device rates, with bounded tables for unusual WAV rates.
+    let phases = (TARGET_RATE / a).min(256);
+    let mut kernels = Vec::with_capacity(phases as usize * taps);
+    for phase in 0..phases {
+        let frac = f64::from(phase) / f64::from(phases);
+        let start = kernels.len();
+        let mut sum = 0.0;
+        for tap in 0..taps {
+            let offset = tap as f64 - radius as f64 - frac;
+            let sinc_at = 2.0 * PI * cutoff * offset;
+            let sinc = if sinc_at == 0.0 { 1.0 } else { sinc_at.sin() / sinc_at };
+            let angle = PI * offset / radius as f64;
+            let window = if offset.abs() <= radius as f64 {
+                0.42 + 0.5 * angle.cos() + 0.08 * (2.0 * angle).cos()
+            } else {
+                0.0
+            };
+            let weight = 2.0 * cutoff * sinc * window;
+            sum += weight;
+            kernels.push(weight as f32);
+        }
+        for weight in &mut kernels[start..] {
+            *weight /= sum as f32;
+        }
+    }
+
+    (0..length).map(|i| {
+        let at = i as u64 * u64::from(rate);
+        let center = (at / u64::from(TARGET_RATE)) as usize;
+        let remainder = (at % u64::from(TARGET_RATE)) as u32;
+        let phase = (remainder * phases / TARGET_RATE) as usize;
+        let kernel = &kernels[phase * taps..][..taps];
+        if center >= radius && center + radius < samples.len() {
+            let frame = &samples[center - radius..][..taps];
+            frame.iter().zip(kernel).map(|(sample, weight)| sample * weight).sum()
+        } else {
+            kernel.iter().enumerate().map(|(tap, weight)| {
+                let index = (center + tap).saturating_sub(radius).min(samples.len() - 1);
+                samples[index] * weight
+            }).sum()
+        }
+    }).collect()
 }
 
 fn wav(samples: &[f32]) -> Vec<u8> {
@@ -485,6 +630,85 @@ pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
 mod tests {
     use super::*;
 
+    fn test_input<Stream>(stream: Stream, samples: Arc<Mutex<Vec<f32>>>, rate: u32) -> Opened<Stream> {
+        Opened {
+            stream,
+            samples,
+            info: CaptureInfo { name: "測試麥克風".into(), rate, channels: 2, format: cpal::SampleFormat::I16 },
+            failed: Arc::new(AtomicBool::new(false)),
+        }
+    }
+
+    #[test]
+    fn reports_input_format_and_measures_speech_without_trim_margins() {
+        let rate = 16_000;
+        let mut samples = vec![0.001; rate as usize * 2];
+        samples.extend(std::iter::repeat_n(0.5, rate as usize / 2));
+        samples.extend(std::iter::repeat_n(-0.25, rate as usize / 2));
+        samples.resize(rate as usize * 6, 0.001);
+        let recorder = Recorder::start_capture(
+            move || Ok((test_input((), Arc::new(Mutex::new(samples)), rate), None)),
+            None,
+            || {},
+        ).unwrap();
+        let info = recorder.info();
+        assert_eq!((&*info.name, info.rate, info.channels, info.format), ("測試麥克風", 16_000, 2, cpal::SampleFormat::I16));
+        let capture = recorder.finish().unwrap();
+        assert_eq!(capture.levels, CaptureLevels {
+            captured_ms: 6000, kept_ms: 1500, peak_dbfs: -6, rms_dbfs: -8, speech_detected: true,
+        });
+        assert_eq!(capture.wav.unwrap().len(), 44 + 24_000 * 2);
+    }
+
+    #[test]
+    fn a_disconnect_keeps_speech_but_reports_an_error_for_silence_or_a_click() {
+        let speech = vec![0.25; 4000];
+        let saved = encode_recording(&speech, 16_000, true);
+        assert!(saved.failed);
+        assert_eq!(saved.wav, Ok(wav(&speech)));
+        assert_eq!(saved.levels.kept_ms, 250);
+
+        let mut click = vec![0.0; 16_000];
+        click[8_000] = 0.5;
+        for unusable in [&[][..], &vec![0.0; 16_000], &click] {
+            let failed = encode_recording(unusable, 16_000, true);
+            assert_eq!(failed.wav, Err("麥克風在錄音中斷線，沒有可辨識的內容".into()));
+            assert_eq!(failed.levels.kept_ms, 0);
+        }
+        let silent = encode_recording(&[0.001; 16_000], 16_000, false);
+        assert_eq!(silent.levels, CaptureLevels {
+            captured_ms: 1000, kept_ms: 1000, peak_dbfs: -60, rms_dbfs: -60, speech_detected: false,
+        });
+        assert!(silent.wav.is_ok());
+    }
+
+    #[test]
+    fn stream_failure_closes_capture_before_requesting_recognition() {
+        struct Stream(Sender<()>);
+        impl Drop for Stream {
+            fn drop(&mut self) {
+                self.0.send(()).unwrap();
+            }
+        }
+        let (closed, stream_closed) = mpsc::channel();
+        let (notify, notified) = mpsc::channel();
+        let speech = vec![0.25; 4000];
+        let opened_samples = Arc::new(Mutex::new(speech.clone()));
+        let recorder = Recorder::start_capture(
+            move || Ok((test_input(Stream(closed), opened_samples, 16_000), None)),
+            None,
+            move || {
+                stream_closed.try_recv().unwrap();
+                notify.send(()).unwrap();
+            },
+        ).unwrap();
+        recorder.failed.store(true, Ordering::Relaxed);
+        notified.recv_timeout(Duration::from_secs(2)).unwrap();
+        let capture = recorder.finish().unwrap();
+        assert!(capture.failed);
+        assert_eq!(capture.wav, Ok(wav(&speech)));
+    }
+
     #[test]
     fn a_missing_microphone_gives_way_to_the_default_and_says_which() {
         let opened = chosen_or_default("Bose 耳麥", || Err::<u8, _>(missing("Bose 耳麥")), Some("Realtek 麥克風".into()), || Ok(2));
@@ -524,7 +748,7 @@ mod tests {
         input.resize(110 * frame, 0.0);
         let open = || {
             let samples = Arc::new(Mutex::new(input.clone()));
-            move || Ok((TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate, None))
+            move || Ok((test_input(TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate), None))
         };
         let (send, received) = mpsc::channel();
         let listener: SegmentListener = (19, Box::new(move |event, audio| {
@@ -532,26 +756,26 @@ mod tests {
             let wav = audio.encode(segment.start..segment.end).unwrap();
             send.send((segment, wav)).unwrap();
         }));
-        let recorder = Recorder::start_capture(open(), Some(listener)).unwrap();
+        let recorder = Recorder::start_capture(open(), Some(listener), || {}).unwrap();
         let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(first.0, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
         assert_eq!(first.1, wav(&resample(&input[5 * frame..75 * frame], rate)));
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Empty));
 
-        let segmented = recorder.finish();
+        let segmented = recorder.finish().unwrap().wav;
         assert_eq!(received.try_recv().unwrap().0, Segment { recording_id: 19, sequence: 2, start: 85 * frame, end: 131 * frame });
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
-        let full = Recorder::start_capture(open(), None).unwrap().finish();
+        let full = Recorder::start_capture(open(), None, || {}).unwrap().finish().unwrap().wav;
         input.extend(std::iter::repeat_n(0.25, 21 * frame));
         assert_eq!(full, Ok(wav(&resample(trim(&input, rate), rate))));
         assert_eq!(segmented, full);
 
-        let brief = move || Ok(((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate, None));
+        let brief = move || Ok((test_input((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate), None));
         let listener: SegmentListener = (20, Box::new(|event, _| {
             assert!(matches!(event, SegmentEvent::Incomplete));
         }));
         for option in [None, Some(listener)] {
-            let result = Recorder::start_capture(brief, option).unwrap().finish();
+            let result = Recorder::start_capture(brief, option, || {}).unwrap().finish().unwrap().wav;
             assert_eq!(result, Err(TOO_SHORT.to_string()));
         }
     }
@@ -637,7 +861,43 @@ mod tests {
     fn resampling_keeps_duration() {
         let second: Vec<f32> = (0..48_000).map(|i| (i as f32 / 48_000.0).sin()).collect();
         assert_eq!(resample(&second, 48_000).len(), 16_000);
+        assert_eq!(resample(&second[..44_100], 44_100).len(), 16_000);
         assert_eq!(resample(&second, 16_000).len(), 48_000);
+    }
+
+    fn tone(rate: u32, frequency: u32) -> Vec<f32> {
+        (0..rate).map(|i| {
+            let phase = (i * frequency) % rate;
+            (std::f32::consts::TAU * phase as f32 / rate as f32).sin() * 0.5
+        }).collect()
+    }
+
+    fn rms(samples: &[f32]) -> f32 {
+        (samples.iter().map(|sample| sample * sample).sum::<f32>() / samples.len() as f32).sqrt()
+    }
+
+    #[test]
+    fn downsampling_keeps_a_speech_band_tone() {
+        for rate in [44_100, 48_000] {
+            let input = tone(rate, 1000);
+            let output = resample(&input, rate);
+            let change = 20.0 * (rms(&output) / rms(&input)).log10();
+            assert!(change.abs() < 1.0, "{rate} Hz input: {change} dB");
+        }
+    }
+
+    #[test]
+    fn downsampling_rejects_a_tone_above_the_output_nyquist_frequency() {
+        let input = tone(48_000, 12_000);
+        let output = resample(&input, 48_000);
+        let change = 20.0 * (rms(&output) / rms(&input)).log10();
+        assert!(change < -30.0, "{change} dB");
+    }
+
+    #[test]
+    fn resampling_at_the_target_rate_preserves_each_sample() {
+        let input = [0.125, -0.75, 0.0, 0.25];
+        assert_eq!(resample(&input, 16_000), input);
     }
 
     #[test]

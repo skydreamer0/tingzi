@@ -399,6 +399,36 @@ enum Sound {
     Wav(Vec<u8>),
 }
 
+const RECOVER_RECORDING: &str = "麥克風斷線，辨識已錄內容・再點一下取消";
+
+impl Sound {
+    fn finish(self) -> (Result<Vec<u8>, String>, bool) {
+        let capture = match self {
+            Self::Wav(wav) => return (Ok(wav), false),
+            Self::Recording(recorder) => recorder.finish(),
+        };
+        let capture = match capture {
+            Ok(capture) => capture,
+            Err(reason) => return (Err(reason), false),
+        };
+        let audio::CaptureLevels { captured_ms, kept_ms, peak_dbfs, rms_dbfs, speech_detected } = capture.levels;
+        let measured = if speech_detected { "語音" } else { "全段" };
+        report::note(format!("錄音結束，收音 {captured_ms} ms，{measured}峰值 {peak_dbfs} dBFS，均方根 {rms_dbfs} dBFS，裁切後 {kept_ms} ms"));
+        if capture.failed {
+            report::note(audio::MICROPHONE_LOST);
+        }
+        (capture.wav, capture.failed)
+    }
+}
+
+fn microphone_result(message: String, failed: bool) -> String {
+    if failed && !message.starts_with(audio::MICROPHONE_LOST) {
+        format!("{}・{message}", audio::MICROPHONE_LOST)
+    } else {
+        message
+    }
+}
+
 struct Recording {
     recorder: audio::Recorder,
     engine: Engine,
@@ -422,7 +452,9 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
     };
     session.working.store(true, Ordering::SeqCst);
     let rewrite = session.rewrite.lock().unwrap().take();
-    let label = if streaming.is_some() {
+    let label = if matches!(&sound, Sound::Recording(recorder) if recorder.failed()) {
+        RECOVER_RECORDING
+    } else if streaming.is_some() {
         "逐句辨識中・再點一下取消"
     } else {
         recognise::working_label(engine, &Settings::load())
@@ -439,10 +471,10 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         let rule = rule_for(target);
         let main = Settings::load();
         let prefs = apps::effective(&main, rule.as_ref());
-        let wav = match sound {
-            Sound::Recording(recorder) => recorder.finish(),
-            Sound::Wav(wav) => Ok(wav),
-        };
+        let (wav, failed) = sound.finish();
+        if failed && wav.is_ok() && label != RECOVER_RECORDING {
+            working(&app, run, RECOVER_RECORDING);
+        }
         let started = Instant::now();
         let transcript = streaming.map(|requests| {
             let transcript = if wav.is_ok() {
@@ -472,11 +504,14 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         let mut missed = false;
         let heard = match (live.as_deref(), wav.as_ref(), transcript) {
             (_, _, Some(streaming_asr::Transcript::Cancelled)) => return,
+            (_, Err(reason), _) if failed => Err(reason.clone()),
             (Some(live), _, transcript) => {
                 // A sentence failed part-way: only the recording after the last recognised sentence is heard again.
                 if transcript == Some(streaming_asr::Transcript::FullRecording) {
                     report::note("逐句辨識中斷，補辨識剩下的錄音");
-                    working(&app, run, "辨識剩下的錄音・再點一下取消");
+                    if !failed {
+                        working(&app, run, "辨識剩下的錄音・再點一下取消");
+                    }
                     let from = live.typing.lock().unwrap().heard_to();
                     let audio = live.audio.lock().unwrap().clone();
                     let rest = audio.ok_or_else(|| "錄音資料損毀".to_string()).and_then(|audio| audio.encode_from(from));
@@ -496,7 +531,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             (None, Err(reason), _) => Err(reason.clone()),
             (None, _, Some(streaming_asr::Transcript::Sentences(text))) => Ok(text),
             (None, Ok(wav), transcript) => {
-                if transcript == Some(streaming_asr::Transcript::FullRecording) {
+                if !failed && transcript == Some(streaming_asr::Transcript::FullRecording) {
                     working(&app, run, "整段辨識中・再點一下取消");
                 }
                 recognise::run(engine, &prefs, wav.clone(), &cancelled)
@@ -604,7 +639,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 deliver::end();
             }
             session.working.store(false, Ordering::SeqCst);
-            show(&handle, state, message, text, expand);
+            show(&handle, state, microphone_result(message, failed), text, expand);
             // The page folds the preview back once the user has left it alone for this long.
             if settles {
                 let _ = handle.emit("settle", deliver::SETTLE_SECONDS);
@@ -619,10 +654,10 @@ fn rewrite_with(app: &AppHandle, run: u64, sound: Sound, engine: Engine, target:
     let session = app.state::<Session>();
     let cancelled = || session.run.load(Ordering::SeqCst) != run;
     let prefs = Settings::load();
-    let wav = match sound {
-        Sound::Recording(recorder) => recorder.finish(),
-        Sound::Wav(wav) => Ok(wav),
-    };
+    let (wav, failed) = sound.finish();
+    if failed && wav.is_ok() {
+        working(app, run, RECOVER_RECORDING);
+    }
     let heard = wav.and_then(|wav| recognise::run(engine, &prefs, wav, &cancelled));
     if cancelled() {
         return;
@@ -661,7 +696,7 @@ fn rewrite_with(app: &AppHandle, run: u64, sound: Sound, engine: Engine, target:
     };
     deliver::end();
     session.working.store(false, Ordering::SeqCst);
-    show(app, state, message, text, expand);
+    show(app, state, microphone_result(message, failed), text, expand);
 }
 
 /// Ctrl+Alt+E: copies the selected text and starts recording the command for it; pressing it again sends.
@@ -746,16 +781,29 @@ fn toggle(app: &AppHandle) {
         None
     };
     let meter = app.clone();
+    let disconnect = app.clone();
     let started = audio::Recorder::start_with_segments(prefs.microphone_name.clone(), move |peak| {
         if meter.state::<Session>().run.load(Ordering::SeqCst) == run {
             let _ = meter.emit("level", peak);
         }
-    }, segments);
+    }, segments, move || {
+        let handle = disconnect.clone();
+        let _ = disconnect.run_on_main_thread(move || {
+            let session = handle.state::<Session>();
+            if session.run.load(Ordering::SeqCst) == run && session.recorder.lock().unwrap().is_some() {
+                session.held_since.lock().unwrap().take();
+                let _ = handle.emit("microphone", audio::MICROPHONE_LOST);
+                toggle(&handle);
+            }
+        });
+    });
     match started {
         Ok(recorder) => {
             // The program's name only, never what is in it, so a report says where the dictation was going.
             let program = (spot.process != 0).then(|| apps::program(spot.process)).flatten().unwrap_or_else(|| "無".into());
             report::note(format!("錄音中，{}，目標程式 {program}", report_engine(prefs.engine())));
+            let audio::CaptureInfo { name, rate, channels, format } = recorder.info();
+            report::note(format!("錄音麥克風 {name:?}，取樣率 {rate} Hz，{channels} 聲道，取樣格式 {format:?}"));
             let substitute = recorder.substitute().map(str::to_owned);
             if let Some(note) = &substitute {
                 report::note(note.clone());
