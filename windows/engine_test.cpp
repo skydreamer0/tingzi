@@ -12,6 +12,59 @@ int wmain(int argc,wchar_t** argv) {
         std::cout<<"PASS "<<label<<"\n";
     };
     auto enter=[&](const char* keys){for(const char* k=keys;*k;++k)input.press((WPARAM)*k);};
+    auto letters=[&](const wchar_t* chars){for(;*chars;++chars)input.press(letterKey|WPARAM(*chars));};
+    expect(!input.wants(letterKey|'a') && !input.wants(shiftKey|'A'),"English letters pass through when idle");
+    enter("SU3");letters(L"abc");enter("CL3");
+    expect(input.press(VK_RETURN)==L"你abc好","English letters join the composition");
+    enter("SU3");
+    for(WPARAM key:{'A','B','C'})input.press(shiftKey|key);
+    enter("CL3");
+    expect(input.press(VK_RETURN)==L"你ABC好","Shift letters join the composition in uppercase");
+
+    enter("SU3CL3");input.press(VK_LEFT);letters(L"abc");
+    expect(input.preview()==L"你abc好" && input.caretOffset()==4,"English is inserted at the caret one character at a time");
+    enter("A87");
+    expect(input.press(VK_RETURN)==L"你abc嗎好" && !input.committedSentence() && !input.typedWord(),"Zhuyin resumes after English without remembering the sentence");
+
+    enter("SU3");letters(L"abc");
+    input.press(VK_BACK);expect(input.preview()==L"你ab","Backspace deletes the last English letter");
+    input.press(VK_BACK);expect(input.preview()==L"你a","Backspace deletes the next English letter");
+    input.press(VK_BACK);expect(input.preview()==L"你","Backspace leaves the preceding Chinese character");
+    letters(L"a b");input.press(VK_HOME);input.press(VK_RIGHT);input.press(VK_RIGHT);
+    expect(input.caretOffset()==2 && input.preview()==L"你a b","English space occupies one caret position");
+    input.press(VK_UP);input.press(VK_DOWN);
+    expect(!input.selecting(),"Up and Down do not open a list for an English character");
+    input.press(VK_DELETE);input.press(VK_END);
+    expect(input.caretOffset()==3 && input.preview()==L"你ab" && !input.selecting(),"Delete removes the space and End moves to the tail");
+    input.press(VK_ESCAPE);expect(!input.active(),"Escape clears the mixed composition");
+
+    enter("SU3CL3");input.press(VK_LEFT);input.press(caretEndKey);
+    expect(input.caretOffset()==2 && !input.selecting(),"English End moves to the tail before any English is typed");
+    input.clear();
+    input.setSimplifiedOutput(true);
+    enter("U");letters(L"Ａ　!");enter("A87");
+    expect(input.press(VK_RETURN)==L"一Ａ　!吗","Letter input finishes the raw syllable and survives simplified output");
+    input.setSimplifiedOutput(false);
+    enter("SU3");
+    for(size_t i=0;i<128;++i)input.press(letterKey|'a');
+    expect(input.press(VK_RETURN)==L"你"+Text(127,L'a'),"Mixed input respects the 128-syllable limit");
+
+    input.setPreferences(std::make_shared<const Preferences>());
+    enter("SU3");input.press(VK_DOWN);
+    expect(!input.wants(letterKey|'a') && !input.wants(shiftKey|'A'),"Letter input does not take keys from the candidate list");
+    input.press('2');
+    expect(input.corrections().size()==1,"Choosing a different character records a correction in Chinese");
+    letters(L"a");enter("CL3A87");
+    expect(input.corrections().empty() && input.newWords().empty() && !input.wants(controlKey|'2'),"A mixed composition skips correction and word learning");
+    expect(input.press(shiftKey|VK_RETURN)==L"妳a好嗎" && !input.addedWord() && !input.typedWord() && !input.committedSentence(),"Shift+Enter commits mixed text without learning it");
+    input.setPreferences(nullptr);
+
+    enter("SU3");letters(L"abc");enter("CL3");input.press(VK_DOWN);
+    expect(input.selecting() && !input.choices().empty() && input.choices()[0].text==L"你","English ends the first Chinese candidate run");
+    input.press(VK_RETURN);input.press(VK_DOWN);
+    expect(input.selecting() && !input.choices().empty() && input.choices()[0].text==L"好","Choosing again skips English and reaches the next Chinese run");
+    input.press(VK_RETURN);
+    expect(input.press(VK_RETURN)==L"你abc好","Choosing both Chinese runs leaves English untouched");
     enter("S");
     auto runs=input.displayRuns();
     expect(runs.before.empty() && runs.active==L"ㄋ" && runs.after.empty(),"first key is the active reading");
