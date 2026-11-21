@@ -89,6 +89,7 @@ Type: dirifempty; Name: "{app}"
 var
   WasInstalled: Boolean;
   DownloadPage: TDownloadWizardPage;
+  InstallProgressPage: TOutputMarqueeProgressWizardPage;
   DeletePersonalData: Boolean;
   FloatWasRunning_: Boolean;
 
@@ -137,6 +138,31 @@ end;
 procedure InitializeWizard;
 begin
   DownloadPage := CreateDownloadPage('下載 WebView2 Runtime', '語音浮窗需要 Microsoft Edge WebView2 Runtime。', @OnDownloadProgress);
+  if not WizardSilent then
+    InstallProgressPage := CreateOutputMarqueeProgressPage('正在安裝聽字', '安裝完成前，請不要關閉這個視窗。');
+end;
+
+// 子程序沒有回報百分比，這裡只在實際換步驟時更新文字。
+procedure ReportInstallStage(const Stage: String);
+begin
+  if not WizardSilent then
+    InstallProgressPage.SetText(Stage, '');
+end;
+
+procedure ShowInstallProgress(const Stage: String);
+begin
+  if not WizardSilent then
+  begin
+    ReportInstallStage(Stage);
+    InstallProgressPage.Show;
+    InstallProgressPage.Animate;
+  end;
+end;
+
+procedure HideInstallProgress;
+begin
+  if not WizardSilent then
+    InstallProgressPage.Hide;
 end;
 
 function InstallWebView2: Boolean;
@@ -241,16 +267,13 @@ begin
   Result := '''' + Value + '''';
 end;
 
-// 在複製任何檔案、登記應用程式清單之前註冊輸入法。這裡回傳文字就會停止安裝並顯示原因，
-// 不會留下半套的安裝；AfterInstall 裡丟出例外只會顯示錯誤，安裝照樣完成。
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+// 完成程式檔複製與輸入法註冊後，才讓 Inno Setup 登記應用程式清單。
+function InstallPayload: String;
 var
   Code: Integer;
   Payload, Archive, Output: String;
 begin
   Result := '';
-  if WizardSilent then
-    InstallWebView2Quietly;
   ExtractTemporaryFile('payload.zip');
   Archive := ExpandConstant('{tmp}\payload.zip');
   Payload := ExpandConstant('{tmp}\payload');
@@ -266,6 +289,7 @@ begin
     Result := '無法解開安裝內容（代碼 ' + IntToStr(Code) + '）。請重新下載安裝程式。';
     exit;
   end;
+  ReportInstallStage('正在複製程式檔並註冊注音輸入法…');
   if not Exec(ExpandConstant('{cmd}'), '/c ""' + Payload + '\InstallTingzi.cmd" /quiet > "' + Output + '" 2>&1"', Payload, SW_HIDE, ewWaitUntilTerminated, Code) then
   begin
     Result := '無法執行安裝腳本。';
@@ -278,12 +302,26 @@ begin
     Result := InstallFailure(Code);
     exit;
   end;
+  ReportInstallStage('正在完成安裝準備…');
   // 新版的語音浮窗和舊版用同一個單一執行個體名稱，舊版還開著時新版開不起來，所以先關掉舊版。
   // 設定每改一次就存檔，關掉不會遺失設定。taskkill 找到並結束程式時回傳 0。
   if WasInstalled and Exec(ExpandConstant('{sys}\taskkill.exe'), '/f /im TingziFloat.exe', '', SW_HIDE, ewWaitUntilTerminated, Code) and (Code = 0) then
   begin
     FloatWasRunning_ := True;
     Log('Closed the running voice window; it will be opened again after setup.');
+  end;
+end;
+
+// 這裡回傳文字就會停止安裝並顯示原因，不會讓 Inno Setup 繼續登記。
+function PrepareToInstall(var NeedsRestart: Boolean): String;
+begin
+  if WizardSilent then
+    InstallWebView2Quietly;
+  ShowInstallProgress('正在解開安裝檔…');
+  try
+    Result := InstallPayload;
+  finally
+    HideInstallProgress;
   end;
 end;
 
@@ -323,7 +361,14 @@ end;
 procedure CurStepChanged(CurStep: TSetupStep);
 begin
   if CurStep = ssPostInstall then
-    AddToUserKeyboards;
+  begin
+    ShowInstallProgress('正在將聽字加入你的鍵盤清單…');
+    try
+      AddToUserKeyboards;
+    finally
+      HideInstallProgress;
+    end;
+  end;
 end;
 
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

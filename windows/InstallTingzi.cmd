@@ -29,8 +29,8 @@ for %%f in (Tingzi.cin phrases.txt McBopomofo-LICENSE.txt ACKNOWLEDGEMENTS.md) d
 )
 "%TARGET%\TingziSetup64.exe" install || goto failed
 "%TARGET%\TingziSetup32.exe" install || goto failed
-"%TARGET%\TingziSetup64.exe" status || goto failed
-"%TARGET%\TingziSetup32.exe" status || goto failed
+rem Each install loads its DLL and verifies its TSF profile. A new status process can still see
+rem the pre-install profile list. The upgrade below checks the persisted bindings in both views.
 "%~dp0TingziVersion.exe" upgrade || goto failed
 call :voiceShortcuts || exit /b
 call :keyboards

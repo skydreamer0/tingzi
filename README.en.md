@@ -50,7 +50,7 @@ The app itself, its settings and the detailed manuals are in Traditional Chinese
 2. Double-click it and follow the steps; choose Yes when Windows asks whether to allow changes.
 3. When it finishes, the voice window appears at the right of the screen and walks you through choosing a microphone and a recognition method. Press Windows+Space to switch to 聽字・注音與語音輸入法.
 
-Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) and downloads the Microsoft Edge WebView2 Runtime if it is missing. You don't need .NET. Running a newer installer on a computer that has Tingzi upgrades it; to uninstall, open Windows Settings → Apps → Installed apps and choose Uninstall. Versions up to 0.7.7 came as a ZIP with `InstallTingzi.cmd`. See the [Windows manual](windows/README.md) for other details.
+While setup runs, it shows when it is unpacking files, copying files and registering the input method, or adding Tingzi to your keyboards. Setup adds Tingzi to your keyboards (adding Chinese (Taiwan) if it is missing) and downloads the Microsoft Edge WebView2 Runtime if it is missing. You don't need .NET. Running a newer installer on a computer that has Tingzi upgrades it; to uninstall, open Windows Settings → Apps → Installed apps and choose Uninstall. Versions up to 0.7.7 came as a ZIP with `InstallTingzi.cmd`. See the [Windows manual](windows/README.md) for other details.
 
 > [!NOTE]
 > This is a preview. The installer is not code-signed, so Windows may show "Windows protected your PC"; choose More info, then Run anyway. Each release includes a `.sha256` file you can use to check the download.
