@@ -339,8 +339,11 @@ inline constexpr WPARAM shiftKey=0x10000;
 inline constexpr WPARAM literalKey=0x20000;
 // Set on a digit pressed while only Ctrl is held: keep that many characters before the caret as a word.
 inline constexpr WPARAM controlKey=0x40000;
+inline constexpr WPARAM letterKey=0x80000;
+inline constexpr WPARAM caretEndKey=0x100000;
 // First character of a pseudo-syllable that carries a symbol through the composition.
 inline constexpr wchar_t symbolMark=L'\x01';
+inline constexpr wchar_t letterMark=L'\x02';
 // The symbol list, by kind. The first group opens with the list; Tab moves to the next.
 struct SymbolGroup { const wchar_t* name; std::vector<const wchar_t*> marks; };
 inline const SymbolGroup symbolGroups[]={
@@ -433,6 +436,9 @@ class Input {
     // the next key shows it began a syllable of its own. `held` is `spare` as the current key found it.
     std::optional<wchar_t> spare, held;
     static bool symbol(const Text& syllable){return !syllable.empty() && syllable[0]==symbolMark;}
+    static bool letter(const Text& syllable){return !syllable.empty() && syllable[0]==letterMark;}
+    static bool literalSyllable(const Text& syllable){return symbol(syllable) || letter(syllable);}
+    bool hasLetters() const {return std::any_of(syllables.begin(),syllables.end(),letter);}
     void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;symbolTarget.reset();bracketSide.reset();}
     std::optional<size_t> symbolBeforeCaret() const {
         const size_t at=caret.value_or(syllables.size());
@@ -476,7 +482,7 @@ class Input {
     }
     // What the user picked for this syllable before, in any sentence, the latest pick first.
     const std::vector<std::pair<Text,int>>* favored(size_t pos) const {
-        if(!favorites || pos>=syllables.size() || symbol(syllables[pos]))return nullptr;
+        if(!favorites || pos>=syllables.size() || literalSyllable(syllables[pos]))return nullptr;
         auto found=favorites->find(dict.reading(syllables[pos]));
         return found==favorites->end()?nullptr:&found->second;
     }
@@ -500,7 +506,11 @@ class Input {
     // The first syllable the user has not settled; choosing from the left starts here.
     size_t firstFree() const {
         size_t pos=0;
-        for(const auto& seg:settled){if(seg.at!=pos)break;pos+=seg.count;}
+        while(pos<syllables.size()){
+            if(letter(syllables[pos]))++pos;
+            else if(const Segment* seg=owner(pos))pos+=seg->count;
+            else break;
+        }
         return pos;
     }
     // Where the next settled stretch at or after `pos` begins.
@@ -539,10 +549,10 @@ class Input {
     }
     std::vector<Choice> words(size_t pos) const {
         std::vector<Choice> result;
-        if(symbol(syllables[pos]))return {{syllables[pos].substr(1),1,0.0}};
+        if(literalSyllable(syllables[pos]))return {{syllables[pos].substr(1),1,0.0}};
         Text reading;
         for(size_t end=pos; end<syllables.size() && end-pos<dict.longestPhrase; ++end) {
-            if(symbol(syllables[end]))break;
+            if(literalSyllable(syllables[end]))break;
             if (end!=pos) reading+=L"-";
             reading+=dict.reading(syllables[end]);
             if(end==pos) {
@@ -583,12 +593,13 @@ class Input {
                 options.push_back({head?seg->text:Text(),head?seg->count:1,0.0});
             } else options=wordsFor(at);
             const auto& before=ending[at];
+            const bool atLetterBoundary=letter(syllables[at]) || (at>pos && letter(syllables[at-1]));
             for(auto& term:options){
                 const unsigned long long hash=Dictionary::wordHash(term.text);
                 double lead=0;int back=-1;
                 if(!before.empty()){
                     back=strongest[at];lead=edges[back].best;
-                    if(const auto* favoured=dict.followers(hash)){
+                    if(const auto* favoured=atLetterBoundary?nullptr:dict.followers(hash)){
                         for(int candidate:before){
                             const auto found=std::lower_bound(favoured->begin(),favoured->end(),std::make_pair(edges[candidate].hash,0.0f));
                             if(found==favoured->end() || found->first!=edges[candidate].hash)continue;
@@ -707,6 +718,7 @@ class Input {
             Text left=leftOf(pos,false);
             size_t at=pos;
             for(auto& span:spans){
+                if(letter(syllables[at])){left.clear();++at;continue;}
                 if(!owner(at) && span.text.size()==span.count){
                     for(size_t i=0;i<span.count;++i){
                         // At the very start there is no context to go by, so a remembered choice only replaces
@@ -757,7 +769,7 @@ class Input {
         if(count==0 || count>end)return {};
         Text all;
         for(size_t at=end-count;at<end;++at){
-            if(symbol(syllables[at]) || owner(at))return {};
+            if(literalSyllable(syllables[at]) || owner(at))return {};
             all+=syllables[at];
         }
         return syllableOrder(all+keys);
@@ -796,7 +808,7 @@ class Input {
     // is the last key of that syllable typed after its tone: ㄨˇ then ㄛ is ㄨㄛˇ. Typed with its own
     // Space or tone, the key stays a syllable of its own, as in ㄨˇ ㄢ.
     bool reattach() {
-        if(raw.size()!=1 || caret || syllables.empty() || symbol(syllables.back()) || owner(syllables.size()-1))return false;
+        if(raw.size()!=1 || caret || syllables.empty() || literalSyllable(syllables.back()) || owner(syllables.size()-1))return false;
         const Text& last=syllables.back();
         const wchar_t tone=last.back();
         if(!(tone==L'3'||tone==L'4'||tone==L'6'||tone==L'7'))return false;
@@ -839,6 +851,7 @@ class Input {
         }
     }
     void openList(size_t pos,bool byCaret){
+        if(letter(syllables[pos]))return;
         split(pos);
         if(const Segment* seg=owner(pos))pos=seg->at;
         target=pos;targetByCaret=byCaret;page=0;highlighted=0;picking=true;
@@ -856,6 +869,7 @@ public:
     void setSimplifiedOutput(std::optional<bool> mode){simplifiedOutput=mode;}
     bool learningActive() const {return bool(preferences);}
     std::vector<Correction> corrections() const {
+        if(hasLetters())return {};
         std::vector<Correction> edits;for(const auto& seg:settled)if(seg.correction)edits.push_back(*seg.correction);
         return edits;
     }
@@ -921,8 +935,8 @@ public:
                     for(const auto& term:found->second)if(term.text==word)best=(std::max)(best,term.score);
                 };
                 const Text sound=dict.reading(code);
-                if(pos && !before.empty() && !symbol(syllables[pos-1]))look(dict.reading(syllables[pos-1])+L"-"+sound,before.substr(before.size()-1)+text);
-                if(pos+1<syllables.size() && !after.empty() && !symbol(syllables[pos+1]))look(sound+L"-"+dict.reading(syllables[pos+1]),text+after.substr(0,1));
+                if(pos && !before.empty() && !literalSyllable(syllables[pos-1]))look(dict.reading(syllables[pos-1])+L"-"+sound,before.substr(before.size()-1)+text);
+                if(pos+1<syllables.size() && !after.empty() && !literalSyllable(syllables[pos+1]))look(sound+L"-"+dict.reading(syllables[pos+1]),text+after.substr(0,1));
                 return best;
             };
             for(const auto& code:nearCodes(syllables[pos])){
@@ -948,7 +962,8 @@ public:
             return result;
         }
         // Everything up to the next settled stretch can be taken at once.
-        const size_t room=nextSettled(pos)-pos;
+        const auto limit=syllables.begin()+nextSettled(pos);
+        const size_t room=std::find_if(syllables.begin()+pos,limit,letter)-(syllables.begin()+pos);
         Text whole;size_t taken=0;
         for(const auto& span:convert(pos)){if(taken>=room)break;whole+=span.text;taken+=span.count;}
         result.push_back({whole,room});
@@ -987,6 +1002,7 @@ public:
     }
     // Runs of characters the user picked one by one, which are not yet a word in the list.
     std::vector<NewWord> newWords() const {
+        if(hasLetters())return {};
         std::vector<NewWord> found;
         Text reading,text;size_t run=0,next=0;
         auto flush=[&]{
@@ -1014,17 +1030,18 @@ public:
     // it held symbols or more than eight syllables.
     std::optional<NewWord> typedWord() const {return typed;}
     bool wants(WPARAM key) const {
+        if((key&letterKey) || key==caretEndKey)return active() && !picking;
         if(key&literalKey)return !active();
         if(key&controlKey){
             const WPARAM digit=key&0xffff;
-            return !picking && raw.empty() && digit>='2' && digit<='8' && caret.value_or(syllables.size())>=size_t(digit-'0');
+            return !picking && raw.empty() && digit>='2' && digit<='8' && caret.value_or(syllables.size())>=size_t(digit-'0') && !hasLetters();
         }
         const bool shifted=(key&shiftKey)!=0; key&=0xffff;
         if(picking) return !shifted && ((key>='1' && key<='9') || key==VK_NEXT || key==VK_PRIOR || key==VK_UP || key==VK_DOWN || key==VK_LEFT || key==VK_RIGHT || key==VK_SPACE || key==VK_ESCAPE || key==VK_RETURN || key==VK_BACK || key==VK_TAB);
-        if(shifted) return !punctuation(key,true,layout).empty() || (key==VK_RETURN && active());
+        if(shifted) return !punctuation(key,true,layout).empty() || (active() && (key==VK_RETURN || (key>='A' && key<='Z')));
         if(dict.keys.count(codeKey(key,layout))) return true;
         if(!punctuation(key,false,layout).empty() || key==VK_OEM_3) return true;
-        if(key==VK_UP && symbolBeforeCaret())return true;
+        if(key==VK_UP && (symbolBeforeCaret() || hasLetters()))return true;
         return active() && (key==VK_BACK || key==VK_ESCAPE || key==VK_RETURN || key==VK_SPACE || key==VK_DOWN || key==VK_END || key==VK_TAB
             || key==VK_LEFT || key==VK_RIGHT || key==VK_HOME || key==VK_DELETE);
     }
@@ -1034,6 +1051,13 @@ public:
         loose=implied;implied=0;owed=lent;lent.reset();held=spare;spare.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
+        if(key==caretEndKey || (key==VK_END && hasLetters())){if(raw.empty())caret.reset();return {};}
+        const WPARAM value=key&0xffff;
+        if((key&letterKey) || ((key&shiftKey) && value>='A' && value<='Z')){
+            if(!raw.empty() && !finishSyllable())return {};
+            if(syllables.size()<128)insertSyllable(Text(1,letterMark)+wchar_t(value));
+            return {};
+        }
         if(key&controlKey){
             // The characters before the caret, as they stand, become one of the user's own words.
             const size_t count=size_t((key&0xffff)-'0'),end=caret.value_or(syllables.size()),from=end-count;
@@ -1145,6 +1169,7 @@ public:
                     openSymbols(replace,side);return {};
                 }
             }
+            if(key==VK_UP)return {};
         }
         if(key==VK_LEFT || key==VK_RIGHT || key==VK_HOME){
             // The caret moves only between finished syllables.
@@ -1204,6 +1229,7 @@ public:
         if(key==VK_RETURN) {
             if(!raw.empty() && !finishSyllable()) return {};
             Text result=best(0);
+            if(hasLetters()){clear();return scripted(result);}
             std::optional<NewWord> keep,whole;
             if(!syllables.empty() && syllables.size()<=8 && result.size()==syllables.size()){
                 Text reading;bool plain=true;
