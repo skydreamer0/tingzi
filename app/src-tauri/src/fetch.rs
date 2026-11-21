@@ -454,7 +454,9 @@ fn unpack(zip: &Path, folder: &Path) -> Result<PathBuf, String> {
     let mut command = Command::new(crate::sys::tar());
     command.arg("-xf").arg(zip).arg("-C").arg(folder).stdin(Stdio::null()).stdout(Stdio::null()).stderr(Stdio::null());
     let done = crate::sys::quiet(&mut command).status().is_ok_and(|status| status.success());
-    Some(folder.join("Release").join("whisper-cli.exe")).filter(|program| done && program.is_file()).ok_or_else(|| failed.to_string())
+    let program = Some(folder.join("Release").join("whisper-cli.exe")).filter(|program| done && program.is_file()).ok_or(failed)?;
+    crate::sys::whisper_runtime(&folder.join("Release"));
+    Ok(program)
 }
 
 /// How much is asked for in one request. Each request has its own time limit, so a stalled
