@@ -77,7 +77,6 @@ def build_header(tokens):
         "struct Palette { COLORREF back, text, muted, frame, active, activeText; };\n"
         f"inline constexpr Palette lightPalette={palette('light')};\n"
         f"inline constexpr Palette darkPalette={palette('dark')};\n"
-        f"inline constexpr int cornerRadius={tokens['radius']['lg']};\n"
         f"inline constexpr int chipRadius={tokens['radius']['sm']};\n"
         "}\n"
     )
