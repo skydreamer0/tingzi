@@ -14,6 +14,8 @@ use tauri::{AppHandle, Emitter};
 const LATEST: &str = "https://api.github.com/repos/skydreamer0/tingzi/releases/latest";
 /// Every address taken from the answer must start with one of these, so a changed or forged answer cannot send the user elsewhere.
 const PAGES: &str = "https://github.com/skydreamer0/tingzi/releases/";
+/// Leads to the latest release's page; read when the API refuses to answer.
+const LATEST_PAGE: &str = "https://github.com/skydreamer0/tingzi/releases/latest";
 const DOWNLOADS: &str = "https://github.com/skydreamer0/tingzi/releases/download/";
 const DAY: u64 = 24 * 60 * 60;
 /// How long after start the automatic check waits, so it does not compete with the first dictation.
@@ -42,15 +44,18 @@ pub struct Release {
 /// What the last check found, kept so the settings page can show it without asking again.
 #[derive(Debug, Default, Serialize, Deserialize)]
 struct Record {
-    /// Seconds since 1970 when GitHub was last asked.
+    /// Seconds since 1970 of the last successful check.
     checked: u64,
+    /// Seconds since 1970 when the automatic check last asked, whether or not it got an answer.
+    #[serde(default)]
+    tried: u64,
     latest: Option<Release>,
 }
 
 #[derive(Serialize)]
 pub struct UpdateState {
     current: &'static str,
-    /// Seconds since 1970 of the last check; 0 when there has not been one.
+    /// Seconds since 1970 of the last successful check; 0 when there has not been one.
     checked: u64,
     /// The newer release, if the last check found one.
     offered: Option<Release>,
@@ -80,6 +85,10 @@ pub fn newer(current: &str, offered: &str) -> bool {
 /// Whether a day has passed since `checked`. A clock set back counts as due, so a wrong date cannot stop the checks for good.
 fn due(checked: u64, now: u64) -> bool {
     now < checked || now - checked >= DAY
+}
+
+fn automatic_check_due(record: &Record, now: u64) -> bool {
+    due(record.checked.max(record.tried), now)
 }
 
 fn now() -> u64 {
@@ -124,6 +133,15 @@ fn user_agent() -> String {
     format!("Tingzi/{}", env!("CARGO_PKG_VERSION"))
 }
 
+/// Only a rate-limit response should switch to the public release page.
+fn rate_limited(status: u16, headers: &reqwest::header::HeaderMap) -> bool {
+    status == 429 || (status == 403 && (
+        headers.get("x-ratelimit-remaining").is_some_and(|value| value.as_bytes() == b"0")
+        || headers.get(reqwest::header::RETRY_AFTER).and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<u64>().ok()).is_some()
+    ))
+}
+
 /// Asks GitHub for the latest release.
 fn ask() -> Result<Release, String> {
     let failed = "無法檢查更新，請確認網路連線。";
@@ -134,21 +152,82 @@ fn ask() -> Result<Release, String> {
         .send()
         .map_err(|_| failed)?;
     if !answer.status().is_success() {
-        return Err(failed.into());
+        let status = answer.status().as_u16();
+        if !rate_limited(status, answer.headers()) {
+            return Err(failed.into());
+        }
+        return from_page(crate::sys::UPDATE_INSTALLER).ok_or_else(|| {
+            crate::report::note(format!("檢查更新：GitHub 回應 {status} 且暫時限流，下載頁也讀不到"));
+            "GitHub 暫時限制查詢次數，請稍後再檢查。".into()
+        });
     }
     let answer = answer.json::<serde_json::Value>().map_err(|_| failed)?;
     read_release(&answer, crate::sys::UPDATE_INSTALLER).ok_or_else(|| "更新資訊的格式不對，請到專案首頁查看。".into())
 }
 
+/// The project release page must end in a single numeric version tag.
+fn tag_of_page(page: &str) -> Option<String> {
+    let tag = page.strip_prefix(PAGES)?.strip_prefix("tag/")?;
+    parts(tag)?;
+    Some(tag.to_owned())
+}
+
+fn from_page(installer: Option<(&str, &str)>) -> Option<Release> {
+    let client = fetch::client(LATEST_PAGE).ok()?;
+    release_from_page(installer, |url| {
+        let answer = client.head(url).header("User-Agent", user_agent()).send().ok()?;
+        if !answer.status().is_success() {
+            return None;
+        }
+        let length = answer.headers().get(reqwest::header::CONTENT_LENGTH)
+            .and_then(|value| value.to_str().ok()?.parse().ok());
+        Some((answer.url().to_string(), length))
+    })
+}
+
+fn asset_on_github(destination: &str) -> bool {
+    reqwest::Url::parse(destination).ok().is_some_and(|url| {
+        url.scheme() == "https" && url.port_or_known_default() == Some(443)
+            && url.username().is_empty() && url.password().is_none()
+            && match url.host_str() {
+                Some("github.com") => destination.starts_with(DOWNLOADS),
+                Some("release-assets.githubusercontent.com" | "objects.githubusercontent.com") => true,
+                _ => false,
+            }
+    })
+}
+
+fn release_from_page(
+    installer: Option<(&str, &str)>,
+    mut head: impl FnMut(&str) -> Option<(String, Option<u64>)>,
+) -> Option<Release> {
+    let (page, _) = head(LATEST_PAGE)?;
+    let version = tag_of_page(&page)?;
+    let installer = installer.and_then(|(starts, ends)| {
+        let name = format!("{starts}{}{ends}", short(&version));
+        let url = format!("{DOWNLOADS}{version}/{name}");
+        let checksum = format!("{url}.sha256");
+        let (asset_destination, size) = head(&url)?;
+        let size = size.filter(|size| *size > 0)?;
+        let (checksum_destination, _) = head(&checksum)?;
+        if !asset_on_github(&asset_destination) || !asset_on_github(&checksum_destination) {
+            return None;
+        }
+        Some(Asset { name, url, size, checksum })
+    });
+    Some(Release { version, notes: String::new(), page, installer })
+}
+
 /// Asks now, keeps the answer, and returns what the page shows.
 fn check_now() -> Result<UpdateState, String> {
     let latest = ask()?;
-    store(&Record { checked: now(), latest: Some(latest) });
-    Ok(state())
+    let checked = now();
+    let record = Record { checked, tried: checked, latest: Some(latest) };
+    store(&record);
+    Ok(state(record))
 }
 
-fn state() -> UpdateState {
-    let record = load();
+fn state(record: Record) -> UpdateState {
     let current = env!("CARGO_PKG_VERSION");
     UpdateState {
         current,
@@ -182,11 +261,17 @@ pub fn start(app: &AppHandle) {
 }
 
 fn look(app: &AppHandle, asked: &mut Option<String>) {
-    let earlier = load().latest.map(|release| release.version);
-    let state = if due(load().checked, now()) { check_now().unwrap_or_else(|reason| {
-        crate::report::note(format!("自動檢查更新失敗：{reason}"));
-        state()
-    }) } else { state() };
+    let mut record = load();
+    let earlier = record.latest.as_ref().map(|release| release.version.clone());
+    let tried = now();
+    let state = if automatic_check_due(&record, tried) {
+        record.tried = tried;
+        store(&record);
+        check_now().unwrap_or_else(|reason| {
+            crate::report::note(format!("自動檢查更新失敗：{reason}"));
+            state(record)
+        })
+    } else { state(record) };
     let Some(offered) = state.offered.clone() else { return };
     if earlier.as_deref() != Some(&offered.version) {
         let _ = app.emit("update", &state);
@@ -228,7 +313,7 @@ fn short(version: &str) -> &str {
 
 #[tauri::command]
 pub fn update_state() -> UpdateState {
-    state()
+    state(load())
 }
 
 /// The page's button: asks even when the automatic check is off, because the user pressed it.
@@ -301,7 +386,7 @@ fn run_installer(file: &Path, quiet: bool) -> bool {
 /// for this system, opens the release page. Returns what the page tells the user.
 #[tauri::command(async)]
 pub fn update_install(app: AppHandle) -> Result<String, String> {
-    let offered = state().offered.ok_or("目前已是最新版。")?;
+    let offered = state(load()).offered.ok_or("目前已是最新版。")?;
     let Some(installer) = offered.installer else {
         return if crate::dialogs::open(&offered.page) {
             Ok("已開啟下載頁，請依頁面說明安裝新版。".into())
@@ -348,6 +433,16 @@ mod tests {
         assert!(!due(1_800_000_000, 1_800_000_000 + DAY - 1));
         assert!(due(1_800_000_000, 1_800_000_000 + DAY));
         assert!(due(1_800_000_000, 1_700_000_000));
+    }
+
+    #[test]
+    fn a_failed_automatic_check_waits_a_day() {
+        let mut record: Record = serde_json::from_value(json!({ "checked": DAY, "latest": null })).unwrap();
+        assert_eq!(record.tried, 0);
+        assert!(!automatic_check_due(&record, 2 * DAY - 1));
+        record.tried = 2 * DAY;
+        assert!(!automatic_check_due(&record, 3 * DAY - 1));
+        assert!(automatic_check_due(&record, 3 * DAY));
     }
 
     fn answer(assets: serde_json::Value) -> serde_json::Value {
@@ -405,6 +500,67 @@ mod tests {
         let mut unnamed = answer(json!([]));
         unnamed["tag_name"] = json!("nightly");
         assert_eq!(read_release(&unnamed, WINDOWS), None);
+    }
+
+    #[test]
+    fn reads_the_version_from_the_release_page() {
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases/tag/v0.9.0").as_deref(), Some("v0.9.0"));
+        // Without releases, `latest` stays on the list of releases.
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases"), None);
+        assert_eq!(tag_of_page("https://github.com/skydreamer0/tingzi/releases/tag/nightly"), None);
+        assert_eq!(tag_of_page("https://example.com/skydreamer0/tingzi/releases/tag/v0.9.0"), None);
+    }
+
+    #[test]
+    fn only_rate_limits_fall_back() {
+        let mut headers = reqwest::header::HeaderMap::new();
+        assert!(!rate_limited(403, &headers));
+        assert!(rate_limited(429, &headers));
+        headers.insert("x-ratelimit-remaining", "0".parse().unwrap());
+        assert!(rate_limited(403, &headers));
+        assert!(!rate_limited(404, &headers));
+        assert!(!rate_limited(503, &headers));
+        headers.insert("x-ratelimit-remaining", "20".parse().unwrap());
+        headers.insert(reqwest::header::RETRY_AFTER, "60".parse().unwrap());
+        assert!(rate_limited(403, &headers));
+        assert!(!rate_limited(503, &headers));
+    }
+
+    #[test]
+    fn fallback_only_offers_a_checked_project_asset() {
+        let page = format!("{PAGES}tag/v0.9.0");
+        let asset = format!("{DOWNLOADS}v0.9.0/Tingzi-Setup-0.9.0-x64.exe");
+        let checksum = format!("{asset}.sha256");
+        let cdn = "https://release-assets.githubusercontent.com/github-production-release-asset/mock";
+        let head = |url: &str| {
+            if url == LATEST_PAGE { Some((page.clone(), None)) }
+            else if url == asset { Some((cdn.to_owned(), Some(123))) }
+            else if url == checksum { Some((cdn.to_owned(), None)) }
+            else { None }
+        };
+        let release = release_from_page(WINDOWS, head).unwrap();
+        assert_eq!(release.version, "v0.9.0");
+        assert!(release.notes.is_empty());
+        let installer = release.installer.unwrap();
+        assert_eq!(installer.size, 123);
+        assert_eq!(installer.url, asset);
+        assert_eq!(installer.checksum, checksum);
+        for missing in [&asset, &checksum] {
+            assert!(release_from_page(WINDOWS, |url| {
+                if url == missing { None } else { head(url) }
+            }).unwrap().installer.is_none());
+        }
+        assert!(release_from_page(WINDOWS, |url| {
+            if url == asset { Some((cdn.to_owned(), None)) } else { head(url) }
+        }).unwrap().installer.is_none());
+        assert!(release_from_page(WINDOWS, |url| {
+            if url == checksum { Some(("https://example.com/checksum".into(), None)) } else { head(url) }
+        }).unwrap().installer.is_none());
+        assert!(release_from_page(WINDOWS, |_| Some(("https://example.com/tag/v0.9.0".into(), None))).is_none());
+        assert!(release_from_page(None, |url| {
+            assert_eq!(url, LATEST_PAGE);
+            head(url)
+        }).unwrap().installer.is_none());
     }
 
     #[test]
