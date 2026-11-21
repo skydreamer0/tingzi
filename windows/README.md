@@ -154,6 +154,6 @@
 
 ## 回復與移除
 
-程式安裝於 `%ProgramFiles%\Tingzi\v0.10.0`（語音浮窗是其中 `TingziFloat` 資料夾裡的 `TingziFloat.exe`），使用者設定與學習資料在 `%LOCALAPPDATA%\Tingzi`。移除方式見[安裝及第一次使用](#安裝及第一次使用)；選擇保留個人資料時，本機詞表、語音模型位置與使用者資料會留在電腦上，供日後重新安裝使用。
+程式安裝於 `%ProgramFiles%\Tingzi\v0.10.0`（語音浮窗是其中 `TingziFloat` 資料夾裡的 `TingziFloat.exe`），使用者設定與學習資料在 `%LOCALAPPDATA%\Tingzi`。移除方式見[安裝及第一次使用](#安裝及第一次使用)；選擇保留個人資料時，本機詞表、語音模型位置與使用者資料會留在電腦上，供日後重新安裝使用。程式目錄會刪除；若輸入法檔案仍被其他程式使用，請重新啟動 Windows 完成清除。
 
 第三方元件的授權與聲明見 `THIRD-PARTY-NOTICES.txt`。發行包內的 `release-manifest.json` 列出每個發行檔案的雜湊。
