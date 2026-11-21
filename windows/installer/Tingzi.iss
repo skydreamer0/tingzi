@@ -92,6 +92,61 @@ var
 function MoveFileExForUninstall(ExistingName: String; NewName: Integer; Flags: Cardinal): Boolean;
   external 'MoveFileExW@kernel32.dll stdcall uninstallonly';
 
+function UninstallFileAttributes(Name: String): Cardinal;
+  external 'GetFileAttributesW@kernel32.dll stdcall uninstallonly';
+
+function UninstallRootIsLink: Boolean;
+begin
+  Result := UninstallFileAttributes(ExpandConstant('{app}')) and $400 <> 0;
+  if Result then
+    Log('Leaving reparse-point install root and its target untouched: ' + ExpandConstant('{app}'));
+end;
+
+function InitializeUninstall: Boolean;
+begin
+  Result := not UninstallRootIsLink;
+end;
+
+function IsProgramVersion(const Name: String): Boolean;
+var
+  I, Dots, Digits: Integer;
+begin
+  Result := False;
+  if (Length(Name) < 6) or (Name[1] <> 'v') then exit;
+  Dots := 0;
+  Digits := 0;
+  for I := 2 to Length(Name) do
+    if Name[I] = '.' then
+    begin
+      if Digits = 0 then exit;
+      Dots := Dots + 1;
+      Digits := 0;
+    end
+    else if (Name[I] >= '0') and (Name[I] <= '9') then
+      Digits := Digits + 1
+    else
+      exit;
+  Result := (Dots = 2) and (Digits > 0);
+end;
+
+function IsProgramRootFile(const Name: String): Boolean;
+var
+  LowerName, Extension: String;
+begin
+  LowerName := Lowercase(Name);
+  Result := Pos('|' + LowerName + '|',
+    '|tingzisetup64.exe|tingzisetup32.exe|tingzitextservice64.dll|tingzitextservice32.dll|' +
+    'readme.md|removetingzi.cmd|voiceshortcuts.ps1|tingzi.cin|phrases.txt|' +
+    'mcbopomofo-license.txt|acknowledgements.md|tingzi.ico|') > 0;
+  if Result or (Length(LowerName) <> 12) then exit;
+  Extension := Copy(LowerName, 9, 4);
+  Result := (Copy(LowerName, 1, 5) = 'unins') and
+    (LowerName[6] >= '0') and (LowerName[6] <= '9') and
+    (LowerName[7] >= '0') and (LowerName[7] <= '9') and
+    (LowerName[8] >= '0') and (LowerName[8] <= '9') and
+    ((Extension = '.exe') or (Extension = '.dat') or (Extension = '.msg'));
+end;
+
 procedure RemoveProgramTree(const Path: String);
 var
   Entry: TFindRec;
@@ -137,9 +192,61 @@ begin
   end;
 end;
 
+procedure RemoveOwnedProgramItems;
+var
+  Root, Child: String;
+  Entry: TFindRec;
+  OnlyOwnedItems: Boolean;
+begin
+  if UninstallRootIsLink then exit;
+  Root := ExpandConstant('{app}');
+  OnlyOwnedItems := True;
+  if FindFirst(Root + '\*', Entry) then
+  begin
+    try
+      repeat
+        if (Entry.Name <> '.') and (Entry.Name <> '..') then
+        begin
+          Child := Root + '\' + Entry.Name;
+          if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY <> 0) and IsProgramVersion(Entry.Name) then
+          begin
+            if Entry.Attributes and $400 = 0 then
+              RemoveProgramTree(Child)
+            else if not RemoveDir(Child) then
+              Log('Leaving version directory reparse point: ' + Child);
+          end
+          else if (Entry.Attributes and FILE_ATTRIBUTE_DIRECTORY = 0) and IsProgramRootFile(Entry.Name) then
+          begin
+            if not DeleteFile(Child) then
+            begin
+              if not MoveFileExForUninstall(Child, 0, 4) then
+                RaiseException('Cannot schedule removal of ' + Child + ': ' + SysErrorMessage(DLLGetLastError));
+              UninstallRestartRequired := True;
+              Log('Removal pending reboot: ' + Child);
+            end;
+          end
+          else
+          begin
+            OnlyOwnedItems := False;
+            Log('Leaving unrelated install-root item: ' + Child);
+          end;
+        end;
+      until not FindNext(Entry);
+    finally
+      FindClose(Entry);
+    end;
+  end;
+  if OnlyOwnedItems and DirExists(Root) and not RemoveDir(Root) then
+  begin
+    if not MoveFileExForUninstall(Root, 0, 4) then
+      RaiseException('Cannot schedule removal of ' + Root + ': ' + SysErrorMessage(DLLGetLastError));
+    UninstallRestartRequired := True;
+  end;
+end;
+
 function UninstallNeedRestart: Boolean;
 begin
-  RemoveProgramTree(ExpandConstant('{app}'));
+  RemoveOwnedProgramItems;
   Result := UninstallRestartRequired;
 end;
 

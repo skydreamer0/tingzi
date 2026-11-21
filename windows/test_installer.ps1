@@ -60,7 +60,7 @@ Check ((Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall
 # A silent removal keeps personal data. The uninstaller hands over to a copy of itself, so wait for the entry to go.
 $wordListHash = (Get-FileHash (Join-Path (Split-Path $dll) 'Tingzi.cin')).Hash
 Set-Content -LiteralPath (Join-Path $root 'phrases.txt') -Value 'legacy word list'
-New-Item -ItemType Directory -Force (Join-Path $root 'empty-uninstall-test\nested') | Out-Null
+New-Item -ItemType Directory -Force (Join-Path (Split-Path $dll) 'empty-uninstall-test\nested') | Out-Null
 $locked = $null
 if ($LockProgramFiles) {
     $locked = [IO.File]::Open($dll, 'Open', 'Read', 'Read')
@@ -92,3 +92,44 @@ Check ((Get-Content (Join-Path $data 'kept-after-uninstall\legacy-root\phrases.t
     if ($locked) { $locked.Dispose() }
 }
 Write-Host 'Installer checks passed.'
+
+function Uninstall($name) {
+    $command = (Get-ItemProperty $uninstallKey).UninstallString.Trim('"')
+    Start-Process -FilePath $command -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', ('/LOG="' + (Join-Path $logs "$name.log") + '"') -Wait
+}
+
+Install 'mixed-folder-install'
+Set-Content (Join-Path $root 'unrelated.txt') 'unrelated file'
+New-Item -ItemType Directory (Join-Path $root 'v1.notes') | Out-Null
+Set-Content (Join-Path $root 'v1.notes\sentinel.txt') 'unrelated folder'
+Uninstall 'mixed-folder-uninstall'
+Check (!(Test-Path $uninstallKey)) 'mixed-folder uninstall removes the apps entry'
+Check (!(Test-Path (Join-Path $root "v$($entry.DisplayVersion)"))) 'mixed-folder uninstall removes the owned version folder'
+Check ((Get-Content (Join-Path $root 'unrelated.txt')) -eq 'unrelated file') 'mixed-folder uninstall preserves an unrelated file'
+Check ((Get-Content (Join-Path $root 'v1.notes\sentinel.txt')) -eq 'unrelated folder') 'mixed-folder uninstall preserves an unrelated subfolder'
+Check (@(Get-ChildItem $root).Count -eq 2) 'mixed-folder uninstall leaves only unrelated items'
+Remove-Item (Join-Path $root 'unrelated.txt')
+Remove-Item (Join-Path $root 'v1.notes') -Recurse
+[IO.Directory]::Delete($root)
+
+Install 'junction-install'
+$target = $root + '.junction-test-' + [Guid]::NewGuid().ToString('N')
+Set-Content (Join-Path $root 'junction-sentinel.txt') 'junction target data'
+[IO.Directory]::Move($root, $target)
+try {
+    New-Item -ItemType Junction -Path $root -Target $target | Out-Null
+    $before = @(Get-ChildItem $target -Recurse -File | Get-FileHash | Sort-Object Path)
+    Uninstall 'junction-uninstall'
+    Check (Test-Path $uninstallKey) 'junction-root uninstall is refused before unregistering or deleting files'
+    $after = @(Get-ChildItem $target -Recurse -File | Get-FileHash | Sort-Object Path)
+    Check (!(Compare-Object $before $after -Property Path, Hash)) 'junction-root uninstall leaves every target file unchanged'
+    Check ((Get-Content (Join-Path $target 'junction-sentinel.txt')) -eq 'junction target data') 'junction-root uninstall preserves the target sentinel'
+    Check ((Get-Content (Join-Path $logs 'junction-uninstall.log') -Raw) -match 'Leaving reparse-point install root') 'junction-root refusal is logged'
+} finally {
+    if (Test-Path $root) { [IO.Directory]::Delete($root) }
+    [IO.Directory]::Move($target, $root)
+}
+Remove-Item (Join-Path $root 'junction-sentinel.txt')
+Uninstall 'junction-restored-uninstall'
+Check (!(Test-Path $root)) 'restoring the real install directory permits normal cleanup'
+Write-Host 'Uninstall ownership checks passed.'
