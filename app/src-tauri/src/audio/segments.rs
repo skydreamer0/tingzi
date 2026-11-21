@@ -5,8 +5,11 @@ use std::ops::Range;
 /// A pause this long ends a sentence.
 const PAUSE_MS: usize = 600;
 /// Once a sentence has run this long, a breath ends it, so text keeps coming to someone who speaks on.
-const LONG_SENTENCE_MS: usize = 3000;
+const LONG_SENTENCE_MS: usize = 2000;
 const BREATH_MS: usize = 300;
+/// Once it has run this long, a shorter gap, as between two phrases said in one breath, ends it too.
+const LONGER_SENTENCE_MS: usize = 4000;
+const GAP_MS: usize = 200;
 /// A sentence spoken without even a breath is cut when it has run this long.
 const LONGEST_SENTENCE_SECONDS: usize = 6;
 
@@ -126,13 +129,18 @@ impl Segmenter {
 
     fn cut_at_pause(&mut self) -> Option<Range<usize>> {
         let phrase = self.phrase.as_ref()?;
-        let long = phrase.voice.end - phrase.start >= self.rate * LONG_SENTENCE_MS / 1000;
-        let pause = if long { BREATH_MS } else { PAUSE_MS };
+        let spoken = phrase.voice.end.saturating_sub(phrase.start) * 1000 / self.rate;
+        let pause = match spoken {
+            ms if ms >= LONGER_SENTENCE_MS => GAP_MS,
+            ms if ms >= LONG_SENTENCE_MS => BREATH_MS,
+            _ => PAUSE_MS,
+        };
         if self.end - phrase.voice.end < self.rate * pause / 1000 || !self.long_enough(&phrase.voice)
         {
             return None;
         }
-        let end = phrase.voice.end + self.rate / 4;
+        // A gap shorter than the quarter second kept after speech is cut where it ends, where the next voice begins.
+        let end = (phrase.voice.end + self.rate / 4).min(self.end);
         self.previous_end = end;
         Some(self.phrase.take().unwrap().start..end)
     }
@@ -264,12 +272,20 @@ mod tests {
 
     #[test]
     fn a_breath_ends_a_sentence_that_has_run_long() {
-        let breath = [(3_000, 0.5), (300, 0.0), (500, 0.5), (600, 0.0)];
-        assert_eq!(cut(1000, 157, &breath), [0..3250, 3250..4050]);
-        // Before three seconds the same breath is part of the sentence, which then ends at the next one.
-        let early = [(2_400, 0.5), (300, 0.0), (500, 0.5), (300, 0.0), (400, 0.5), (600, 0.0)];
-        assert_eq!(cut(1000, 157, &early), [0..3450, 3450..4150]);
-        assert_eq!(cut(1000, 157, &[(3_000, 0.5), (280, 0.0), (500, 0.5)]), [0..3780]);
+        let breath = [(2_000, 0.5), (300, 0.0), (500, 0.5), (600, 0.0)];
+        assert_eq!(cut(1000, 157, &breath), [0..2250, 2250..3050]);
+        // Before two seconds the same breath is part of the sentence, which then ends at the next one.
+        let early = [(1_400, 0.5), (300, 0.0), (500, 0.5), (300, 0.0), (400, 0.5), (600, 0.0)];
+        assert_eq!(cut(1000, 157, &early), [0..2450, 2450..3150]);
+        assert_eq!(cut(1000, 157, &[(2_000, 0.5), (280, 0.0), (500, 0.5)]), [0..2780]);
+    }
+
+    #[test]
+    fn a_short_gap_ends_a_sentence_that_has_run_four_seconds() {
+        assert_eq!(cut(1000, 157, &[(4_000, 0.5), (200, 0.0), (500, 0.5)]), [0..4200, 4200..4700]);
+        // Between two and four seconds a gap of that length does not end it.
+        assert_eq!(cut(1000, 157, &[(3_000, 0.5), (200, 0.0), (500, 0.5)]), [0..3700]);
+        assert_eq!(cut(1000, 157, &[(4_000, 0.5), (180, 0.0), (500, 0.5)]), [0..4680]);
     }
 
     #[test]

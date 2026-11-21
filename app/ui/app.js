@@ -34,6 +34,8 @@ let idleText = '點圖示開始錄音';
 // What the Zhuyin input method is typing, once it has said so.
 let mode = '';
 let recordingSince = 0, clock = 0, noticeTimer = 0;
+// Set when this recording uses the default microphone because the chosen one could not be used.
+let substitute = '';
 const key = mic.querySelector('.key');
 const still = matchMedia('(prefers-reduced-motion: reduce)');
 // Animation times from tokens.css; the numbers after them only stand in if the sheet failed to load.
@@ -82,8 +84,9 @@ function render() {
   // The pill is short while dictating, so "click again to cancel" moves to the tooltip.
   const said = state === 'working' ? message.split('・')[0] : message;
   status.textContent = textInBar ? text : state === 'recording' ? elapsed() : said || idleText;
-  status.title = textInBar ? text : state === 'recording' || state === 'working' ? message : '';
-  detail.textContent = textInBar ? message : state === 'idle' && mode ? `注音輸入法：${mode}` : '';
+  status.title = textInBar ? text : state === 'recording' && substitute ? `${substitute}。${message}` : state === 'recording' || state === 'working' ? message : '';
+  detail.textContent = textInBar ? message : state === 'recording' ? substitute : state === 'idle' && mode ? `注音輸入法：${mode}` : '';
+  detail.title = state === 'recording' ? substitute : '';
   mic.setAttribute('aria-pressed', String(state === 'recording'));
   mic.setAttribute('aria-label', micLabels[state] || '開始錄音');
   mic.title = mic.getAttribute('aria-label');
@@ -104,6 +107,7 @@ function receive(next) {
     tap();
   } else if (next.state !== 'recording') {
     clearInterval(clock);
+    substitute = '';
     if (was === 'recording') { stopBars(); tap(); }
     else if (next.state === 'done' && was !== 'done') tap();
   }
@@ -309,6 +313,7 @@ listen('voice', event => receive(event.payload));
 const previewListening = listen('voice-preview', event => receiveStreamingPreview(event.payload));
 listen('settle', event => { settleMs = Number(event.payload) * 1000; settleLater(); });
 listen('notice', event => notice(event.payload));
+listen('microphone', event => { substitute = event.payload; render(); });
 listen('layout', event => setLayout(event.payload));
 listen('side', event => setSide(event.payload));
 listen('closing', () => fold('docked'));

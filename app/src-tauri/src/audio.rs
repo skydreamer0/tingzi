@@ -18,6 +18,8 @@ pub const LONGEST_SECONDS: usize = 600;
 pub struct Recorder {
     stop: Sender<()>,
     worker: JoinHandle<Result<Vec<u8>, String>>,
+    /// Set when the chosen microphone could not be used and the Windows default records instead.
+    substitute: Option<String>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -67,36 +69,45 @@ type SegmentNotice = Box<dyn Fn(SegmentEvent) + Send>;
 pub type SegmentListener = (u64, Box<dyn Fn(SegmentEvent, &SegmentAudio) + Send>);
 
 impl Recorder {
-    /// Starts recording from the microphone with this name, or the Windows default when None.
+    /// Starts recording from the microphone with this name, or the Windows default when None,
+    /// and fails when that microphone cannot be used: the microphone test checks this one only.
     /// `level` receives the peak of each buffer, from 0 to 1.
     pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
-        Self::start_with_segments(microphone, level, None)
+        Self::start_capture(move || open(microphone.as_deref(), level).map(|(stream, samples, rate)| (stream, samples, rate, None)), None)
     }
 
+    /// Starts a dictation. When the chosen microphone is unplugged or cannot be opened, the Windows
+    /// default records instead and `substitute` says so; the choice itself is left as it is, so the
+    /// next dictation goes back to that microphone once it is there again.
     pub fn start_with_segments(
         microphone: Option<String>,
-        level: impl Fn(f32) + Send + 'static,
+        level: impl Fn(f32) + Send + Sync + 'static,
         segments: Option<SegmentListener>,
     ) -> Result<Self, String> {
-        Self::start_capture(move || open(microphone.as_deref(), level), segments)
+        Self::start_capture(move || open_or_default(microphone.as_deref(), level), segments)
+    }
+
+    /// What the user is told when the chosen microphone gave way to the default.
+    pub fn substitute(&self) -> Option<&str> {
+        self.substitute.as_deref()
     }
 
     fn start_capture<Stream>(
-        open: impl FnOnce() -> Result<(Stream, Arc<Mutex<Vec<f32>>>, u32), String> + Send + 'static,
+        open: impl FnOnce() -> Result<(Stream, Arc<Mutex<Vec<f32>>>, u32, Option<String>), String> + Send + 'static,
         segments: Option<SegmentListener>,
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel::<()>();
-        let (ready, started) = mpsc::channel::<Result<(), String>>();
+        let (ready, started) = mpsc::channel::<Result<Option<String>, String>>();
         let worker = thread::spawn(move || -> Result<Vec<u8>, String> {
             // The stream is not Send, so the thread that opens it also owns and closes it.
-            let (stream, samples, rate) = match open() {
+            let (stream, samples, rate, substitute) = match open() {
                 Ok(parts) => parts,
                 Err(reason) => {
                     let _ = ready.send(Err(reason.clone()));
                     return Err(reason);
                 }
             };
-            let _ = ready.send(Ok(()));
+            let _ = ready.send(Ok(substitute));
             let reader = if let Some((recording_id, notify)) = segments {
                 let audio = SegmentAudio { samples: samples.clone(), rate };
                 let mut reader = SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)));
@@ -127,7 +138,7 @@ impl Recorder {
             encode_recording(&captured[..end], rate)
         });
         match started.recv() {
-            Ok(Ok(())) => Ok(Self { stop, worker }),
+            Ok(Ok(substitute)) => Ok(Self { stop, worker, substitute }),
             Ok(Err(reason)) => Err(reason),
             Err(_) => Err("無法啟動錄音".into()),
         }
@@ -214,13 +225,61 @@ pub fn microphones() -> Vec<String> {
 fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
     let host = cpal::default_host();
     let device = match microphone {
-        Some(name) => host
-            .input_devices()
-            .ok()
-            .and_then(|mut devices| devices.find(|device| device.name().is_ok_and(|found| found == name)))
-            .ok_or_else(|| format!("{name}未連接，請開語音設定"))?,
+        Some(name) => find(&host, name).ok_or_else(|| missing(name))?,
         None => host.default_input_device().ok_or("找不到麥克風")?,
     };
+    open_device(&device, level)
+}
+
+/// Opens the chosen microphone, or the system default when the chosen one is not there or will not open.
+fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync + 'static) -> Result<(cpal::Stream, Arc<Mutex<Vec<f32>>>, u32, Option<String>), String> {
+    let Some(name) = microphone else {
+        return open(None, level).map(|(stream, samples, rate)| (stream, samples, rate, None));
+    };
+    let level = Arc::new(level);
+    let host = cpal::default_host();
+    let shared = level.clone();
+    let default = host.default_input_device();
+    let (opened, substitute) = chosen_or_default(
+        name,
+        || find(&host, name).ok_or_else(|| missing(name)).and_then(|device| open_device(&device, move |peak| (*shared)(peak))),
+        default.as_ref().and_then(|device| device.name().ok()),
+        || default.as_ref().ok_or_else(String::new).and_then(|device| open_device(device, move |peak| (*level)(peak))),
+    )?;
+    let (stream, samples, rate) = opened;
+    Ok((stream, samples, rate, substitute))
+}
+
+/// Tries the chosen microphone, then the default one unless it is the same microphone. A failure of the
+/// default is reported as the chosen microphone's, since that is the one the user asked for.
+fn chosen_or_default<T>(
+    chosen: &str,
+    open_chosen: impl FnOnce() -> Result<T, String>,
+    default: Option<String>,
+    open_default: impl FnOnce() -> Result<T, String>,
+) -> Result<(T, Option<String>), String> {
+    let reason = match open_chosen() {
+        Ok(opened) => return Ok((opened, None)),
+        Err(reason) => reason,
+    };
+    let Some(used) = default.filter(|used| used != chosen) else { return Err(reason) };
+    let opened = open_default().map_err(|_| reason)?;
+    Ok((opened, Some(substitute_note(chosen, &used))))
+}
+
+fn find(host: &cpal::Host, name: &str) -> Option<cpal::Device> {
+    host.input_devices().ok()?.find(|device| device.name().is_ok_and(|found| found == name))
+}
+
+fn missing(name: &str) -> String {
+    format!("{name}未連接，請開語音設定")
+}
+
+fn substitute_note(wanted: &str, used: &str) -> String {
+    format!("{wanted}目前不能用，改用 {} 預設的{used}", crate::sys::SYSTEM)
+}
+
+fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
     let config = device.default_input_config().map_err(|_| "無法讀取麥克風格式")?;
     let channels = usize::from(config.channels().max(1));
     let rate = config.sample_rate().0;
@@ -427,6 +486,29 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_missing_microphone_gives_way_to_the_default_and_says_which() {
+        let opened = chosen_or_default("Bose 耳麥", || Err::<u8, _>(missing("Bose 耳麥")), Some("Realtek 麥克風".into()), || Ok(2));
+        assert_eq!(opened, Ok((2, Some(substitute_note("Bose 耳麥", "Realtek 麥克風")))));
+        assert!(substitute_note("Bose 耳麥", "Realtek 麥克風").contains("Realtek 麥克風"));
+    }
+
+    #[test]
+    fn the_chosen_microphone_is_used_whenever_it_opens() {
+        let opened = chosen_or_default("Bose 耳麥", || Ok(1u8), Some("Realtek 麥克風".into()), || panic!("the default was opened"));
+        assert_eq!(opened, Ok((1, None)));
+    }
+
+    #[test]
+    fn without_another_microphone_the_chosen_ones_problem_is_reported() {
+        let none = chosen_or_default("Bose 耳麥", || Err::<u8, _>(missing("Bose 耳麥")), None, || Ok(2));
+        assert_eq!(none, Err(missing("Bose 耳麥")));
+        let same = chosen_or_default("Bose 耳麥", || Err::<u8, _>("無法開始錄音".into()), Some("Bose 耳麥".into()), || Ok(2));
+        assert_eq!(same, Err("無法開始錄音".to_string()));
+        let broken = chosen_or_default("Bose 耳麥", || Err::<u8, _>(missing("Bose 耳麥")), Some("Realtek 麥克風".into()), || Err("無法開始錄音".into()));
+        assert_eq!(broken, Err(missing("Bose 耳麥")));
+    }
+
+    #[test]
     fn positions_arrive_during_capture_and_at_finish_without_changing_the_wav() {
         struct TailOnStop(Arc<Mutex<Vec<f32>>>, Vec<f32>);
         impl Drop for TailOnStop {
@@ -442,7 +524,7 @@ mod tests {
         input.resize(110 * frame, 0.0);
         let open = || {
             let samples = Arc::new(Mutex::new(input.clone()));
-            move || Ok((TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate))
+            move || Ok((TailOnStop(samples.clone(), vec![0.25; 21 * frame]), samples, rate, None))
         };
         let (send, received) = mpsc::channel();
         let listener: SegmentListener = (19, Box::new(move |event, audio| {
@@ -464,7 +546,7 @@ mod tests {
         assert_eq!(full, Ok(wav(&resample(trim(&input, rate), rate))));
         assert_eq!(segmented, full);
 
-        let brief = move || Ok(((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate));
+        let brief = move || Ok(((), Arc::new(Mutex::new(vec![0.5; 18 * frame])), rate, None));
         let listener: SegmentListener = (20, Box::new(|event, _| {
             assert!(matches!(event, SegmentEvent::Incomplete));
         }));
