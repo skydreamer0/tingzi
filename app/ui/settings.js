@@ -77,6 +77,7 @@ function fill() {
     microphone.append(option(missingMicrophone, missingMicrophone + '（未連接）'));
   }
   microphone.value = prefs.MicrophoneName || '';
+  byId('noise-suppression').checked = Boolean(prefs.NoiseSuppression);
   byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
   byId('streaming-asr').checked = Boolean(prefs.StreamingAsr);
   showLocal();
@@ -146,6 +147,7 @@ function collect(engineFromPage) {
       Hotkey: readHotkey(),
       TextSize: number('text-size'),
       MicrophoneName: name,
+      NoiseSuppression: byId('noise-suppression').checked,
       AutoInsert: number('delivery') === 0,
       Simplified: byId('script').value === '1',
       UsePhrases: byId('use-phrases').checked,

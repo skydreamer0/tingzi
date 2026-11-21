@@ -18,7 +18,7 @@
 | --- | --- |
 | `app/src-tauri/src/hotkey.rs` | 錄音快捷鍵的規則：可用的鍵（字母、數字搭配輔助鍵，或 F1 到 F24）、顯示名稱、與草稿貼入和貼上上一則的衝突，以及被占用時建議的替代組合。舊版設定檔的 `Modifiers`、`RecordKey` 照常讀取；新組合存在 `Hotkey`，舊版讀不懂的組合在舊欄位寫成 Ctrl+Alt+R。 |
 | `app/src-tauri/src/main.rs` | 錄音、辨識、取消的流程；全域快捷鍵、系統匣、與介面之間的事件。 |
-| `app/src-tauri/src/audio.rs` | 用選定的麥克風錄音，切掉前後靜音，輸出 16 kHz 單聲道 WAV；把匯入的 WAV 轉成同一格式。 |
+| `app/src-tauri/src/audio.rs` | 用選定的麥克風錄音，切掉前後靜音，輸出 16 kHz 單聲道 WAV。整段、逐句與匯入 WAV 共用編碼流程。 |
 | `app/src-tauri/src/recognise.rs` | 線上辨識（內建 `codex-asr`）與本機辨識（呼叫這台電腦上的 Whisper 程式）。 |
 | `app/src-tauri/src/fetch.rs` | 從設定頁下載本機辨識的模型與 Whisper 程式：固定來源與 SHA-256、分段續傳、核對、試跑後才啟用。 |
 | `app/src-tauri/src/deliver.rs` | 簡繁轉換、追蹤錄音開始時的視窗、複製與貼入的規則。 |
@@ -35,6 +35,12 @@
 | `app/src-tauri/src/dialogs.rs`、`paths.rs` | 選檔與確認對話框；安裝資料夾與個人資料夾的位置。 |
 | `app/src-tauri/src/sys/` | 各模組用到的系統呼叫，Windows 與 macOS 各一個檔，提供同一組函式。 |
 | `app/ui/` | 浮窗（`index.html`）與設定頁（`settings.html`），只顯示狀態與收集選擇。 |
+
+## 辨識前的音訊處理
+
+「語音」頁的「降噪」存在 `voice-settings.json` 的 `NoiseSuppression` 欄位。預設為 `false`，舊設定缺少此欄位時也視為關閉。整段、逐句及逐句補辨識共用開始錄音時的設定。匯入 WAV 時讀取當下的設定。
+
+開啟時，音訊先轉成 16 kHz 單聲道，再由 `audio/denoise.rs` 取安靜的音框估計背景噪音，做頻譜減法，最後才自動增益及限幅。降噪保留取樣數量與時間對齊。語音偵測、裁切、音量回報及增益計算都使用原始訊號。關閉時沿用既有編碼流程。
 
 ## 貼入的規則
 

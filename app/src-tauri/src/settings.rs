@@ -85,6 +85,7 @@ pub struct Settings {
     pub text_size: u32,
     pub microphone_id: Option<String>,
     pub microphone_name: Option<String>,
+    pub noise_suppression: bool,
     pub auto_insert: bool,
     pub simplified: bool,
     /// Whether recognised speech is corrected with the user's own words.
@@ -142,6 +143,7 @@ impl Default for Settings {
             text_size: 20,
             microphone_id: None,
             microphone_name: None,
+            noise_suppression: false,
             auto_insert: true,
             simplified: false,
             use_phrases: true,
@@ -258,6 +260,15 @@ impl Settings {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn noise_suppression_defaults_off_and_survives_saving() {
+        let older: Settings = serde_json::from_str(r#"{"Online":true}"#).unwrap();
+        assert!(!older.noise_suppression);
+        let enabled = Settings { noise_suppression: true, ..older };
+        let saved = serde_json::to_string(&enabled.as_saved()).unwrap();
+        assert!(serde_json::from_str::<Settings>(&saved).unwrap().noise_suppression);
+    }
 
     #[test]
     fn streaming_asr_is_opt_in_for_codex_dictation_only() {

@@ -8,6 +8,7 @@ use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 use std::time::Duration;
 
+mod denoise;
 mod segments;
 use segments::Segmenter;
 
@@ -48,6 +49,7 @@ pub struct CaptureLevels {
 pub struct FinishedCapture {
     pub levels: CaptureLevels,
     pub failed: bool,
+    pub noise_suppression: bool,
     pub wav: Result<Vec<u8>, String>,
 }
 
@@ -68,6 +70,7 @@ pub enum SegmentEvent {
 pub struct SegmentAudio {
     samples: Arc<Mutex<Vec<f32>>>,
     rate: u32,
+    noise_suppression: bool,
 }
 
 impl SegmentAudio {
@@ -75,7 +78,7 @@ impl SegmentAudio {
         let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
             .get(range).ok_or_else(|| DAMAGED.to_string())?.to_vec();
         let rms = sound(&samples, self.rate).map(|(start, end)| levels(&samples[start..end]).1);
-        Ok(encode_with_gain(&samples, self.rate, rms).0)
+        Ok(encode(&samples, self.rate, rms, self.noise_suppression).0)
     }
 
     /// How long this many samples of the recording last.
@@ -94,7 +97,7 @@ impl SegmentAudio {
         }
         let rms = levels(&samples[first..last]).1;
         let kept = trim_with_sound(&samples, self.rate, Some((first, last)));
-        Ok(Some(encode_with_gain(kept, self.rate, Some(rms)).0))
+        Ok(Some(encode(kept, self.rate, Some(rms), self.noise_suppression).0))
     }
 }
 
@@ -106,7 +109,7 @@ impl Recorder {
     /// and fails when that microphone cannot be used: the microphone test checks this one only.
     /// `level` receives the peak of each buffer, from 0 to 1.
     pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
-        Self::start_capture(move || open(microphone.as_deref(), level).map(|opened| (opened, None)), None, || {})
+        Self::start_capture(move || open(microphone.as_deref(), level).map(|opened| (opened, None)), false, None, || {})
     }
 
     /// Starts a dictation. When the chosen microphone is unplugged or cannot be opened, the Windows
@@ -114,11 +117,12 @@ impl Recorder {
     /// next dictation goes back to that microphone once it is there again.
     pub fn start_with_segments(
         microphone: Option<String>,
+        noise_suppression: bool,
         level: impl Fn(f32) + Send + Sync + 'static,
         segments: Option<SegmentListener>,
         on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
-        Self::start_capture(move || open_or_default(microphone.as_deref(), level), segments, on_failure)
+        Self::start_capture(move || open_or_default(microphone.as_deref(), level), noise_suppression, segments, on_failure)
     }
 
     /// What the user is told when the chosen microphone gave way to the default.
@@ -136,6 +140,7 @@ impl Recorder {
 
     fn start_capture<Stream>(
         open: impl FnOnce() -> Result<(Opened<Stream>, Option<String>), String> + Send + 'static,
+        noise_suppression: bool,
         segments: Option<SegmentListener>,
         on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
@@ -153,7 +158,7 @@ impl Recorder {
             let rate = info.rate;
             let _ = ready.send(Ok((info, substitute, failed.clone())));
             let mut reader = segments.map(|(recording_id, notify)| {
-                let audio = SegmentAudio { samples: samples.clone(), rate };
+                let audio = SegmentAudio { samples: samples.clone(), rate, noise_suppression };
                 SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)))
             });
             while !failed.load(Ordering::Relaxed) {
@@ -177,7 +182,7 @@ impl Recorder {
                 reader.finish(&samples, end)?;
             }
             let captured = samples.lock().map_err(|_| DAMAGED.to_string())?;
-            Ok(encode_recording(&captured[..end], rate, failed))
+            Ok(encode_recording(&captured[..end], rate, failed, noise_suppression))
         });
         match started.recv() {
             Ok(Ok((info, substitute, failed))) => Ok(Self { stop, worker, info, substitute, failed }),
@@ -250,7 +255,7 @@ impl SegmentReader {
     }
 }
 
-fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture {
+fn encode_recording(samples: &[f32], rate: u32, failed: bool, noise_suppression: bool) -> FinishedCapture {
     let speech = sound(samples, rate);
     let measured = speech.map_or(samples, |(start, end)| &samples[start..end]);
     let (peak, rms) = levels(measured);
@@ -269,7 +274,7 @@ fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture
     let (wav, gain_db) = match reason {
         Some(reason) => (Err(reason.into()), 0),
         None => {
-            let (wav, gain_db) = encode_with_gain(kept, rate, speech.map(|_| rms));
+            let (wav, gain_db) = encode(kept, rate, speech.map(|_| rms), noise_suppression);
             (Ok(wav), gain_db)
         }
     };
@@ -283,6 +288,7 @@ fn encode_recording(samples: &[f32], rate: u32, failed: bool) -> FinishedCapture
             speech_detected: speech.is_some(),
         },
         failed,
+        noise_suppression,
         wav,
     }
 }
@@ -497,6 +503,15 @@ fn levels(samples: &[f32]) -> (f64, f64) {
     (peak, (squares / samples.len().max(1) as f64).sqrt())
 }
 
+fn encode(samples: &[f32], rate: u32, speech_rms: Option<f64>, noise_suppression: bool) -> (Vec<u8>, i32) {
+    if noise_suppression {
+        let cleaned = denoise::suppress(&resample(samples, rate));
+        encode_with_gain(&cleaned, TARGET_RATE, speech_rms)
+    } else {
+        encode_with_gain(samples, rate, speech_rms)
+    }
+}
+
 fn encode_with_gain(samples: &[f32], rate: u32, speech_rms: Option<f64>) -> (Vec<u8>, i32) {
     let Some(rms) = speech_rms else { return (wav(&resample(samples, rate)), 0) };
     let gain = (0.1 / rms).clamp(1.0, 10.0);
@@ -632,7 +647,7 @@ fn wav(samples: &[f32]) -> Vec<u8> {
 }
 
 /// Turns any PCM or float WAV file into the 16 kHz mono form the recognisers expect.
-pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
+pub fn normalise(file: &[u8], noise_suppression: bool) -> Result<Vec<u8>, String> {
     let unreadable = || "無法讀取這個 WAV 音檔".to_string();
     if file.len() < 12 || &file[0..4] != b"RIFF" || &file[8..12] != b"WAVE" {
         return Err(unreadable());
@@ -684,7 +699,7 @@ pub fn normalise(file: &[u8]) -> Result<Vec<u8>, String> {
         return Err(TOO_SHORT.into());
     }
     let rms = speech.map(|(start, end)| levels(&mono[start..end]).1);
-    Ok(encode_with_gain(&mono, rate, rms).0)
+    Ok(encode(&mono, rate, rms, noise_suppression).0)
 }
 
 #[cfg(test)]
@@ -709,6 +724,7 @@ mod tests {
         samples.resize(rate as usize * 6, 0.001);
         let recorder = Recorder::start_capture(
             move || Ok((test_input((), Arc::new(Mutex::new(samples)), rate), None)),
+            false,
             None,
             || {},
         ).unwrap();
@@ -724,7 +740,7 @@ mod tests {
     #[test]
     fn a_disconnect_keeps_speech_but_reports_an_error_for_silence_or_a_click() {
         let speech = vec![0.25; 4000];
-        let saved = encode_recording(&speech, 16_000, true);
+        let saved = encode_recording(&speech, 16_000, true, false);
         assert!(saved.failed);
         assert_eq!(saved.wav, Ok(wav(&speech)));
         assert_eq!(saved.levels.kept_ms, 250);
@@ -732,11 +748,11 @@ mod tests {
         let mut click = vec![0.0; 16_000];
         click[8_000] = 0.5;
         for unusable in [&[][..], &vec![0.0; 16_000], &click] {
-            let failed = encode_recording(unusable, 16_000, true);
+            let failed = encode_recording(unusable, 16_000, true, false);
             assert_eq!(failed.wav, Err("麥克風在錄音中斷線，沒有可辨識的內容".into()));
             assert_eq!(failed.levels.kept_ms, 0);
         }
-        let silent = encode_recording(&[0.001; 16_000], 16_000, false);
+        let silent = encode_recording(&[0.001; 16_000], 16_000, false, false);
         assert_eq!(silent.levels, CaptureLevels {
             captured_ms: 1000, kept_ms: 1000, peak_dbfs: -60, rms_dbfs: -60, gain_db: 0, speech_detected: false,
         });
@@ -757,7 +773,7 @@ mod tests {
             (10f32.powf(-26.0 / 20.0), 6, 0.1),
         ] {
             let speech: Vec<_> = [input, -input].into_iter().cycle().take(16_000).collect();
-            let capture = encode_recording(&speech, 16_000, false);
+            let capture = encode_recording(&speech, 16_000, false, false);
             assert!(capture.levels.speech_detected);
             assert_eq!(capture.levels.gain_db, gain_db);
             let (_, rms) = levels(&pcm_samples(&capture.wav.unwrap()));
@@ -769,7 +785,7 @@ mod tests {
     fn loud_speech_and_silence_only_keep_their_levels() {
         for (sample, speech_detected) in [(0.5, true), (0.0, false), (0.001, false)] {
             let samples = vec![sample; 16_000];
-            let capture = encode_recording(&samples, 16_000, false);
+            let capture = encode_recording(&samples, 16_000, false, false);
             assert_eq!(capture.levels.speech_detected, speech_detected);
             assert_eq!(capture.levels.gain_db, 0);
             assert_eq!(capture.wav.unwrap(), wav(&samples));
@@ -781,7 +797,7 @@ mod tests {
         for rate in [16_000, 48_000] {
             let mut samples = vec![0.08; rate as usize];
             samples[rate as usize / 2..rate as usize / 2 + 24].fill(-0.95);
-            let capture = encode_recording(&samples, rate, false);
+            let capture = encode_recording(&samples, rate, false, false);
             assert!(capture.levels.gain_db > 0);
             let output = pcm_samples(&capture.wav.unwrap());
             let (peak, _) = levels(&output);
@@ -795,11 +811,85 @@ mod tests {
         let quiet = vec![0.02; 16_000];
         let mut samples = vec![0.5; 16_000];
         samples.extend_from_slice(&quiet);
-        let audio = SegmentAudio { samples: Arc::new(Mutex::new(samples)), rate: 16_000 };
+        let audio = SegmentAudio { samples: Arc::new(Mutex::new(samples)), rate: 16_000, noise_suppression: false };
         let expected = wav(&[0.1; 16_000]);
         assert_eq!(audio.encode(16_000..32_000).unwrap(), expected);
         assert_eq!(audio.encode_from(16_000).unwrap().unwrap(), expected);
-        assert_eq!(normalise(&wav(&quiet)).unwrap(), expected);
+        assert_eq!(normalise(&wav(&quiet), false).unwrap(), expected);
+    }
+
+    #[test]
+    fn disabled_noise_suppression_encodes_the_same_wav_as_gain_alone() {
+        for rate in [8_000, 16_000, 44_100, 48_000, 96_000] {
+            let samples: Vec<_> = (0..rate + 137)
+                .map(|i| 0.06 * (i as f32 * 0.71).sin())
+                .collect();
+            let rms = Some(levels(&samples).1);
+            assert_eq!(encode(&samples, rate, rms, false), encode_with_gain(&samples, rate, rms));
+        }
+    }
+
+    #[test]
+    fn noise_suppression_reduces_background_energy_without_changing_duration() {
+        let mut seed = 23u32;
+        for rate in [8_000, 16_000, 44_100, 48_000, 96_000] {
+            let samples: Vec<_> = (0..rate + 137).map(|i| {
+                seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+                let noise = ((seed >> 8) as f32 / 8_388_608.0 - 1.0) * 0.006;
+                let t = i as f32 / rate as f32;
+                let voice = if (0.3..0.7).contains(&t) {
+                    0.2 * (std::f32::consts::TAU * 330.0 * t).sin()
+                } else {
+                    0.0
+                };
+                voice + noise
+            }).collect();
+            let audio = SegmentAudio { samples: Arc::new(Mutex::new(samples.clone())), rate, noise_suppression: false };
+            let enabled = SegmentAudio { noise_suppression: true, ..audio.clone() };
+            let range = 0..samples.len();
+            let before = audio.encode(range.clone()).unwrap();
+            let after = enabled.encode(range).unwrap();
+            assert_eq!(after.len(), before.len(), "{rate} Hz");
+            let before_pcm = pcm_samples(&before);
+            let after_pcm = pcm_samples(&after);
+            for noise_only in [1600..4000, 12_000..14_400] {
+                let energy = |pcm: &[f32]| pcm[noise_only.clone()].iter().map(|sample| sample * sample).sum::<f32>();
+                assert!(energy(&after_pcm) < energy(&before_pcm) / 4.0, "{rate} Hz, {noise_only:?}: {} vs {}", energy(&after_pcm), energy(&before_pcm));
+            }
+            assert!(levels(&after_pcm[6400..9600]).1 > 0.01, "{rate} Hz: lost the test tone");
+
+            let raw_capture = encode_recording(&samples, rate, false, false);
+            let clean_capture = encode_recording(&samples, rate, false, true);
+            assert!(!raw_capture.noise_suppression && clean_capture.noise_suppression);
+            assert_eq!(clean_capture.levels, raw_capture.levels);
+            let raw_wav = raw_capture.wav.unwrap();
+            let clean_wav = clean_capture.wav.unwrap();
+            assert_eq!(clean_wav.len(), raw_wav.len());
+            assert_ne!(clean_wav, raw_wav);
+            assert_eq!(enabled.encode_from(0).unwrap().unwrap(), clean_wav);
+
+            let import = wav(&resample(&samples, rate));
+            let original = normalise(&import, false).unwrap();
+            let cleaned = normalise(&import, true).unwrap();
+            assert_eq!(cleaned.len(), original.len());
+            assert_ne!(cleaned, original);
+        }
+    }
+
+    #[test]
+    fn noise_suppression_preserves_samples_at_both_ends() {
+        let mut samples = vec![0.0; 16_137];
+        let last = samples.len() - 1;
+        samples[0] = 0.5;
+        samples[last] = -0.5;
+        let (original, _) = encode(&samples, TARGET_RATE, None, false);
+        let (cleaned, _) = encode(&samples, TARGET_RATE, None, true);
+        let original = pcm_samples(&original);
+        let cleaned = pcm_samples(&cleaned);
+        assert_eq!(cleaned.len(), original.len());
+        for (actual, expected) in cleaned.iter().zip(&original) {
+            assert!((actual - expected).abs() <= 1.0 / 32767.0);
+        }
     }
 
     #[test]
@@ -828,6 +918,7 @@ mod tests {
         let opened_samples = Arc::new(Mutex::new(speech.clone()));
         let recorder = Recorder::start_capture(
             move || Ok((test_input(Stream(closed), opened_samples, 16_000), None)),
+            false,
             None,
             move || {
                 stream_closed.try_recv().unwrap();
@@ -888,7 +979,7 @@ mod tests {
             let wav = audio.encode(segment.start..segment.end).unwrap();
             send.send((segment, wav)).unwrap();
         }));
-        let recorder = Recorder::start_capture(open(), Some(listener), || {}).unwrap();
+        let recorder = Recorder::start_capture(open(), false, Some(listener), || {}).unwrap();
         let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(first.0, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
         assert_eq!(first.1, wav(&resample(&input[5 * frame..75 * frame], rate)));
@@ -897,7 +988,7 @@ mod tests {
         let segmented = recorder.finish().unwrap().wav;
         assert_eq!(received.try_recv().unwrap().0, Segment { recording_id: 19, sequence: 2, start: 85 * frame, end: 131 * frame });
         assert_eq!(received.try_recv(), Err(mpsc::TryRecvError::Disconnected));
-        let full = Recorder::start_capture(open(), None, || {}).unwrap().finish().unwrap().wav;
+        let full = Recorder::start_capture(open(), false, None, || {}).unwrap().finish().unwrap().wav;
         input.extend(std::iter::repeat_n(0.25, 21 * frame));
         assert_eq!(full, Ok(wav(&resample(trim(&input, rate), rate))));
         assert_eq!(segmented, full);
@@ -907,7 +998,7 @@ mod tests {
             assert!(matches!(event, SegmentEvent::Incomplete));
         }));
         for option in [None, Some(listener)] {
-            let result = Recorder::start_capture(brief, option, || {}).unwrap().finish().unwrap().wav;
+            let result = Recorder::start_capture(brief, false, option, || {}).unwrap().finish().unwrap().wav;
             assert_eq!(result, Err(TOO_SHORT.to_string()));
         }
     }
@@ -984,10 +1075,10 @@ mod tests {
         file.extend_from_slice(b"data");
         file.extend_from_slice(&(frames * 4).to_le_bytes());
         file.extend(std::iter::repeat(0u8).take(frames as usize * 4));
-        let out = normalise(&file).unwrap();
+        let out = normalise(&file, false).unwrap();
         assert_eq!(out.len(), 44 + 16_000 * 2);
         assert_eq!(u32::from_le_bytes(out[24..28].try_into().unwrap()), 16_000);
-        assert!(normalise(b"not a wave file").is_err());
+        assert!(normalise(b"not a wave file", false).is_err());
     }
 
     #[test]

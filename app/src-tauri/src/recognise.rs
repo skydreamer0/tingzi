@@ -484,7 +484,7 @@ mod tests {
         let wav = silence();
         assert_eq!((wav.len(), &wav[..4], &wav[8..12]), (44 + 32_000, &b"RIFF"[..], &b"WAVE"[..]));
         assert_eq!(u32::from_le_bytes(wav[40..44].try_into().unwrap()), 32_000);
-        assert!(crate::audio::normalise(&wav).is_ok());
+        assert!(crate::audio::normalise(&wav, false).is_ok());
     }
 
     #[test]
