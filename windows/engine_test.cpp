@@ -149,11 +149,25 @@ int wmain(int argc,wchar_t** argv) {
     enter("T");expect(input.displayRuns().active==L"ㄊ","ETen key shows its own symbol");
     input.clear();input.setLayout(KeyLayout::Standard);
 
-    expect(input.press(shiftKey|VK_OEM_COMMA)==L"，" && !input.active(),"punctuation commits at once when idle");
+    expect(input.press(shiftKey|VK_OEM_COMMA).empty() && input.active() && input.preview()==L"，","Shift+comma starts a composition without committing");
+    expect(input.press(VK_RETURN)==L"，" && !input.active(),"Enter commits the full-width comma");
+    input.press(shiftKey|VK_OEM_COMMA);input.press(VK_SPACE);
+    expect(!input.selecting() && input.press(VK_RETURN)==L"、","Space replaces a comma with the second similar symbol");
+    input.press(VK_OEM_5);input.press(VK_DOWN);
+    options=input.choices();
+    expect(options.size()==4 && options[0].text==L"、" && options[1].text==L"﹑","a leading match takes precedence over an earlier row containing the symbol");
+    input.clear();
     enter("SU3CL3");input.press(shiftKey|VK_OEM_COMMA);enter("SU3CL3");input.press(shiftKey|'1');
     expect(input.preview()==L"你好，你好！","punctuation stays inside the sentence");
     expect(input.press(VK_RETURN)==L"你好，你好！","sentence with punctuation commits whole");
-    expect(input.press(shiftKey|'6')==L"……" && !input.active(),"ellipsis commits at once when idle");
+    expect(input.press(shiftKey|'6').empty() && input.preview()==L"……","the two-character ellipsis starts a composition");
+    input.press(VK_DOWN);
+    options=input.choices();
+    expect(options.size()==5 && options[0].text==L"……" && options[1].text==L"…","Down matches the whole two-character ellipsis");
+    input.press(VK_ESCAPE);input.press(VK_SPACE);
+    expect(input.press(VK_RETURN)==L"…","Space replaces the entire ellipsis");
+    input.press(shiftKey|VK_OEM_MINUS);input.press(VK_SPACE);
+    expect(input.press(VK_RETURN)==L"—","Space replaces the entire two-character dash");
     expect(input.press(VK_OEM_4).empty() && input.active() && input.preview()==L"「","a left bracket starts a composition");
     expect(input.press(VK_RETURN)==L"「" && !input.active(),"Enter commits a bracket-only composition");
     input.press(VK_OEM_4);input.press(VK_OEM_6);input.press(VK_OEM_6);
@@ -176,7 +190,7 @@ int wmain(int argc,wchar_t** argv) {
     const auto verticalBrackets=input.choices();
     expect(verticalBrackets.size()==13 && verticalBrackets[0].text==L"︹" && verticalBrackets[1].text==L"「","a vertical bracket is first when reopening its list");
     input.press(VK_TAB);
-    expect(input.listTitle()==L"符號・括號（Tab 換類別）" && input.choices().size()==22,"Tab opens the full bracket category");
+    expect(input.listTitle()==L"符號・括號 3/25（Tab 換類別）" && input.choices().size()==34,"Tab opens the full bracket category");
     input.press('2');
     expect(input.press(VK_RETURN)==L"」","the full symbol table still replaces the bracket at the caret");
 
@@ -204,9 +218,12 @@ int wmain(int argc,wchar_t** argv) {
 
     enter("SU3");input.press(shiftKey|'9');input.press(VK_DOWN);
     const auto parenBrackets=input.choices();
-    expect(parenBrackets.size()==11 && parenBrackets[2].text==L"（" && parenBrackets[8].text==L"［","Down still offers the original same-side list after a parenthesis");
-    input.press('9');
-    expect(input.press(VK_RETURN)==L"你［","the same-side list still replaces a parenthesis");
+    expect(parenBrackets.size()==9 && parenBrackets[0].text==L"（" && parenBrackets[1].text==L"［","Down lists the parenthesis first and the square bracket second");
+    input.press('2');input.press(VK_DOWN);
+    options=input.choices();
+    expect(options.size()==9 && options[0].text==L"［" && options[1].text==L"（","Down reopens the same group from a square bracket");
+    input.press(VK_ESCAPE);
+    expect(input.press(VK_RETURN)==L"你［","the similar-symbol list replaces a parenthesis");
     input.press(VK_OEM_3);
     expect(input.selecting() && input.listTitle().rfind(L"符號・常用",0)==0 && input.choices().size()>20,"backtick opens the symbol list");
     expect(input.press('2')==L"。" && !input.active(),"symbol from the list commits when idle");
@@ -215,37 +232,85 @@ int wmain(int argc,wchar_t** argv) {
 
     input.press(VK_OEM_3);
     expect(input.selecting() && !input.active(),"standalone symbols select without a text composition");
-    input.press(VK_TAB);
-    expect(input.listTitle().rfind(L"符號・括號",0)==0,"Tab changes the standalone symbol category");
+    const wchar_t* categories[]={
+        L"常用",L"標點",L"括號",L"箭頭",L"數學",L"單位",L"貨幣",L"圈號數字",L"括號數字",L"點號數字",
+        L"羅馬數字",L"中文編號",L"圈號字母",L"圖形",L"標記",L"框線",L"區塊",L"線條",
+        L"希臘大寫",L"希臘小寫",L"拼音",L"注音",L"平假名",L"片假名",L"表情"
+    };
+    for(size_t i=0;i<std::size(categories);++i){
+        const Text title=Text(L"符號・")+categories[i]+L" "+std::to_wstring(i+1)+L"/25（Tab 換類別）";
+        expect(input.listTitle()==title && !input.choices().empty(),"the next symbol category has the expected name and position");
+        input.press(VK_TAB);
+    }
+    expect(input.listTitle()==L"符號・常用 1/25（Tab 換類別）","Tab wraps from the last category to the first");
+    expect(input.wants(shiftKey|VK_TAB),"the symbol list accepts Shift+Tab");
+    input.press(shiftKey|VK_TAB);
+    expect(input.listTitle()==L"符號・表情 25/25（Tab 換類別）","Shift+Tab wraps from the first category to the last");
+    const Text grin=L"😀";
+    expect(grin.size()==2 && input.choices().size()==46 && input.displayRuns().active==grin,"the emoji list previews a full UTF-16 surrogate pair");
+    expect(input.press(VK_RETURN)==grin && !input.active(),"Enter commits a complete emoji from the standalone symbol table");
+    input.press(VK_OEM_3);
     expect(input.press(VK_ESCAPE).empty() && !input.selecting(),"Escape closes the standalone list without committing");
     input.press(VK_OEM_3);
     input.press(VK_RIGHT);
     expect(input.press(VK_RETURN)==L"。" && !input.active() && !input.selecting(),"arrow then Enter commits only the selected symbol");
-    expect(!input.wants(VK_OEM_PLUS) && !input.wants(shiftKey|VK_OEM_PLUS),"equals and shifted equals still pass through in Standard");
+    expect(input.wants(VK_OEM_PLUS) && input.press(VK_OEM_PLUS).empty() && input.preview()==L"＝","plain equals starts a full-width symbol composition in Standard");
+    input.press(VK_DOWN);
+    options=input.choices();
+    expect(options.size()==18 && options[0].text==L"＝" && options[1].text==L"＋","Down after equals lists equals first and plus second");
+    input.press(VK_ESCAPE);
+    expect(input.press(VK_RETURN)==L"＝","Enter commits full-width equals");
+    expect(input.press(shiftKey|VK_OEM_PLUS).empty() && input.preview()==L"＋" && input.press(VK_RETURN)==L"＋","Shift+equals composes and commits full-width plus");
+    const std::pair<WPARAM,const wchar_t*> shiftedSymbols[]={
+        {'2',L"＠"},{'3',L"＃"},{'4',L"＄"},{'5',L"％"},{'7',L"＆"},{'8',L"＊"},{VK_OEM_PLUS,L"＋"}
+    };
+    for(auto layout:{KeyLayout::Standard,KeyLayout::ETen}){
+        input.setLayout(layout);
+        for(const auto& [key,mark]:shiftedSymbols){
+            expect(input.press(shiftKey|key).empty() && input.preview()==mark,"a shifted symbol key starts a composition in either layout");
+            input.press(VK_DOWN);
+            expect(input.selecting() && input.displayRuns().active==mark,"a shifted symbol key has a similar-symbol list");
+            input.press(VK_ESCAPE);
+            expect(input.press(VK_RETURN)==mark,"Enter commits the original shifted symbol");
+        }
+    }
     input.setLayout(KeyLayout::ETen);
-    expect(input.wants(VK_OEM_PLUS) && !input.wants(shiftKey|VK_OEM_PLUS),"equals is a Zhuyin key and shifted equals passes through in Eten");
+    expect(input.wants(VK_OEM_PLUS),"plain equals still joins the Eten syllable");
     input.press(VK_OEM_PLUS);
     expect(input.displayRuns().active==L"ㄦ","plain equals still enters ㄦ in Eten");
     input.clear();input.setLayout(KeyLayout::Standard);
 
     enter("SU3");input.press(VK_OEM_4);input.press(VK_DOWN);
     options=input.choices();
-    expect(input.listTitle()==L"符號・左括號" && options.size()>5 && options[0].text==L"「" && options[1].text==L"『","Down offers left brackets after a composing left bracket");
+    expect(input.listTitle()==L"相似符號" && options.size()>5 && options[0].text==L"「" && options[1].text==L"『","Down offers left brackets after a composing left bracket");
     input.press('2');
     expect(input.preview()==L"你『" && input.press(VK_RETURN)==L"你『","choosing a related bracket replaces the old mark only");
     enter("SU3");input.press(VK_OEM_6);input.press(VK_DOWN);
     options=input.choices();
-    expect(input.listTitle()==L"符號・右括號" && options[0].text==L"」" && options[1].text==L"』","Down offers right brackets after a composing right bracket");
+    expect(input.listTitle()==L"相似符號" && options[0].text==L"」" && options[1].text==L"』","Down offers right brackets after a composing right bracket");
     expect(input.press(VK_ESCAPE).empty() && input.preview()==L"你」","cancel keeps the original bracket");
     input.press(VK_UP);
     expect(input.listTitle().rfind(L"符號・常用",0)==0,"Up after a composing symbol opens all categories");
-    input.press(VK_TAB);input.press(VK_TAB);input.press('1');
-    expect(input.press(VK_RETURN)==L"你→","full palette selection replaces the mark at the caret");
+    input.press(VK_TAB);input.press(VK_TAB);input.press(VK_TAB);input.press('1');
+    expect(input.press(VK_RETURN)==L"你←","full palette selection replaces the mark at the caret");
     enter("SU3");input.press(VK_OEM_4);enter("CL3");input.press(VK_LEFT);input.press(VK_DOWN);
     auto bracketRuns=input.displayRuns();
     expect(bracketRuns.before==L"你" && bracketRuns.active==L"「" && bracketRuns.after==L"好","in-sentence bracket preview does not duplicate the current mark");
     input.press('2');
     expect(input.press(VK_RETURN)==L"你『好","choose in the middle of the sentence without replacing the next character");
+
+    enter("SU3");input.press(VK_OEM_4);enter("CL3");input.press(VK_LEFT);
+    input.press(VK_UP);input.press(shiftKey|VK_TAB);
+    const auto emojiRuns=input.displayRuns();
+    expect(emojiRuns.before==L"你" && emojiRuns.active==grin && emojiRuns.after==L"好","emoji replacement previews the whole character between neighboring text");
+    expect(input.press('1').empty() && input.preview()==L"你😀好" && input.caretOffset()==3,"selecting an emoji replaces one symbol and advances by two UTF-16 units");
+    expect(input.press(VK_RETURN)==L"你😀好","Enter commits the whole emoji inside the sentence");
+    enter("SU3");input.press(VK_OEM_4);input.press(VK_UP);input.press(shiftKey|VK_TAB);input.press('1');
+    input.press(VK_BACK);
+    expect(input.preview()==L"你" && input.press(VK_RETURN)==L"你","Backspace at the end deletes both units of an emoji");
+    enter("SU3");input.press(VK_OEM_4);enter("CL3");input.press(VK_LEFT);
+    input.press(VK_UP);input.press(shiftKey|VK_TAB);input.press('1');input.press(VK_BACK);
+    expect(input.preview()==L"你好" && input.press(VK_RETURN)==L"你好","Backspace inside the sentence deletes the full emoji and keeps neighboring text");
 
     enter("G4RU");input.press(VK_OEM_COMMA);enter("4");
     Text whole=input.preview();
@@ -465,7 +530,7 @@ int wmain(int argc,wchar_t** argv) {
     expect(!swapped.empty() && pick(swapped,1) && input.preview()==L"你好"+swapped,"and leaves the words before it alone");
     expect(input.press(VK_RETURN)==L"你好"+swapped,"the edited sentence commits whole");
     input.press(VK_OEM_3);input.press(VK_TAB);
-    expect(input.listTitle().rfind(L"符號・括號",0)==0 && input.press('1')==L"「","Tab in the symbol list moves to the next group");
+    expect(input.listTitle().rfind(L"符號・標點",0)==0 && input.press('1')==L"，","Tab in the symbol list moves to punctuation and can select its first entry");
 
     input.clear();
     enter("T");input.press(VK_OEM_1);enter("6JP61P3");
