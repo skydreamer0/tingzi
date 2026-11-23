@@ -88,6 +88,7 @@ var
   DeletePersonalData: Boolean;
   FloatWasRunning_: Boolean;
   UninstallRestartRequired: Boolean;
+  UninstallHasUnscheduledFiles: Boolean;
   RegisteredUninstallVersion: String;
 
 function MoveFileExForUninstall(ExistingName: String; NewName: Integer; Flags: Cardinal): Boolean;
@@ -203,7 +204,11 @@ begin
       Log('Renamed locked owned file for removal: ' + Path + ' -> ' + Pending);
     end;
     if Pending = Path then
-      Log('Could not rename locked owned file; scheduling original path: ' + Path);
+    begin
+      Log('Leaving locked owned file because rename failed: ' + Path);
+      UninstallHasUnscheduledFiles := True;
+      exit;
+    end;
   end;
   if not MoveFileExForUninstall(Pending, 0, 4) then
     RaiseException('Cannot schedule removal of ' + Pending + ': ' + SysErrorMessage(DLLGetLastError));
@@ -236,7 +241,7 @@ begin
               RemoveOwnedFile(Child);
               Removed := True;
             end;
-            if not Removed then
+            if not Removed and not UninstallHasUnscheduledFiles then
             begin
               if not MoveFileExForUninstall(Child, 0, 4) then
                 RaiseException('Cannot schedule removal of ' + Child + ': ' + SysErrorMessage(DLLGetLastError));
@@ -250,7 +255,7 @@ begin
       FindClose(Entry);
     end;
   end;
-  if DirExists(Path) and not RemoveDir(Path) then
+  if DirExists(Path) and not RemoveDir(Path) and not UninstallHasUnscheduledFiles then
   begin
     if not MoveFileExForUninstall(Path, 0, 4) then
       RaiseException('Cannot schedule removal of ' + Path + ': ' + SysErrorMessage(DLLGetLastError));
@@ -295,7 +300,7 @@ begin
       FindClose(Entry);
     end;
   end;
-  if OnlyOwnedItems and DirExists(Root) and not RemoveDir(Root) then
+  if OnlyOwnedItems and DirExists(Root) and not RemoveDir(Root) and not UninstallHasUnscheduledFiles then
   begin
     if not MoveFileExForUninstall(Root, 0, 4) then
       RaiseException('Cannot schedule removal of ' + Root + ': ' + SysErrorMessage(DLLGetLastError));

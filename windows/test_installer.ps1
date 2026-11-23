@@ -196,3 +196,26 @@ try {
 Remove-Item $pendingPad[0].FullName
 [IO.Directory]::Delete($root)
 Write-Host 'Legacy root cleanup checks passed.'
+
+Install 'rename-denied-install'
+$pad = Join-Path $root 'TingziPad.exe'
+Copy-Item $dll $pad
+$noDeleteShare = [IO.File]::Open($pad, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+    Uninstall 'rename-denied-uninstall'
+    Check (!(Test-Path $uninstallKey)) 'rename-denied uninstall still removes the apps entry'
+    Check (Test-Path $pad) 'a locked file that cannot be renamed stays at its original path'
+    Check ((Get-Content (Join-Path $logs 'rename-denied-uninstall.log') -Raw).Contains("Leaving locked owned file because rename failed: $pad")) 'rename failure is logged without scheduling the original path'
+    $pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    $deletions = @()
+    for ($i = 0; $i -lt $pending.Count; $i += 2) {
+        if ($pending[$i + 1] -eq '') { $deletions += $pending[$i] -replace '^(\*\d+)?\\\?\?\\', '' }
+    }
+    Check ($deletions -notcontains $pad) 'the rename-denied original path is not pending deletion'
+    Check (@(Get-ChildItem $root).Count -eq 1) 'only the unscheduled locked file remains after uninstall'
+} finally {
+    $noDeleteShare.Dispose()
+}
+Remove-Item $pad
+[IO.Directory]::Delete($root)
+Write-Host 'Rename-denied cleanup checks passed.'
