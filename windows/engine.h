@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -357,6 +358,10 @@ inline const SymbolGroup symbolGroups[]={
     {L"圖形",{L"○",L"●",L"◎",L"△",L"▲",L"□",L"■",L"◇",L"◆",L"☆",L"★",L"※",L"§",L"♪",L"♥",L"✓",L"✗",L"…",L"─",L"│"}},
     {L"注音",{L"ㄅ",L"ㄆ",L"ㄇ",L"ㄈ",L"ㄉ",L"ㄊ",L"ㄋ",L"ㄌ",L"ㄍ",L"ㄎ",L"ㄏ",L"ㄐ",L"ㄑ",L"ㄒ",L"ㄓ",L"ㄔ",L"ㄕ",L"ㄖ",L"ㄗ",L"ㄘ",L"ㄙ",L"ㄧ",L"ㄨ",L"ㄩ",L"ㄚ",L"ㄛ",L"ㄜ",L"ㄝ",L"ㄞ",L"ㄟ",L"ㄠ",L"ㄡ",L"ㄢ",L"ㄣ",L"ㄤ",L"ㄥ",L"ㄦ",L"ˊ",L"ˇ",L"ˋ",L"˙"}},
 };
+inline constexpr std::wstring_view similarBrackets[]={
+    L"「『《〈〔｛【︿︽︹︻﹁﹃",
+    L"」』》〉〕｝】﹀︾︺︼﹂﹄",
+};
 inline wchar_t keyChar(WPARAM key) {
     if (key >= 'A' && key <= 'Z') return wchar_t(key + 32);
     if (key >= '0' && key <= '9') return wchar_t(key);
@@ -448,7 +453,13 @@ class Input {
         if(!raw.empty() || !at || !symbol(syllables[at-1]))return {};
         return at-1;
     }
-    static std::optional<size_t> sideOfBracket(const Text& mark) {
+    static std::optional<size_t> sideOfSimilarBracket(std::wstring_view mark) {
+        if(mark.size()!=1)return {};
+        for(size_t side=0;side<std::size(similarBrackets);++side)
+            if(similarBrackets[side].find(mark.front())!=std::wstring_view::npos)return side;
+        return {};
+    }
+    static std::optional<size_t> sideOfBracket(std::wstring_view mark) {
         const auto& brackets=symbolGroups[1].marks;
         const auto found=std::find(brackets.begin(),brackets.end(),mark);
         if(found==brackets.end())return {};
@@ -918,6 +929,16 @@ public:
         std::vector<Choice> result;
         if(recallMode){for(const auto& said:recalled())result.push_back({said.text,0});return result;}
         if(symbolMode){
+            if(bracketSide){
+                const auto mark=std::wstring_view(syllables[*symbolTarget]).substr(1);
+                const auto similar=similarBrackets[*bracketSide];
+                if(mark.size()==1 && similar.find(mark.front())!=std::wstring_view::npos){
+                    result.push_back({Text(mark),0});
+                    for(wchar_t other:similar)
+                        if(other!=mark.front())result.push_back({Text(1,other),0});
+                    return result;
+                }
+            }
             const auto& marks=symbolGroups[bracketSide?1:symbolGroup].marks;
             if(bracketSide){
                 for(size_t i=*bracketSide;i<marks.size();i+=2)result.push_back({marks[i],0});
@@ -1159,7 +1180,7 @@ public:
         }
         if(const Text mark=punctuation(key,shifted,layout);!mark.empty()){
             if(!raw.empty() && !finishSyllable())return {};
-            if(!active())return mark;
+            if(!active() && key!=VK_OEM_4 && key!=VK_OEM_6)return mark;
             if(syllables.size()<128)insertSyllable(Text(1,symbolMark)+mark);
             return {};
         }
@@ -1167,11 +1188,21 @@ public:
             if(!raw.empty() && !finishSyllable())return {};
             openSymbols();return {};
         }
-        if(key==VK_UP || key==VK_DOWN){
+        if(key==VK_UP || key==VK_DOWN || key==VK_SPACE){
             if(const auto replace=symbolBeforeCaret()){
                 if(key==VK_UP){openSymbols(replace);return {};}
-                if(const auto side=sideOfBracket(syllables[*replace].substr(1))){
-                    openSymbols(replace,side);return {};
+                auto& syllable=syllables[*replace];
+                const auto mark=std::wstring_view(syllable).substr(1);
+                if(const auto side=sideOfSimilarBracket(mark)){
+                    if(key==VK_DOWN)openSymbols(replace,side);
+                    else {
+                        const auto similar=similarBrackets[*side];
+                        syllable[1]=mark.front()==similar.front()?similar[1]:similar.front();
+                    }
+                    return {};
+                }
+                if(key==VK_DOWN){
+                    if(const auto side=sideOfBracket(mark)){openSymbols(replace,side);return {};}
                 }
             }
             if(key==VK_UP)return {};
