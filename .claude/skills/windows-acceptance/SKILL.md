@@ -26,6 +26,6 @@ CI（`windows.yml`）已經在拋棄式的 Windows 機器上做過安裝、升�
 ## 3. 記錄結果
 
 1. 在 issue 留言或更新「結果紀錄」一節：環境（Windows 版本、x64、辨識方式、聽字版本或 commit）、逐項結果表、失敗項目的重現步驟。寫法依 `github-writing` skill。
-2. 全部通過：移除 `status: 待實機驗收` 標籤，關閉 issue（`state_reason` 為 completed）。
-3. 有失敗：issue 保持開啟；新的缺陷另開 bug issue，並互相連結。
+2. 在實機驗收的追蹤 issue（目前是 #6）勾掉通過的項目。全部通過時才移除 `status: 待實機驗收` 標籤並關閉（`state_reason` 為 completed）。
+3. 有失敗：追蹤 issue 的項目不勾；新的缺陷另開 bug issue，並互相連結。
 4. 回報給維護者時，分清楚「CI 驗證過」「實機驗收通過」「未驗收」三類。

@@ -37,11 +37,13 @@ description: 聽字儲存庫的 issue、PR 說明、GitHub 留言與標籤寫法
 
 ## issue 的開關
 
-- PR 合併後，若還沒實機驗收，issue 保持開啟，在「狀態」寫「已於 #<PR> 實作並合併，待實機驗收」，加 `status: 待實機驗收`。
-- 實機驗收全部通過才關閉，`state_reason` 用 completed；不做時用 not_planned 並寫原因。
+- 功能與缺陷 issue 在 PR 合併後關閉，`state_reason` 用 completed；不做時用 not_planned 並寫原因。
+- 合併後還沒實機驗收的項目，加進實機驗收的追蹤 issue（目前是 [#6](https://github.com/skydreamer0/tingzi/issues/6)「實機驗收：0.8.0 與之後合併的功能」）的勾選清單，寫明 PR 編號與要驗收什麼。
+- 追蹤 issue（例如 #46 選字品質）與實機驗收 issue 保持開啟，加 `status: 待實機驗收`；驗收全部通過才關閉並移除這個標籤。
+- 暫緩的 issue 保持開啟，留言寫「狀態：暫緩」與原因。
 
 ## PR
 
 - 標題與 commit 第一行用英文祈使句，描述使用者看得到的改變，不加 `feat:` 之類的前綴。
 - 說明依 `.github/pull_request_template.md` 的段落填寫，CI 驗證與實機驗收分開寫，沒驗證的項目明列。
-- 有對應 issue 時寫 `Closes #<編號>`；需要實機驗收的改寫成 `Refs #<編號>`，讓 issue 保持開啟。
+- 有對應的功能或缺陷 issue 時寫 `Closes #<編號>`；連到追蹤 issue 或實機驗收 issue 時寫 `Refs #<編號>`，讓它保持開啟。
