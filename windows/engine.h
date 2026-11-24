@@ -9,6 +9,7 @@
 #include <optional>
 #include <sstream>
 #include <string>
+#include <string_view>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
@@ -349,13 +350,116 @@ inline constexpr wchar_t letterMark=L'\x02';
 struct SymbolGroup { const wchar_t* name; std::vector<const wchar_t*> marks; };
 inline const SymbolGroup symbolGroups[]={
     {L"常用",{L"，",L"。",L"、",L"？",L"！",L"：",L"；",L"「",L"」",L"『",L"』",L"（",L"）",L"……",L"——",L"～",L"・",L"《",L"》",L"〈",L"〉",L"【",L"】",L"＄",L"％",L"＆",L"＠"}},
-    {L"括號",{L"「",L"」",L"『",L"』",L"（",L"）",L"《",L"》",L"〈",L"〉",L"【",L"】",L"〔",L"〕",L"｛",L"｝",L"［",L"］",L"“",L"”",L"‘",L"’"}},
-    {L"箭頭",{L"→",L"←",L"↑",L"↓",L"↔",L"⇒",L"⇐",L"⇔",L"↗",L"↘",L"↙",L"↖",L"▶",L"◀",L"▲",L"▼"}},
-    {L"數學",{L"＋",L"－",L"×",L"÷",L"＝",L"≠",L"≒",L"＜",L"＞",L"≦",L"≧",L"±",L"√",L"∞",L"％",L"‰",L"°",L"π",L"∑",L"∴",L"∵"}},
-    {L"單位",{L"℃",L"℉",L"㎝",L"㎜",L"㎞",L"㎡",L"㎏",L"㎎",L"㏄",L"＄",L"￥",L"€",L"£",L"＃",L"＠",L"＆",L"＊"}},
-    {L"編號",{L"①",L"②",L"③",L"④",L"⑤",L"⑥",L"⑦",L"⑧",L"⑨",L"⑩",L"Ⅰ",L"Ⅱ",L"Ⅲ",L"Ⅳ",L"Ⅴ",L"Ⅵ",L"Ⅶ",L"Ⅷ",L"Ⅸ",L"Ⅹ",L"㈠",L"㈡",L"㈢",L"㈣",L"㈤"}},
-    {L"圖形",{L"○",L"●",L"◎",L"△",L"▲",L"□",L"■",L"◇",L"◆",L"☆",L"★",L"※",L"§",L"♪",L"♥",L"✓",L"✗",L"…",L"─",L"│"}},
+    {L"標點",{L"，",L"。",L"、",L"；",L"：",L"？",L"！",L"‧",L"・",L"…",L"……",L"—",
+        L"——",L"～",L"﹐",L"﹑",L"﹔",L"﹕",L"﹖",L"﹗",L"‘",L"’",L"“",L"”",
+        L"〝",L"〞",L"‵",L"′",L"″"}},
+    {L"括號",{L"「",L"」",L"『",L"』",L"（",L"）",L"［",L"］",L"〔",L"〕",L"｛",L"｝",
+        L"【",L"】",L"《",L"》",L"〈",L"〉",L"︵",L"︶",L"︷",L"︸",L"︹",L"︺",
+        L"︻",L"︼",L"︽",L"︾",L"︿",L"﹀",L"﹁",L"﹂",L"﹃",L"﹄"}},
+    {L"箭頭",{L"←",L"↑",L"→",L"↓",L"↔",L"↕",L"↖",L"↗",L"↘",L"↙",L"⇐",L"⇑",
+        L"⇒",L"⇓",L"⇔",L"⇕",L"➔",L"➜",L"▲",L"▼",L"◀",L"▶",L"△",L"▽",
+        L"◁",L"▷"}},
+    {L"數學",{L"＋",L"－",L"×",L"÷",L"±",L"∓",L"＝",L"≠",L"≒",L"≈",L"≡",L"≦",
+        L"≧",L"≤",L"≥",L"＜",L"＞",L"≪",L"≫",L"√",L"∛",L"∞",L"∝",L"∵",
+        L"∴",L"∠",L"⊥",L"∟",L"⊿",L"∫",L"∬",L"∮",L"∑",L"∏",L"∂",L"∇",
+        L"∀",L"∃",L"∅",L"∈",L"∉",L"⊂",L"⊃",L"⊆",L"⊇",L"∩",L"∪",L"∧",
+        L"∨",L"¬",L"％",L"‰",L"°",L"′",L"″"}},
+    {L"單位",{L"℃",L"℉",L"㎜",L"㎝",L"㎞",L"㎡",L"㎥",L"㎎",L"㎏",L"㏄",L"㎖",L"㎗",
+        L"㏕",L"㎐",L"㎑",L"㎒",L"㎓",L"㎾",L"㎿",L"㏈",L"㏒",L"㏑",L"㏎",L"№",
+        L"℡",L"™",L"©",L"®"}},
+    {L"貨幣",{L"＄",L"￥",L"¥",L"€",L"￡",L"￠",L"₩",L"₹",L"₽",L"₱",L"฿",L"₫",
+        L"₺"}},
+    {L"圈號數字",{L"①",L"②",L"③",L"④",L"⑤",L"⑥",L"⑦",L"⑧",L"⑨",L"⑩",L"⑪",L"⑫",
+        L"⑬",L"⑭",L"⑮",L"⑯",L"⑰",L"⑱",L"⑲",L"⑳",L"㉑",L"㉒",L"㉓",L"㉔",
+        L"㉕",L"㉖",L"㉗",L"㉘",L"㉙",L"㉚",L"㉛",L"㉜",L"㉝",L"㉞",L"㉟"}},
+    {L"括號數字",{L"⑴",L"⑵",L"⑶",L"⑷",L"⑸",L"⑹",L"⑺",L"⑻",L"⑼",L"⑽",L"⑾",L"⑿",
+        L"⒀",L"⒁",L"⒂",L"⒃",L"⒄",L"⒅",L"⒆",L"⒇"}},
+    {L"點號數字",{L"⒈",L"⒉",L"⒊",L"⒋",L"⒌",L"⒍",L"⒎",L"⒏",L"⒐",L"⒑",L"⒒",L"⒓",
+        L"⒔",L"⒕",L"⒖",L"⒗",L"⒘",L"⒙",L"⒚",L"⒛"}},
+    {L"羅馬數字",{L"Ⅰ",L"Ⅱ",L"Ⅲ",L"Ⅳ",L"Ⅴ",L"Ⅵ",L"Ⅶ",L"Ⅷ",L"Ⅸ",L"Ⅹ",L"Ⅺ",L"Ⅻ",
+        L"ⅰ",L"ⅱ",L"ⅲ",L"ⅳ",L"ⅴ",L"ⅵ",L"ⅶ",L"ⅷ",L"ⅸ",L"ⅹ",L"ⅺ",L"ⅻ"}},
+    {L"中文編號",{L"㈠",L"㈡",L"㈢",L"㈣",L"㈤",L"㈥",L"㈦",L"㈧",L"㈨",L"㈩",L"㊀",L"㊁",
+        L"㊂",L"㊃",L"㊄",L"㊅",L"㊆",L"㊇",L"㊈",L"㊉"}},
+    {L"圈號字母",{L"Ⓐ",L"Ⓑ",L"Ⓒ",L"Ⓓ",L"Ⓔ",L"Ⓕ",L"Ⓖ",L"Ⓗ",L"Ⓘ",L"Ⓙ",L"Ⓚ",L"Ⓛ",
+        L"Ⓜ",L"Ⓝ",L"Ⓞ",L"Ⓟ",L"Ⓠ",L"Ⓡ",L"Ⓢ",L"Ⓣ",L"Ⓤ",L"Ⓥ",L"Ⓦ",L"Ⓧ",
+        L"Ⓨ",L"Ⓩ",L"ⓐ",L"ⓑ",L"ⓒ",L"ⓓ",L"ⓔ",L"ⓕ",L"ⓖ",L"ⓗ",L"ⓘ",L"ⓙ",
+        L"ⓚ",L"ⓛ",L"ⓜ",L"ⓝ",L"ⓞ",L"ⓟ",L"ⓠ",L"ⓡ",L"ⓢ",L"ⓣ",L"ⓤ",L"ⓥ",
+        L"ⓦ",L"ⓧ",L"ⓨ",L"ⓩ"}},
+    {L"圖形",{L"○",L"●",L"◎",L"◇",L"◆",L"□",L"■",L"△",L"▲",L"▽",L"▼",L"☆",
+        L"★",L"◐",L"◑",L"⊙",L"⊕",L"⊗",L"◈",L"▣",L"※",L"§",L"¶",L"†",
+        L"‡"}},
+    {L"標記",{L"✓",L"✔",L"✗",L"✘",L"☐",L"☑",L"☒",L"☎",L"☏",L"☞",L"☜",L"♠",
+        L"♣",L"♥",L"♦",L"♤",L"♧",L"♡",L"♢",L"♩",L"♪",L"♫",L"♬",L"♭",
+        L"♯",L"☀",L"☁",L"☂",L"☃",L"☺",L"☻",L"♀",L"♂",L"♨",L"⚠",L"✉",
+        L"✈"}},
+    {L"框線",{L"─",L"│",L"┌",L"┐",L"└",L"┘",L"├",L"┤",L"┬",L"┴",L"┼",L"═",
+        L"║",L"╔",L"╗",L"╚",L"╝",L"╠",L"╣",L"╦",L"╩",L"╬",L"╒",L"╕",
+        L"╘",L"╛",L"╞",L"╡",L"╤",L"╧",L"╪",L"╓",L"╖",L"╙",L"╜",L"╟",
+        L"╢",L"╥",L"╨",L"╫",L"╭",L"╮",L"╯",L"╰",L"╱",L"╲",L"╳"}},
+    {L"區塊",{L"▁",L"▂",L"▃",L"▄",L"▅",L"▆",L"▇",L"█",L"▏",L"▎",L"▍",L"▌",
+        L"▋",L"▊",L"▉",L"░",L"▒",L"▓",L"◢",L"◣",L"◤",L"◥"}},
+    {L"線條",{L"…",L"‥",L"¯",L"＿",L"﹉",L"﹊",L"﹍",L"﹎",L"﹏",L"﹋",L"﹌",L"︴",
+        L"∥",L"∣",L"／",L"＼",L"∕",L"﹨"}},
+    {L"希臘大寫",{L"Α",L"Β",L"Γ",L"Δ",L"Ε",L"Ζ",L"Η",L"Θ",L"Ι",L"Κ",L"Λ",L"Μ",
+        L"Ν",L"Ξ",L"Ο",L"Π",L"Ρ",L"Σ",L"Τ",L"Υ",L"Φ",L"Χ",L"Ψ",L"Ω"}},
+    {L"希臘小寫",{L"α",L"β",L"γ",L"δ",L"ε",L"ζ",L"η",L"θ",L"ι",L"κ",L"λ",L"μ",
+        L"ν",L"ξ",L"ο",L"π",L"ρ",L"σ",L"τ",L"υ",L"φ",L"χ",L"ψ",L"ω"}},
+    {L"拼音",{L"ā",L"á",L"ǎ",L"à",L"ē",L"é",L"ě",L"è",L"ī",L"í",L"ǐ",L"ì",
+        L"ō",L"ó",L"ǒ",L"ò",L"ū",L"ú",L"ǔ",L"ù",L"ǖ",L"ǘ",L"ǚ",L"ǜ",
+        L"ü",L"ê"}},
     {L"注音",{L"ㄅ",L"ㄆ",L"ㄇ",L"ㄈ",L"ㄉ",L"ㄊ",L"ㄋ",L"ㄌ",L"ㄍ",L"ㄎ",L"ㄏ",L"ㄐ",L"ㄑ",L"ㄒ",L"ㄓ",L"ㄔ",L"ㄕ",L"ㄖ",L"ㄗ",L"ㄘ",L"ㄙ",L"ㄧ",L"ㄨ",L"ㄩ",L"ㄚ",L"ㄛ",L"ㄜ",L"ㄝ",L"ㄞ",L"ㄟ",L"ㄠ",L"ㄡ",L"ㄢ",L"ㄣ",L"ㄤ",L"ㄥ",L"ㄦ",L"ˊ",L"ˇ",L"ˋ",L"˙"}},
+    {L"平假名",{L"ぁ",L"あ",L"ぃ",L"い",L"ぅ",L"う",L"ぇ",L"え",L"ぉ",L"お",L"か",L"が",
+        L"き",L"ぎ",L"く",L"ぐ",L"け",L"げ",L"こ",L"ご",L"さ",L"ざ",L"し",L"じ",
+        L"す",L"ず",L"せ",L"ぜ",L"そ",L"ぞ",L"た",L"だ",L"ち",L"ぢ",L"っ",L"つ",
+        L"づ",L"て",L"で",L"と",L"ど",L"な",L"に",L"ぬ",L"ね",L"の",L"は",L"ば",
+        L"ぱ",L"ひ",L"び",L"ぴ",L"ふ",L"ぶ",L"ぷ",L"へ",L"べ",L"ぺ",L"ほ",L"ぼ",
+        L"ぽ",L"ま",L"み",L"む",L"め",L"も",L"ゃ",L"や",L"ゅ",L"ゆ",L"ょ",L"よ",
+        L"ら",L"り",L"る",L"れ",L"ろ",L"ゎ",L"わ",L"ゐ",L"ゑ",L"を",L"ん",L"ゔ",
+        L"ゕ",L"ゖ"}},
+    {L"片假名",{L"ァ",L"ア",L"ィ",L"イ",L"ゥ",L"ウ",L"ェ",L"エ",L"ォ",L"オ",L"カ",L"ガ",
+        L"キ",L"ギ",L"ク",L"グ",L"ケ",L"ゲ",L"コ",L"ゴ",L"サ",L"ザ",L"シ",L"ジ",
+        L"ス",L"ズ",L"セ",L"ゼ",L"ソ",L"ゾ",L"タ",L"ダ",L"チ",L"ヂ",L"ッ",L"ツ",
+        L"ヅ",L"テ",L"デ",L"ト",L"ド",L"ナ",L"ニ",L"ヌ",L"ネ",L"ノ",L"ハ",L"バ",
+        L"パ",L"ヒ",L"ビ",L"ピ",L"フ",L"ブ",L"プ",L"ヘ",L"ベ",L"ペ",L"ホ",L"ボ",
+        L"ポ",L"マ",L"ミ",L"ム",L"メ",L"モ",L"ャ",L"ヤ",L"ュ",L"ユ",L"ョ",L"ヨ",
+        L"ラ",L"リ",L"ル",L"レ",L"ロ",L"ヮ",L"ワ",L"ヰ",L"ヱ",L"ヲ",L"ン",L"ヴ",
+        L"ヵ",L"ヶ",L"ー"}},
+    {L"表情",{L"😀",L"😃",L"😄",L"😁",L"😆",L"😅",L"😂",L"🤣",L"😊",L"😇",L"🙂",L"🙃",
+        L"😉",L"😍",L"😘",L"😋",L"😜",L"😎",L"🤔",L"😐",L"😑",L"😶",L"🙄",L"😏",
+        L"😢",L"😭",L"😤",L"😡",L"😱",L"😳",L"🥺",L"😴",L"👍",L"👎",L"👏",L"🙏",
+        L"💪",L"👌",L"✌",L"❤",L"💔",L"🎉",L"🔥",L"✨",L"⭐",L"💯"}},
+};
+using SimilarSymbols=std::vector<std::wstring_view>;
+inline const SimilarSymbols similarSymbols[]={
+    {L"「",L"『",L"《",L"〈",L"〔",L"｛",L"【",L"︿",L"︽",L"︹",L"︻",L"﹁",
+        L"﹃"},
+    {L"」",L"』",L"》",L"〉",L"〕",L"｝",L"】",L"﹀",L"︾",L"︺",L"︼",L"﹂",
+        L"﹄"},
+    {L"（",L"［",L"〔",L"｛",L"【",L"《",L"〈",L"︵",L"﹙"},
+    {L"）",L"］",L"〕",L"｝",L"】",L"》",L"〉",L"︶",L"﹚"},
+    {L"“",L"‘",L"〝",L"「",L"『"},
+    {L"”",L"’",L"〞",L"」",L"』"},
+    {L"，",L"、",L"﹐",L"﹑",L"‚",L"＜"},
+    {L"。",L"．",L"・",L"‧",L"…",L"○",L"●",L"◎",L"※",L"☆",L"★",L"＞"},
+    {L"、",L"﹑",L"，",L"﹐"},
+    {L"？",L"﹖",L"¿",L"／",L"＼"},
+    {L"！",L"﹗",L"¡",L"‼",L"⁉"},
+    {L"：",L"；",L"﹕",L"﹔",L"∶"},
+    {L"；",L"：",L"﹔",L"﹕"},
+    {L"＝",L"＋",L"－",L"×",L"÷",L"±",L"≠",L"≒",L"≈",L"≡",L"≦",L"≧",
+        L"＜",L"＞",L"√",L"∞",L"∵",L"∴"},
+    {L"＋",L"＝",L"－",L"×",L"÷",L"±",L"≠",L"≒",L"≈",L"≡",L"≦",L"≧",
+        L"＜",L"＞",L"√",L"∞",L"∵",L"∴"},
+    {L"……",L"…",L"‥",L"⋯",L"︙"},
+    {L"——",L"—",L"－",L"＿",L"～",L"﹏",L"﹍"},
+    {L"～",L"∼",L"〜",L"﹋",L"﹏"},
+    {L"・",L"‧",L"·",L"•",L"∙",L"◦"},
+    {L"＠",L"＆",L"＃",L"※",L"§"},
+    {L"＃",L"＠",L"＆",L"＊",L"※"},
+    {L"＄",L"￥",L"€",L"￡",L"￠",L"¥",L"₩"},
+    {L"％",L"‰",L"℃",L"℉",L"°"},
+    {L"＆",L"＠",L"＃",L"＋"},
+    {L"＊",L"×",L"※",L"†",L"‡",L"§",L"☆",L"★"},
 };
 inline wchar_t keyChar(WPARAM key) {
     if (key >= 'A' && key <= 'Z') return wchar_t(key + 32);
@@ -386,12 +490,16 @@ inline Text punctuation(WPARAM key,bool shifted,KeyLayout layout) {
         case VK_OEM_7: return L"；"; case '1': return L"！"; case '9': return L"（"; case '0': return L"）";
         case VK_OEM_4: return L"『"; case VK_OEM_6: return L"』"; case '6': return L"……"; case VK_OEM_MINUS: return L"——";
         case VK_OEM_3: return L"～"; case VK_OEM_5: return L"・";
+        case VK_OEM_PLUS: return L"＋";
+        case '2': return L"＠"; case '3': return L"＃"; case '4': return L"＄";
+        case '5': return L"％"; case '7': return L"＆"; case '8': return L"＊";
         default: return {};
         }
     }
     switch(key){
     case VK_OEM_4: return L"「"; case VK_OEM_6: return L"」"; case VK_OEM_5: return L"、";
     case VK_OEM_7: return layout==KeyLayout::Standard?Text(L"、"):Text();
+    case VK_OEM_PLUS: return layout==KeyLayout::Standard?Text(L"＝"):Text();
     default: return {};
     }
 }
@@ -416,7 +524,7 @@ class Input {
     size_t symbolGroup=0;
     // Replacing a punctuation mark still in this composition, not text in the host document.
     std::optional<size_t> symbolTarget;
-    std::optional<size_t> bracketSide;
+    const SimilarSymbols* similarGroup=nullptr;
     // The syllable whose character is being chosen while the list is open.
     size_t target=0;
     // True when the user moved the caret to reach the target, rather than choosing from the left.
@@ -442,21 +550,23 @@ class Input {
     static bool letter(const Text& syllable){return !syllable.empty() && syllable[0]==letterMark;}
     static bool literalSyllable(const Text& syllable){return symbol(syllable) || letter(syllable);}
     bool hasLetters() const {return std::any_of(syllables.begin(),syllables.end(),letter);}
-    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;symbolTarget.reset();bracketSide.reset();}
+    void leavePicking(){picking=false;page=0;highlighted=0;nearMode=symbolMode=recallMode=false;symbolGroup=0;symbolTarget.reset();similarGroup=nullptr;}
     std::optional<size_t> symbolBeforeCaret() const {
         const size_t at=caret.value_or(syllables.size());
         if(!raw.empty() || !at || !symbol(syllables[at-1]))return {};
         return at-1;
     }
-    static std::optional<size_t> sideOfBracket(const Text& mark) {
-        const auto& brackets=symbolGroups[1].marks;
-        const auto found=std::find(brackets.begin(),brackets.end(),mark);
-        if(found==brackets.end())return {};
-        return size_t(found-brackets.begin())%2;
+    static const SimilarSymbols* findSimilarSymbols(std::wstring_view mark) {
+        const SimilarSymbols* firstMatch=nullptr;
+        for(const auto& group:similarSymbols){
+            if(*group.begin()==mark)return &group;
+            if(!firstMatch && std::find(group.begin(),group.end(),mark)!=group.end())firstMatch=&group;
+        }
+        return firstMatch;
     }
-    void openSymbols(std::optional<size_t> replace={},std::optional<size_t> related={}) {
+    void openSymbols(std::optional<size_t> replace={},const SimilarSymbols* related=nullptr) {
         leavePicking();
-        symbolMode=true;picking=true;symbolTarget=replace;bracketSide=related;
+        symbolMode=true;picking=true;symbolTarget=replace;similarGroup=related;
     }
     // Earlier sentences whose syllables begin with the keys typed so far, most recent first.
     std::vector<Sentence> recalled() const {
@@ -918,10 +1028,14 @@ public:
         std::vector<Choice> result;
         if(recallMode){for(const auto& said:recalled())result.push_back({said.text,0});return result;}
         if(symbolMode){
-            const auto& marks=symbolGroups[bracketSide?1:symbolGroup].marks;
-            if(bracketSide){
-                for(size_t i=*bracketSide;i<marks.size();i+=2)result.push_back({marks[i],0});
-            }else for(const wchar_t* mark:marks)result.push_back({mark,0});
+            if(similarGroup){
+                const auto mark=std::wstring_view(syllables[*symbolTarget]).substr(1);
+                result.push_back({Text(mark),0});
+                for(const auto other:*similarGroup)
+                    if(other!=mark)result.push_back({Text(other),0});
+            }else{
+                for(const wchar_t* mark:symbolGroups[symbolGroup].marks)result.push_back({mark,0});
+            }
             return result;
         }
         auto pos=target;
@@ -1001,8 +1115,9 @@ public:
     }
     Text listTitle() const {
         if(recallMode)return L"打過的句子";
-        if(bracketSide)return *bracketSide ? L"符號・右括號" : L"符號・左括號";
-        if(symbolMode)return Text(L"符號・")+symbolGroups[symbolGroup].name+L"（Tab 換類別）";
+        if(similarGroup)return L"相似符號";
+        if(symbolMode)return Text(L"符號・")+symbolGroups[symbolGroup].name+L" "+
+            std::to_wstring(symbolGroup+1)+L"/"+std::to_wstring(std::size(symbolGroups))+L"（Tab 換類別）";
         return nearMode?L"近音字":L"注音選字";
     }
     // Runs of characters the user picked one by one, which are not yet a word in the list.
@@ -1042,7 +1157,10 @@ public:
             return !picking && raw.empty() && digit>='2' && digit<='8' && caret.value_or(syllables.size())>=size_t(digit-'0') && !hasLetters();
         }
         const bool shifted=(key&shiftKey)!=0; key&=0xffff;
-        if(picking) return !shifted && ((key>='1' && key<='9') || key==VK_NEXT || key==VK_PRIOR || key==VK_UP || key==VK_DOWN || key==VK_LEFT || key==VK_RIGHT || key==VK_SPACE || key==VK_ESCAPE || key==VK_RETURN || key==VK_BACK || key==VK_TAB);
+        if(picking){
+            if(shifted)return symbolMode && key==VK_TAB;
+            return (key>='1' && key<='9') || key==VK_NEXT || key==VK_PRIOR || key==VK_UP || key==VK_DOWN || key==VK_LEFT || key==VK_RIGHT || key==VK_SPACE || key==VK_ESCAPE || key==VK_RETURN || key==VK_BACK || key==VK_TAB;
+        }
         if(shifted) return !punctuation(key,true,layout).empty() || (active() && (key==VK_RETURN || (key>='A' && key<='Z')));
         if(dict.keys.count(codeKey(key,layout))) return true;
         if(!punctuation(key,false,layout).empty() || key==VK_OEM_3) return true;
@@ -1086,8 +1204,15 @@ public:
             if(key==VK_TAB){
                 if(recallMode)return {};
                 if(symbolMode){
-                    if(bracketSide){bracketSide.reset();symbolGroup=1;}
-                    else symbolGroup=(symbolGroup+1)%std::size(symbolGroups);
+                    const size_t count=std::size(symbolGroups);
+                    if(similarGroup){
+                        const auto first=*similarGroup->begin();
+                        for(size_t i=1;i<count;++i){
+                            const auto& marks=symbolGroups[i].marks;
+                            if(std::find(marks.begin(),marks.end(),first)!=marks.end()){symbolGroup=i;break;}
+                        }
+                        similarGroup=nullptr;
+                    }else symbolGroup=(symbolGroup+(shifted?count-1:1))%count;
                     page=0;highlighted=0;return {};
                 }
                 nearMode=!nearMode;page=0;highlighted=0;
@@ -1159,7 +1284,6 @@ public:
         }
         if(const Text mark=punctuation(key,shifted,layout);!mark.empty()){
             if(!raw.empty() && !finishSyllable())return {};
-            if(!active())return mark;
             if(syllables.size()<128)insertSyllable(Text(1,symbolMark)+mark);
             return {};
         }
@@ -1167,11 +1291,19 @@ public:
             if(!raw.empty() && !finishSyllable())return {};
             openSymbols();return {};
         }
-        if(key==VK_UP || key==VK_DOWN){
+        if(key==VK_UP || key==VK_DOWN || key==VK_SPACE){
             if(const auto replace=symbolBeforeCaret()){
                 if(key==VK_UP){openSymbols(replace);return {};}
-                if(const auto side=sideOfBracket(syllables[*replace].substr(1))){
-                    openSymbols(replace,side);return {};
+                auto& syllable=syllables[*replace];
+                const auto mark=std::wstring_view(syllable).substr(1);
+                if(const auto* related=findSimilarSymbols(mark)){
+                    if(key==VK_DOWN)openSymbols(replace,related);
+                    else {
+                        const auto first=related->begin();
+                        const auto second=mark==first[0]?first[1]:first[0];
+                        syllable=Text(1,symbolMark)+Text(second);
+                    }
+                    return {};
                 }
             }
             if(key==VK_UP)return {};
