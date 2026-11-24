@@ -99,6 +99,6 @@ python windows/package_release.py <package-directory> <new-output.zip> --cargo-m
 
 主分支的浮窗專案（`app/src-tauri`）、升級目錄與打包器均標記程式版本 `0.10.0`。
 
-浮窗內建第三方 codex-asr 0.1.2。打包器把它與其他 Rust 相依套件的名稱、版本與授權記錄在套件的 `notices/rust-dependencies.json` 與 `THIRD-PARTY-NOTICES.txt`。專案整體授權、公開時間、可重現建置、簽章和試行驗收仍待確認。
+浮窗內建第三方 codex-asr 0.1.2。打包器把它與其他 Rust 相依套件的名稱、版本與授權記錄在套件的 `notices/rust-dependencies.json` 與 `THIRD-PARTY-NOTICES.txt`。專案以 MIT 授權公開（見 [LICENSE](../../LICENSE)）。發行檔不做程式碼簽章（不購買簽章憑證，見 [#8](https://github.com/skydreamer0/tingzi/issues/8)）；可重現建置尚未確認，實機驗收的進度記在 [#6](https://github.com/skydreamer0/tingzi/issues/6)。
 
 可用 `git ls-files app windows docs assets` 重新列出受版控的檔案。`target/`、`.build/`、錄音、私人詞庫、模型與本機資料不屬於來源地圖。
