@@ -461,7 +461,7 @@ public:
         const bool staleMenu=key && wasMenuOnly && (!allowsOverlay(c,ec,range.Get()) || !atSelection(c,ec,range.Get()));
         if(staleMenu)key=0;
         bool allowed=learnable(c,ec,range.Get(),activationFlags);
-        if(!allowed){next.setPreferences(nullptr);next.setFavorites(nullptr);next.setSentences(nullptr);learningStatus=1;}
+        if(!allowed){next.setPreferences(nullptr);next.setFavorites(nullptr);next.setSentences(nullptr);next.setRecentSymbols(nullptr);learningStatus=1;}
         else if(!input->active() && !wasMenuOnly && !opensMenuOnly){
             Learning store;
             bool enabled=store.enabled();learningStatus=enabled?3:2;
@@ -474,6 +474,13 @@ public:
         auto fresh=next.newWords();
         Text commit;
         if(key)commit=next.press(key);else next.clear();
+        if(allowed && next.inSymbolTable() && !input->inSymbolTable()){
+            Learning store;
+            const bool enabled=store.enabled();
+            learningStatus=enabled?3:2;
+            next.setRecentSymbols(enabled?std::make_shared<const std::vector<Text>>(store.recentSymbols()):nullptr);
+        }
+        const auto symbol=key?next.pickedSymbol():std::nullopt;
         auto added=next.addedWord();
         auto said=next.committedSentence();
         auto typed=next.typedWord();
@@ -493,11 +500,14 @@ public:
             }
         }
         input=std::make_unique<Input>(std::move(next));
-        if(input->active() || input->selecting()){present(ec,c,range.Get(),true);return S_OK;}
+        if(input->active() || input->selecting()){
+            if(allowed && symbol)Learning().saveSymbol(*symbol);
+            present(ec,c,range.Get(),true);return S_OK;
+        }
         hideCompositionUI();auto done=composition;hr=done->EndComposition(ec);
         if(FAILED(hr))noteOften(editFailures,L"無法結束組字 "+hex(hr));
         if(SUCCEEDED(hr)){detachLayout();composition.Reset();composingIn.Reset();++compositionGeneration;losingFocus=false;if(allowed && !commit.empty()){
-                if(!edits.empty() || !fresh.empty() || said){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);}
+                if(!edits.empty() || !fresh.empty() || said || symbol){Learning store;store.save(edits);store.saveWords(fresh);if(said)store.saveSentence(*said);if(symbol)store.saveSymbol(*symbol);}
                 if(typed)noteFix(ec,range.Get(),commit,*typed);
             }}
         return staleMenu && SUCCEEDED(hr) ? S_FALSE : hr;

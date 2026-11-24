@@ -43,6 +43,21 @@ int wmain(int argc,wchar_t** argv){
         check(reopened.saveWords(word),"and learned again");
         check(reopened.saveSentence({L"sca",L"你好嗎"}) && reopened.saveSentence({L"jb",L"我們"}) && reopened.saveSentence({L"sca",L"你好嗎"}),"sentences are kept");
         auto recent=reopened.sentences();
+        std::vector<Text> expected;
+        for(wchar_t mark=0x2460;mark<0x2460+28;++mark){
+            Text symbol(1,mark);
+            check(reopened.saveSymbol(symbol),"record a circled number");
+            expected.insert(expected.begin(),symbol);
+        }
+        expected.resize(27);
+        check(reopened.recentSymbols()==expected,"only the newest 27 symbols are retained");
+        auto oldest=expected.back();
+        expected.pop_back();expected.insert(expected.begin(),oldest);
+        check(reopened.saveSymbol(oldest) && reopened.recentSymbols()==expected,"picking again moves the symbol to the front");
+        expected.pop_back();expected.insert(expected.begin(),L"😀");
+        check(reopened.saveSymbol(L"😀") && Learning(argv[2]).recentSymbols()==expected,"a fresh connection reads the same order and the full emoji");
+        check(reopened.enable(false) && reopened.recentSymbols().empty() && !reopened.saveSymbol(L"︽"),"disabled learning hides symbols and ignores picks");
+        check(reopened.enable(true) && reopened.recentSymbols()==expected,"enabling learning restores the saved list");
         check(recent.size()==2 && recent[0].text==L"你好嗎" && recent[1].text==L"我們","the latest sentence comes first, once");
         check(replaced(L"請理小名回電",L"好，請",L"李曉明",L"回電。")==Text(L"理小名"),"a word typed over part of a dictation is a fix");
         check(replaced(L"他們來了",L"",L"她",L"們來了")==Text(L"他"),"a fix at the start of a dictation");
@@ -56,6 +71,7 @@ int wmain(int argc,wchar_t** argv){
         size_t before=reopened.ranks().size();
         check(before>0 && reopened.exportTo(file) && reopened.clear() && reopened.ranks().empty() && reopened.learnedWords().empty() && reopened.sentences().empty() && reopened.fixes().empty(),"clear removes choices, words, sentences and fixes");
         check(reopened.importFrom(file) && reopened.ranks().size()==before,"import restores exported choices");
+        check(Learning(argv[2]).recentSymbols().empty(),"clear removes all saved symbols");
     }
     check(reopened.forget(L"我愛",L"ㄋㄧˇ"),"forget one reading and context");
     Input phrase(dict);phrase.setPreferences(std::make_shared<const Preferences>(reopened.ranks()));

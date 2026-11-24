@@ -197,6 +197,24 @@ public:
         exec("DELETE FROM sentences WHERE seq<=(SELECT MAX(seq) FROM sentences)-100");
         return ok;
     }
+    bool saveSymbol(const Text& mark){
+        if(mark.empty() || !exec("BEGIN IMMEDIATE"))return false;
+        bool ok=enabled() && exec("CREATE TABLE IF NOT EXISTS recent_symbols(mark TEXT NOT NULL UNIQUE)");
+        sqlite3_stmt* s=nullptr;
+        if(ok)ok=sqlite3_prepare_v2(db,"INSERT OR REPLACE INTO recent_symbols(mark) VALUES(?)",-1,&s,nullptr)==SQLITE_OK;
+        if(ok){bind(s,1,mark);ok=sqlite3_step(s)==SQLITE_DONE;}
+        sqlite3_finalize(s);
+        if(ok && exec("DELETE FROM recent_symbols WHERE rowid IN (SELECT rowid FROM recent_symbols ORDER BY rowid DESC LIMIT -1 OFFSET 27)") && exec("COMMIT"))return true;
+        exec("ROLLBACK");return false;
+    }
+    std::vector<Text> recentSymbols() const {
+        std::vector<Text> marks;
+        sqlite3_stmt* s=nullptr;
+        if(db && sqlite3_prepare_v2(db,"SELECT mark FROM recent_symbols WHERE (SELECT enabled FROM settings)=1 ORDER BY rowid DESC",-1,&s,nullptr)==SQLITE_OK){
+            while(sqlite3_step(s)==SQLITE_ROW)marks.emplace_back(static_cast<const wchar_t*>(sqlite3_column_text16(s,0)));
+        }
+        sqlite3_finalize(s);return marks;
+    }
     // Most recent first; empty while learning is off.
     std::vector<Sentence> sentences() const {
         std::vector<Sentence> list;
@@ -242,7 +260,7 @@ public:
         }
         sqlite3_finalize(s);return list;
     }
-    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM picked");exec("DELETE FROM words");exec("DELETE FROM sentences");exec("DELETE FROM fixes");exec("DELETE FROM dictations");return ok;}
+    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM picked");exec("DELETE FROM words");exec("DELETE FROM sentences");exec("DELETE FROM recent_symbols");exec("DELETE FROM fixes");exec("DELETE FROM dictations");return ok;}
     // Reads the file exportTo writes; rows already present are replaced.
     bool importFrom(const std::filesystem::path& path){
         std::ifstream in(path,std::ios::binary);
