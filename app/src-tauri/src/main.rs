@@ -4,6 +4,7 @@
 mod api;
 mod apps;
 mod audio;
+mod dictation_stream;
 mod codex;
 mod deliver;
 mod dialogs;
@@ -184,16 +185,23 @@ fn wait_for_paste(pasted: Option<Instant>) {
 /// Finishes a sentence recognised while recording and types it, with any sentence still waiting before it.
 /// Sentences come here one at a time, in order, on the thread that recognises them.
 fn type_sentence(live: &Live, heard: &str, end: usize, cancelled: &dyn Fn() -> bool) {
+    update_sentence(live, heard, end, None, cancelled);
+}
+
+fn update_sentence(live: &Live, heard: &str, end: usize, revision: Option<usize>, cancelled: &dyn Fn() -> bool) -> bool {
     let mut pasted = live.pasted.lock().unwrap();
     let next = {
         let mut typing = live.typing.lock().unwrap();
-        if typing.ended() {
-            return;
+        if typing.ended() || cancelled() { return false; }
+        let piece = correct(&clean(heard, &live.prefs), &live.prefs);
+        if let Some(index) = revision {
+            if !typing.revise(index, &piece) { return false; }
+        } else {
+            typing.add(&piece, end);
         }
-        typing.add(&correct(&clean(heard, &live.prefs), &live.prefs), end);
         typing.next()
     };
-    let Some(next) = next else { return };
+    let Some(next) = next else { return true };
     wait_for_paste(*pasted);
     match deliver::type_now(&next, &mut Desktop::new(live.target), cancelled) {
         Typed::Inserted => {
@@ -203,6 +211,7 @@ fn type_sentence(live: &Live, heard: &str, end: usize, cancelled: &dyn Fn() -> b
         Typed::Gone => live.typing.lock().unwrap().leave(),
         Typed::Later => {}
     }
+    true
 }
 
 fn show_sentences(app: &AppHandle, run: u64, queue: &streaming_asr::Queue, live: Option<&Live>) {
@@ -267,6 +276,29 @@ fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<st
             audio::SegmentEvent::Incomplete => requests.fallback(publish),
             audio::SegmentEvent::Ready(_) => {}
         }
+    }))
+}
+
+fn stream_source(app: &AppHandle, run: u64, requests: Arc<streaming_asr::Requests>,
+                 live: Option<Arc<Live>>, local: audio::SegmentListener) -> audio::SentenceSource {
+    let app = app.clone();
+    audio::SentenceSource::Stream(Box::new(move |audio, ending| {
+        let cancelled = || app.state::<Session>().run.load(Ordering::SeqCst) != run;
+        let stopped = || !matches!(ending.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+        if let Some(live) = &live { *live.audio.lock().unwrap() = Some(audio.clone()); }
+        let mut sentences = Vec::<String>::new();
+        dictation_stream::run(&audio, live.is_some(), stopped, cancelled, |index, text, end| {
+            if cancelled() { return; }
+            let revision = (index < sentences.len()).then_some(index);
+            if let Some(live) = &live {
+                if !update_sentence(live, text, end, revision, &cancelled) {
+                    if !cancelled() { report::note("串流修訂晚於逐句插入，保留已打出的文字"); }
+                    return;
+                }
+            }
+            if revision.is_some() { sentences[index] = text.to_owned(); } else { sentences.push(text.to_owned()); }
+            requests.replace_sentences(&sentences, |q| show_sentences(&app, run, q, live.as_deref()));
+        }, |progress| audio.resume_local(progress.end, progress.count, local, stopped, cancelled));
     }))
 }
 
@@ -762,7 +794,7 @@ fn toggle(app: &AppHandle) {
     let prefs = Settings::load();
     let spot = deliver::begin();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
-    let segments: Option<audio::SegmentListener> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
+    let segments: Option<audio::SentenceSource> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
         change_streaming_preview(app, |preview| {
             preview.begin(run);
             true
@@ -777,7 +809,12 @@ fn toggle(app: &AppHandle) {
             Arc::new(Live { target: spot, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
         });
         *session.live.lock().unwrap() = live.clone();
-        Some(segment_listener(app, run, prefs.clone(), requests, live))
+        let local = segment_listener(app, run, prefs.clone(), requests.clone(), live.clone());
+        Some(if prefs.dictation_stream {
+            stream_source(app, run, requests, live, local)
+        } else {
+            audio::SentenceSource::Local(local)
+        })
     } else {
         None
     };

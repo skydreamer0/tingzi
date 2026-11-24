@@ -74,6 +74,75 @@ pub struct SegmentAudio {
 }
 
 impl SegmentAudio {
+    #[cfg(test)]
+    pub fn synthetic(samples: Vec<f32>, rate: u32, noise_suppression: bool) -> Self {
+        Self { samples: Arc::new(Mutex::new(samples)), rate, noise_suppression }
+    }
+
+    pub fn len(&self) -> usize {
+        self.samples.lock().unwrap().len()
+    }
+
+    pub fn stream_rate(&self) -> usize {
+        if self.noise_suppression { TARGET_RATE as usize } else { self.rate as usize }
+    }
+
+    pub fn stream_len(&self) -> usize {
+        (self.len() as u64 * self.stream_rate() as u64 / u64::from(self.rate)) as usize
+    }
+
+    pub fn source_position(&self, stream_position: usize) -> usize {
+        (stream_position as u64 * u64::from(self.rate) / self.stream_rate() as u64) as usize
+    }
+
+    /// The range is in stream samples, measured from the start of capture.
+    pub fn pcm(&self, range: std::ops::Range<usize>) -> Vec<i16> {
+        if range.is_empty() {
+            return Vec::new();
+        }
+        let samples = if self.noise_suppression {
+            // Start on a shared sample boundary so fractional phases carry across packets.
+            let period = (TARGET_RATE / gcd(self.rate, TARGET_RATE)) as usize;
+            let skip = range.start % period;
+            let start = self.source_position(range.start - skip);
+            let end = (range.end as u64 * u64::from(self.rate))
+                .div_ceil(u64::from(TARGET_RATE)) as usize;
+            let source = self.samples.lock().unwrap()[start..end].to_vec();
+            let resampled = resample(&source, self.rate);
+            denoise::suppress(&resampled[skip..skip + range.len()])
+        } else {
+            self.samples.lock().unwrap()[range].to_vec()
+        };
+        samples.into_iter()
+            .map(|s| (s.clamp(-1.0, 1.0) * 32767.0).round() as i16).collect()
+    }
+
+    pub fn resume_local(&self, from: usize, sequence: usize, listener: SegmentListener,
+                        stopped: impl Fn() -> bool, cancelled: impl Fn() -> bool) {
+        let (id, notify) = listener;
+        let audio = self.clone();
+        let mut reader = SegmentReader::new(self.rate, id, Box::new(move |mut event| {
+            if let SegmentEvent::Ready(piece) = &mut event {
+                piece.start += from;
+                piece.end += from;
+                piece.sequence += sequence;
+            }
+            notify(event, &audio);
+        }));
+        reader.cursor = from;
+        while !cancelled() {
+            let done = stopped();
+            let end = self.len();
+            if done {
+                let _ = reader.finish(&self.samples, end);
+                break;
+            }
+            let Ok(next) = reader.read(&self.samples, end) else { break };
+            reader = next;
+            thread::sleep(Duration::from_millis(20));
+        }
+    }
+
     pub fn encode(&self, range: std::ops::Range<usize>) -> Result<Vec<u8>, String> {
         let samples = self.samples.lock().map_err(|_| DAMAGED.to_string())?
             .get(range).ok_or_else(|| DAMAGED.to_string())?.to_vec();
@@ -104,6 +173,11 @@ impl SegmentAudio {
 type SegmentNotice = Box<dyn Fn(SegmentEvent) + Send>;
 pub type SegmentListener = (u64, Box<dyn Fn(SegmentEvent, &SegmentAudio) + Send>);
 
+pub enum SentenceSource {
+    Local(SegmentListener),
+    Stream(Box<dyn FnOnce(SegmentAudio, mpsc::Receiver<()>) + Send>),
+}
+
 impl Recorder {
     /// Starts recording from the microphone with this name, or the Windows default when None,
     /// and fails when that microphone cannot be used: the microphone test checks this one only.
@@ -119,7 +193,7 @@ impl Recorder {
         microphone: Option<String>,
         noise_suppression: bool,
         level: impl Fn(f32) + Send + Sync + 'static,
-        segments: Option<SegmentListener>,
+        segments: Option<SentenceSource>,
         on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
         Self::start_capture(move || open_or_default(microphone.as_deref(), level), noise_suppression, segments, on_failure)
@@ -141,7 +215,7 @@ impl Recorder {
     fn start_capture<Stream>(
         open: impl FnOnce() -> Result<(Opened<Stream>, Option<String>), String> + Send + 'static,
         noise_suppression: bool,
-        segments: Option<SegmentListener>,
+        segments: Option<SentenceSource>,
         on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
         let (stop, stopped) = mpsc::channel::<()>();
@@ -157,10 +231,19 @@ impl Recorder {
             };
             let rate = info.rate;
             let _ = ready.send(Ok((info, substitute, failed.clone())));
-            let mut reader = segments.map(|(recording_id, notify)| {
-                let audio = SegmentAudio { samples: samples.clone(), rate, noise_suppression };
-                SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)))
-            });
+            let audio = SegmentAudio { samples: samples.clone(), rate, noise_suppression };
+            let mut remote = None;
+            let mut reader = match segments {
+                Some(SentenceSource::Local((recording_id, notify))) => Some(
+                    SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)))
+                ),
+                Some(SentenceSource::Stream(process)) => {
+                    let (finish, ending) = mpsc::channel();
+                    remote = Some((finish, thread::spawn(move || process(audio, ending))));
+                    None
+                }
+                None => None,
+            };
             while !failed.load(Ordering::Relaxed) {
                 match stopped.recv_timeout(Duration::from_millis(20)) {
                     Ok(()) => break,
@@ -180,6 +263,11 @@ impl Recorder {
             let end = samples.lock().map_err(|_| DAMAGED.to_string())?.len();
             if let Some(reader) = reader {
                 reader.finish(&samples, end)?;
+            }
+            if let Some((finish, worker)) = remote {
+                let _ = finish.send(());
+                drop(finish);
+                worker.join().map_err(|_| INTERRUPTED.to_string())?;
             }
             let captured = samples.lock().map_err(|_| DAMAGED.to_string())?;
             Ok(encode_recording(&captured[..end], rate, failed, noise_suppression))
@@ -568,6 +656,13 @@ fn resample(samples: &[f32], rate: u32) -> Vec<f32> {
         .collect()
 }
 
+fn gcd(mut a: u32, mut b: u32) -> u32 {
+    while b != 0 {
+        (a, b) = (b, a % b);
+    }
+    a
+}
+
 fn downsample(samples: &[f32], rate: u32, step: f64, length: usize) -> Vec<f32> {
     use std::f64::consts::PI;
 
@@ -577,12 +672,8 @@ fn downsample(samples: &[f32], rate: u32, step: f64, length: usize) -> Vec<f32> 
     let cutoff = 7_400.0 / f64::from(rate);
     let radius = ((12.0 * step).ceil() as usize).min(512);
     let taps = 2 * radius + 1;
-    let (mut a, mut b) = (rate, TARGET_RATE);
-    while b != 0 {
-        (a, b) = (b, a % b);
-    }
     // Use exact phases for common device rates, with bounded tables for unusual WAV rates.
-    let phases = (TARGET_RATE / a).min(256);
+    let phases = (TARGET_RATE / gcd(rate, TARGET_RATE)).min(256);
     let mut kernels = Vec::with_capacity(phases as usize * taps);
     for phase in 0..phases {
         let frac = f64::from(phase) / f64::from(phases);
@@ -979,7 +1070,7 @@ mod tests {
             let wav = audio.encode(segment.start..segment.end).unwrap();
             send.send((segment, wav)).unwrap();
         }));
-        let recorder = Recorder::start_capture(open(), false, Some(listener), || {}).unwrap();
+        let recorder = Recorder::start_capture(open(), false, Some(SentenceSource::Local(listener)), || {}).unwrap();
         let first = received.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(first.0, Segment { recording_id: 19, sequence: 1, start: 5 * frame, end: 75 * frame });
         assert_eq!(first.1, wav(&resample(&input[5 * frame..75 * frame], rate)));
@@ -997,7 +1088,7 @@ mod tests {
         let listener: SegmentListener = (20, Box::new(|event, _| {
             assert!(matches!(event, SegmentEvent::Incomplete));
         }));
-        for option in [None, Some(listener)] {
+        for option in [None, Some(SentenceSource::Local(listener))] {
             let result = Recorder::start_capture(brief, false, option, || {}).unwrap().finish().unwrap().wav;
             assert_eq!(result, Err(TOO_SHORT.to_string()));
         }

@@ -565,3 +565,7 @@ mod tests {
         assert!(entry.contains("<string>/Applications/Tingzi &amp; Co.app/Contents/MacOS/Tingzi</string>"));
     }
 }
+
+pub fn preferred_language() -> Option<String> {
+    sys_locale::get_locale()
+}

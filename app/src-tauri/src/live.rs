@@ -12,6 +12,7 @@ pub struct Typing {
     rule: Option<AppRule>,
     pieces: Vec<String>,
     typed: String,
+    typed_pieces: usize,
     /// The sample position up to which the recording has been recognised.
     heard_to: usize,
     away: bool,
@@ -29,8 +30,14 @@ impl Typing {
         self.heard_to = end;
     }
 
+    pub fn revise(&mut self, index: usize, piece: &str) -> bool {
+        if index < self.typed_pieces { return false; }
+        self.pieces[index] = piece.trim().to_owned();
+        true
+    }
+
     pub fn started(&self) -> bool {
-        !self.pieces.is_empty()
+        self.pieces.iter().any(|piece| !piece.is_empty())
     }
 
     pub fn heard_to(&self) -> usize {
@@ -59,6 +66,7 @@ impl Typing {
 
     pub fn note_typed(&mut self, text: &str) {
         self.typed.push_str(text);
+        self.typed_pieces = self.pieces.len();
     }
 
     /// The user moved away from where recording started; the rest is kept for the end.
@@ -104,6 +112,18 @@ mod tests {
         // The shortcut was still held, so nothing was typed.
         typing.add("第二句。", 20);
         assert_eq!(typing.next().as_deref(), Some("第一句，第二句。"));
+    }
+
+    #[test]
+    fn only_sentences_still_waiting_can_be_revised() {
+        let mut typing = Typing::default();
+        typing.add("第一句", 10);
+        typing.note_typed("第一句");
+        typing.add("未定", 20);
+        assert!(!typing.revise(0, "晚到"));
+        assert!(typing.revise(1, "第二句"));
+        assert_eq!(typing.next().as_deref(), Some("第二句"));
+        assert_eq!(typing.text(), "第一句第二句");
     }
 
     #[test]

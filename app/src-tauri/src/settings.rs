@@ -66,6 +66,7 @@ pub struct Settings {
     #[serde(deserialize_with = "lenient_engine")]
     pub engine: Option<Engine>,
     pub streaming_asr: bool,
+    pub dictation_stream: bool,
     /// The service's address, up to and including the version, such as `https://api.openai.com/v1`.
     pub api_url: String,
     pub api_model: String,
@@ -133,6 +134,7 @@ impl Default for Settings {
             online: false,
             engine: None,
             streaming_asr: false,
+            dictation_stream: false,
             api_url: DEFAULT_API_URL.into(),
             api_model: DEFAULT_API_MODEL.into(),
             local_model: None,
@@ -269,6 +271,7 @@ mod tests {
     fn streaming_asr_is_opt_in_for_codex_dictation_only() {
         let older: Settings = serde_json::from_str(r#"{"Online":true}"#).unwrap();
         assert!(!older.streaming_asr);
+        assert!(!older.dictation_stream);
         assert!(!older.segment_dictation(false));
         let enabled: Settings = serde_json::from_str(r#"{"StreamingAsr":true,"Engine":"codex"}"#).unwrap();
         assert!(enabled.segment_dictation(false));

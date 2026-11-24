@@ -112,6 +112,9 @@
           <div class="row sub">
             <div class="what"><label for="streaming-asr">邊講邊出字</label><p id="streaming-asr-note">實驗功能。使用 Codex 線上辨識時可開啟。</p></div>
             <input id="streaming-asr" type="checkbox" role="switch" class="switch" aria-describedby="streaming-asr-note" disabled></div>
+          <div class="row sub" id="dictation-stream-row" hidden>
+            <div class="what"><label for="dictation-stream">串流辨識（實驗）</label><p id="dictation-stream-note">錄音時即時傳送語音，讓 Codex 判斷停頓並逐句回傳文字。連線失敗時會改用原本的逐句辨識。</p></div>
+            <input id="dictation-stream" type="checkbox" role="switch" class="switch" aria-describedby="dictation-stream-note" disabled></div>
         </div>
         <h2>文字處理</h2>
         <div class="card">

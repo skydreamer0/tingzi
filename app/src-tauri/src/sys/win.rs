@@ -827,3 +827,7 @@ mod tests {
         assert!(program(std::process::id()).unwrap().to_lowercase().ends_with(".exe"));
     }
 }
+
+pub fn preferred_language() -> Option<String> {
+    sys_locale::get_locale()
+}

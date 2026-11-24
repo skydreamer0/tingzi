@@ -80,6 +80,7 @@ function fill() {
   byId('noise-suppression').checked = Boolean(prefs.NoiseSuppression);
   byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
   byId('streaming-asr').checked = Boolean(prefs.StreamingAsr);
+  byId('dictation-stream').checked = Boolean(prefs.DictationStream);
   showLocal();
   byId('api-url').value = prefs.ApiUrl;
   byId('api-model').value = prefs.ApiModel;
@@ -140,6 +141,7 @@ function collect(engineFromPage) {
       Engine: engine,
       Online: engine === 'codex',
       StreamingAsr: byId('streaming-asr').checked,
+      DictationStream: byId('dictation-stream').checked,
       LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
       Gpu: byId('gpu').disabled ? panel.prefs.Gpu : byId('gpu').checked,
       ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
@@ -183,6 +185,9 @@ function showEngine() {
   byId('engine-note').textContent = engineNotes[engine]();
   const streaming = byId('streaming-asr');
   streaming.disabled = engine !== 'codex';
+  const available = !streaming.disabled && streaming.checked;
+  byId('dictation-stream-row').hidden = !available;
+  byId('dictation-stream').disabled = !available;
   byId('streaming-asr-note').textContent = streaming.disabled
     ? '實驗功能。使用 Codex 線上辨識時可開啟。'
     : '實驗功能。每次停頓後，剛說完的句子會直接打進錄音開始時游標所在的欄位。開著 AI 潤稿，或「辨識完成後」不是「自動插入並複製文字」時，句子先顯示在浮窗，停錄後才處理全文。錄音片段會經 Codex 傳到 ChatGPT 辨識。';
@@ -201,6 +206,7 @@ function showKey() {
   byId('api-key-clear').disabled = !panel.api_key_set;
 }
 byId('engine').addEventListener('change', showEngine);
+byId('streaming-asr').addEventListener('change', showEngine);
 
 // AI refinement's own key, kept apart from the recognition service's key; like that one, it is never shown back.
 function showRefineKey() {

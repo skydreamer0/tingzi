@@ -19,6 +19,13 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = ["tray-icon", "macos-private-api"] }
 tauri-plugin-global-shortcut = "2"
 codex-asr = { version = "0.1.2", default-features = false }
+tungstenite = { version = "0.28", default-features = false, features = ["handshake", "rustls-tls-webpki-roots"] }
+base64 = "0.22"
+sys-locale = "0.3"
+# HTTPS proxies add an outer TLS connection before the WebSocket handshake.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12"] }
+webpki-roots = "1"
+percent-encoding = "2"
 # The same build codex-asr already uses, so no new crates are compiled.
 reqwest = { version = "0.12", default-features = false, features = ["blocking", "json", "multipart", "rustls-tls"] }
 # Already built for the crates above; checks downloaded models.

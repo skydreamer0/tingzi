@@ -124,6 +124,8 @@ fn auth_file() -> PathBuf {
     home.join("auth.json")
 }
 
+pub const CODEX_LANGUAGE: Option<&str> = Some("zh");
+
 /// Sends WAV bytes to Codex and returns the recognised text. Blocks; call it off the UI thread.
 pub fn online(wav: Vec<u8>) -> Result<String, String> {
     if wav.len() <= 44 {
@@ -132,7 +134,7 @@ pub fn online(wav: Vec<u8>) -> Result<String, String> {
     if wav.len() > LARGEST_UPLOAD {
         return Err("錄音超過 50 MiB，請分段錄".into());
     }
-    let heard = client()?.transcribe_bytes(wav, "audio.wav", "audio/wav", Some("zh".into())).map_err(explain)?;
+    let heard = client()?.transcribe_bytes(wav, "audio.wav", "audio/wav", CODEX_LANGUAGE.map(str::to_owned)).map_err(explain)?;
     Ok(heard.text.trim().to_string())
 }
 
