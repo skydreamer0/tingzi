@@ -44,12 +44,10 @@ fn connect_tcp(host: &str, port: u16) -> Result<TcpStream> {
     Err("連線失敗或逾時")
 }
 
-fn transport() -> Result<(Route, TcpStream)> {
-    let control = |tcp: &TcpStream| tcp.try_clone().map_err(|_| "連線設定失敗");
+fn transport() -> Result<Route> {
     let Some(route) = crate::recognise::proxy_for(HOST) else {
         let tcp = connect_tcp(HOST, 443)?;
-        let control = control(&tcp)?;
-        return Ok((Route::Plain(tcp), control));
+        return Ok(Route::Plain(tcp));
     };
     let proxy = reqwest::Url::parse(&route).map_err(|_| "代理位址無效")?;
     if !matches!(proxy.scheme(), "http" | "https") {
@@ -61,7 +59,6 @@ fn transport() -> Result<(Route, TcpStream)> {
         .trim_start_matches('[')
         .trim_end_matches(']');
     let tcp = connect_tcp(host, proxy.port_or_known_default().ok_or("代理連接埠無效")?)?;
-    let control = control(&tcp)?;
     let mut stream = if proxy.scheme() == "https" {
         let roots =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -105,7 +102,7 @@ fn transport() -> Result<(Route, TcpStream)> {
             break;
         }
     }
-    Ok((stream, control))
+    Ok(stream)
 }
 
 fn connect() -> Result<Socket> {
@@ -141,7 +138,7 @@ fn connect() -> Result<Socket> {
     ] {
         headers.insert(name, value.parse().map_err(|_| "串流標頭無效")?);
     }
-    let (stream, control) = transport()?;
+    let stream = transport()?;
     let (socket, response) = tungstenite::client_tls(request, stream).map_err(|err| match err {
         HandshakeError::Failure(Error::Http(r))
             if blocked(
@@ -159,9 +156,6 @@ fn connect() -> Result<Socket> {
     ) {
         return Err("串流連線被擋");
     }
-    control
-        .set_read_timeout(Some(Duration::from_millis(10)))
-        .map_err(|_| "連線設定失敗")?;
     Ok(socket)
 }
 
@@ -177,9 +171,19 @@ fn start(rate: usize, language: Option<&str>) -> Value {
 }
 
 fn send(socket: &mut Socket, message: Value) -> Result<()> {
-    socket
-        .send(Message::Text(message.to_string().into()))
-        .map_err(|_| "串流傳送中斷")
+    let deadline = Instant::now() + TIMEOUT;
+    let mut result = socket.send(Message::Text(message.to_string().into()));
+    loop {
+        match result {
+            Ok(()) => return Ok(()),
+            Err(Error::Io(e)) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                // Tungstenite retained the frame. Only flush it, never enqueue a duplicate.
+                std::thread::sleep(Duration::from_millis(2));
+                result = socket.flush();
+            }
+            _ => return Err("串流傳送中斷"),
+        }
+    }
 }
 
 fn packet_size(sent: usize) -> usize {
@@ -231,10 +235,12 @@ pub enum Update {
 pub struct Updates {
     items: Mutex<VecDeque<Update>>,
     ready: Condvar,
+    pub last_final: Mutex<Option<Instant>>,
 }
 
 impl Updates {
     pub fn push(&self, update: Update) {
+        if matches!(update, Update::Final(..)) { *self.last_final.lock().unwrap() = Some(Instant::now()); }
         let mut items = self.items.lock().unwrap();
         if !matches!(update, Update::Finish)
             && matches!(items.back(), Some(Update::Segment(_) | Update::Freeze))
@@ -508,6 +514,15 @@ pub(crate) struct Connection {
 }
 
 fn begin(socket: Socket, handshake: Instant, rate: usize) -> Result<Connection> {
+    // Switch the actual transport after both TLS handshakes, including HTTPS CONNECT.
+    fn underlying<S: Read + Write>(stream: &MaybeTlsStream<S>) -> Result<&S> {
+        match stream {
+            MaybeTlsStream::Plain(tcp) => Ok(tcp),
+            MaybeTlsStream::Rustls(tls) => Ok(&tls.sock),
+            _ => Err("串流連線類型不支援"),
+        }
+    }
+    underlying(underlying(socket.get_ref())?)?.set_nonblocking(true).map_err(|_| "連線設定失敗")?;
     let mut socket = socket;
     send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
     Ok(Connection { socket, handshake, requested: Instant::now() })
@@ -631,6 +646,7 @@ fn sessions(
             } else {
                 read(&mut socket)?
             };
+            if event.is_none() { std::thread::sleep(Duration::from_millis(5)); }
             if let Some(event) = event {
                 if let Some(line) = trace.0.record(&event, recording.elapsed().as_millis()) {
                     report::note(line);
@@ -670,6 +686,10 @@ fn sessions(
             }
             if let Some(deadline) = closing {
                 if Instant::now() >= deadline {
+                    if state.stop_request.is_none() && !state.pieces.is_empty() &&
+                        state.pieces.iter().all(|p| p.revision.is_some()) {
+                        break;
+                    }
                     return Err("串流收尾逾時".into());
                 }
                 continue;
@@ -711,12 +731,7 @@ fn sessions(
                 }
                 sent += tail;
                 send(&mut socket, json!({"type":"session.close"}))?;
-                closing = Some(
-                    Instant::now()
-                        + TIMEOUT.max(Duration::from_secs_f64(
-                            (sent + rate / 4) as f64 / rate as f64,
-                        )),
-                );
+                closing = Some(Instant::now() + Duration::from_secs(8));
             }
         }
         total += sent;
@@ -1101,6 +1116,39 @@ mod tests {
             assert_eq!(updates.next(true), Some(Update::Final(index, index.to_string(), index + 1)));
         }
         assert_eq!(updates.next(true), Some(Update::Segment("next".into())));
+    }
+
+    #[test]
+    fn silent_peer_receives_new_microphone_audio_within_100_ms() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let peer = listener.accept().unwrap().0;
+        peer.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let socket = WebSocket::from_raw_socket(MaybeTlsStream::Plain(Route::Plain(client)), Role::Client, None);
+        let mut connection = Some(begin(socket, Instant::now(), RATE).unwrap());
+        let audio = SegmentAudio::synthetic(vec![], RATE as u32, false);
+        let finished = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| sessions(&audio, true, &|| false, &|| finished.load(Ordering::Acquire),
+                &mut Progress { count: 0, end: 0 }, &Updates::default(), Instant::now(), Instant::now(),
+                &mut 0, || Ok(connection.take().unwrap())));
+            let mut ws = WebSocket::from_raw_socket(peer, Role::Server, None);
+            ws.read().unwrap();
+            ws.send(Message::text(r#"{"type":"session.started"}"#)).unwrap();
+            // The first microphone callback arrives while the peer has nothing more to say.
+            std::thread::sleep(Duration::from_millis(20));
+            let captured = Instant::now();
+            audio.extend(&[0.5; 128]);
+            let packet = ws.read();
+            let elapsed = captured.elapsed();
+            finished.store(true, Ordering::Release);
+            worker.join().unwrap().unwrap();
+            let event: Value = serde_json::from_str(packet.unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(event["type"], "audio.append");
+            assert!(elapsed < Duration::from_millis(100), "{elapsed:?}");
+        });
     }
 
     #[test]

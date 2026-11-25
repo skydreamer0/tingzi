@@ -31,6 +31,7 @@ fn older_record() -> PathBuf {
 /// Adds a line to the record. Callers pass what happened, never the user's text; the line is cleaned again anyway.
 /// A record that cannot be written is skipped, so nothing the user does ever fails because of it.
 pub fn note(event: impl AsRef<str>) {
+    if cfg!(test) { return; }
     let line = format!("{} {}\n", stamp(now()), clean(event.as_ref(), &crate::sys::home().to_string_lossy()).replace('\n', " "));
     let _held = WRITING.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let _ = std::fs::create_dir_all(crate::paths::data());
@@ -269,6 +270,15 @@ pub fn version_line() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tests_skip_the_production_log_writer() {
+        struct NeverFormat;
+        impl AsRef<str> for NeverFormat {
+            fn as_ref(&self) -> &str { panic!("test event reached the log writer"); }
+        }
+        note(NeverFormat);
+    }
 
     #[test]
     fn stamps_read_as_dates() {

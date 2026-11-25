@@ -6,6 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 /// How many dictations are kept; older ones fall off the end.
 const LIMIT: usize = 50;
+static WRITING: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Item {
@@ -38,6 +39,7 @@ fn push(list: &mut Vec<Item>, item: Item) {
 }
 
 pub fn add(text: &str, before: Option<String>, inserted: bool) {
+    let _lock = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     let mut list = load();
     let at = SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_secs());
     push(&mut list, Item { at, text: text.to_string(), before, inserted });
@@ -46,6 +48,7 @@ pub fn add(text: &str, before: Option<String>, inserted: bool) {
 }
 
 pub fn clear() -> bool {
+    let _lock = WRITING.lock().unwrap_or_else(|e| e.into_inner());
     match std::fs::remove_file(file()) {
         Ok(()) => true,
         Err(error) => error.kind() == std::io::ErrorKind::NotFound,

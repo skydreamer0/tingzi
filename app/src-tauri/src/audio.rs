@@ -79,6 +79,9 @@ impl SegmentAudio {
         Self { samples: Arc::new(Mutex::new(samples)), rate, noise_suppression }
     }
 
+    #[cfg(test)]
+    pub fn extend(&self, samples: &[f32]) { self.samples.lock().unwrap().extend_from_slice(samples); }
+
     pub fn len(&self) -> usize {
         self.samples.lock().unwrap().len()
     }
@@ -260,9 +263,11 @@ impl Recorder {
         }
     }
 
-    /// Stops recording and returns the WAV and measurements, even when the clip is too short.
+    /// Signals the capture thread without waiting for the remote final.
+    pub fn request_stop(&self) { let _ = self.stop.send(()); }
+
     pub fn finish(self) -> Result<FinishedCapture, String> {
-        let _ = self.stop.send(());
+        self.request_stop();
         self.worker.join().map_err(|_| INTERRUPTED.to_string())?
     }
 }
@@ -1077,6 +1082,26 @@ mod tests {
             let result = Recorder::start_capture(brief, false, option, || {}).unwrap().finish().unwrap().wav;
             assert_eq!(result, Err(TOO_SHORT.to_string()));
         }
+    }
+
+    #[test]
+    fn stopping_capture_does_not_wait_for_the_background_final() {
+        let (rate, _rates) = mpsc::channel();
+        let (closed, closing) = mpsc::channel();
+        let (release, final_event) = mpsc::channel();
+        let source = SentenceSource::Stream(rate, Box::new(move |_, stop, _| {
+            stop.recv_timeout(Duration::from_secs(2)).unwrap();
+            closed.send(()).unwrap();
+            final_event.recv_timeout(Duration::from_secs(2)).unwrap();
+        }));
+        let recorder = Recorder::start_capture(
+            || Ok((test_input((), Arc::new(Mutex::new(vec![0.4; 16_000])), 16_000), None)),
+            false, Some(source), || {},
+        ).unwrap();
+        recorder.request_stop();
+        closing.recv_timeout(Duration::from_secs(2)).unwrap();
+        release.send(()).unwrap();
+        assert!(recorder.finish().unwrap().wav.is_ok());
     }
 
     #[test]

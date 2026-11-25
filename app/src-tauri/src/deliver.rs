@@ -66,7 +66,7 @@ pub fn watch() {
         }
         if let Ok(mut watch) = WATCH.lock() {
             watch.outside = now;
-            if watch.target.is_some_and(|target| target.window != now.window) {
+            if watch.target.is_some_and(|target| !same_window(target, now)) {
                 watch.left = true;
             }
         }
@@ -95,10 +95,14 @@ pub fn end() {
     }
 }
 
+fn same_window(target: Spot, now: Spot) -> bool {
+    now.window != 0 && target.process == now.process && (target.window == now.window ||
+        (target.focus != 0 && now.focus == target.focus && target.window != 0))
+}
+
 pub fn at_target(target: Spot) -> bool {
     let now = Spot::current();
-    !left_target() && now.window != 0 && now.window == target.window &&
-        now.process == target.process && (target.focus == 0 || target.focus == now.focus)
+    !left_target() && same_window(target, now)
 }
 
 fn left_target() -> bool {
@@ -184,6 +188,10 @@ impl Outcome {
         self.inserted && self.expand && !self.cancelled
     }
 
+    pub fn retained() -> Self {
+        Self { copied: false, inserted: false, cancelled: false, expand: false, message: "已保留欄位原文" }
+    }
+
     fn cancelled() -> Self {
         Self { copied: false, inserted: false, cancelled: true, expand: false, message: "已取消" }
     }
@@ -239,6 +247,15 @@ pub fn type_now(text: &str, desk: &mut dyn Desk, cancelled: &dyn Fn() -> bool) -
         return Typed::Gone;
     }
     if desk.paste() { Typed::Inserted } else { Typed::Later }
+}
+
+/// Paste the final suffix once. A background result must never reactivate a window.
+pub fn paste_final(text: &str, desk: &mut dyn Desk, safe: &dyn Fn() -> bool) -> Outcome {
+    if !safe() || desk.held() { return Outcome::retained(); }
+    if !desk.copy(text) || !desk.clipboard_holds(text) || !safe() || desk.held() || !desk.paste() {
+        return Outcome::retained();
+    }
+    Outcome { copied: true, inserted: true, cancelled: false, expand: false, message: "已插入並複製文字" }
 }
 
 /// Copies and inserts `text` according to `mode`. Never pastes more than once, and never pastes
@@ -328,7 +345,7 @@ impl Desk for Desktop {
             crate::sys::bring_forward(&self.target);
             now = Spot::current();
         }
-        now.window == self.target.window && now.process == self.target.process && (self.target.focus == 0 || now.focus == self.target.focus)
+        same_window(self.target, now) && (self.target.focus == 0 || now.focus == self.target.focus)
     }
 
     fn write_directly(&mut self, text: &str) -> bool {
@@ -555,6 +572,27 @@ mod tests {
         let mut leaving = Fake { there_for: Some(1), ..Fake::default() };
         assert_eq!(type_now("不能貼錯地方", &mut leaving, &never), Typed::Gone);
         assert_eq!((gone.pastes, leaving.pastes), (0, 0));
+    }
+
+    #[test]
+    fn foreground_changes_require_the_same_focused_child_in_the_same_process() {
+        let target = Spot { window: 1, focus: 2, process: 3 };
+        assert!(same_window(target, Spot { window: 4, ..target }));
+        assert!(!same_window(target, Spot { window: 4, focus: 5, ..target }));
+        assert!(!same_window(target, Spot { window: 4, process: 6, ..target }));
+    }
+
+    #[test]
+    fn background_final_pastes_once_only_while_the_original_field_is_safe() {
+        use std::cell::Cell;
+        let mut desk = Fake::default();
+        assert!(!paste_final("定稿", &mut desk, &|| false).inserted);
+        assert!(desk.copies.is_empty());
+        let safe = Cell::new(true);
+        assert!(!paste_final("定稿", &mut desk, &|| safe.replace(false)).inserted);
+        assert_eq!(desk.pastes, 0);
+        assert!(paste_final("定稿", &mut desk, &|| true).inserted);
+        assert_eq!(desk.pastes, 1);
     }
 
     #[test]
