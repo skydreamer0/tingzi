@@ -95,6 +95,12 @@ pub fn end() {
     }
 }
 
+pub fn at_target(target: Spot) -> bool {
+    let now = Spot::current();
+    !left_target() && now.window != 0 && now.window == target.window &&
+        now.process == target.process && (target.focus == 0 || target.focus == now.focus)
+}
+
 fn left_target() -> bool {
     WATCH.lock().map(|watch| watch.left).unwrap_or(true)
 }

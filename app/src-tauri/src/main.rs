@@ -165,6 +165,7 @@ fn change_streaming_preview(app: &AppHandle, change: impl FnOnce(&mut streaming_
 /// A recording whose sentences go where the user was typing as soon as each is recognised.
 struct Live {
     target: Spot,
+    stream_keys: Option<StreamTarget>,
     /// The choices for the program being dictated into, which finish each sentence.
     prefs: Settings,
     typing: Mutex<live::Typing>,
@@ -173,6 +174,74 @@ struct Live {
     pasted: Mutex<Option<Instant>>,
     /// The recording's sound, to recognise what is left of it if a sentence fails.
     audio: Mutex<Option<audio::SegmentAudio>>,
+}
+
+struct StreamTarget {
+    started: std::sync::OnceLock<Instant>,
+    activity: u64,
+    focus: Option<u64>,
+}
+
+struct StreamKeyboard<'a> {
+    target: Spot,
+    target_keys: &'a StreamTarget,
+    cancelled: &'a dyn Fn() -> bool,
+}
+
+impl live::Keys for StreamKeyboard<'_> {
+    fn state(&mut self) -> live::KeyState {
+        if (self.cancelled)() {
+            return live::KeyState::Held;
+        }
+        if !deliver::at_target(self.target)
+            || self.target_keys.focus.is_none()
+            || sys::stream_focus() != self.target_keys.focus
+            || sys::input_activity() != self.target_keys.activity
+        {
+            live::KeyState::Gone
+        } else if sys::modifier_held() {
+            live::KeyState::Held
+        } else {
+            live::KeyState::Ready
+        }
+    }
+
+    fn erase(&mut self, count: usize) -> bool { sys::backspace(count) }
+    fn write(&mut self, text: &str) -> bool { sys::type_text(text) }
+}
+
+impl Live {
+    fn flush(&self, typing: &mut live::Typing, cancelled: &dyn Fn() -> bool) -> bool {
+        let Some(target_keys) = &self.stream_keys else { return true };
+        if cancelled() { return true; }
+        let Some(started) = target_keys.started.get() else { return true };
+        typing.flush(started.elapsed(), &mut StreamKeyboard { target: self.target, target_keys, cancelled })
+    }
+
+    fn finish_stream(&self, cancelled: &dyn Fn() -> bool) {
+        let mut typing = self.typing.lock().unwrap();
+        if typing.ended() || cancelled() { return; }
+        typing.retract();
+        while !self.flush(&mut typing, cancelled) {
+            drop(typing);
+            std::thread::sleep(Duration::from_millis(20));
+            typing = self.typing.lock().unwrap();
+            if typing.ended() || cancelled() { return; }
+        }
+    }
+}
+
+fn report_stream_typing(tail: &live::Tail) {
+    let first = tail.first_key.map_or_else(|| "未打字".into(), |at| format!("{} ms", at.as_millis()));
+    report::note(format!("串流打字：中途更新 {} 次，退格 {} 字，首字 {first}", tail.updates, tail.deleted));
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        if self.stream_keys.is_some() {
+            report_stream_typing(&self.typing.get_mut().unwrap_or_else(|err| err.into_inner()).tail);
+        }
+    }
 }
 
 /// A program reads the clipboard a moment after the paste keys, so the clipboard is left alone for half a second.
@@ -185,33 +254,28 @@ fn wait_for_paste(pasted: Option<Instant>) {
 /// Finishes a sentence recognised while recording and types it, with any sentence still waiting before it.
 /// Sentences come here one at a time, in order, on the thread that recognises them.
 fn type_sentence(live: &Live, heard: &str, end: usize, cancelled: &dyn Fn() -> bool) {
-    update_sentence(live, heard, end, None, cancelled);
-}
-
-fn update_sentence(live: &Live, heard: &str, end: usize, revision: Option<usize>, cancelled: &dyn Fn() -> bool) -> bool {
     let mut pasted = live.pasted.lock().unwrap();
     let next = {
         let mut typing = live.typing.lock().unwrap();
-        if typing.ended() || cancelled() { return false; }
+        if typing.ended() || cancelled() { return; }
         let piece = correct(&clean(heard, &live.prefs), &live.prefs);
-        if let Some(index) = revision {
-            if !typing.revise(index, &piece) { return false; }
-        } else {
-            typing.add(&piece, end);
-        }
+        typing.add(&piece, end);
         typing.next()
     };
-    let Some(next) = next else { return true };
+    let Some(next) = next else { return };
     wait_for_paste(*pasted);
     match deliver::type_now(&next, &mut Desktop::new(live.target), cancelled) {
         Typed::Inserted => {
-            live.typing.lock().unwrap().note_typed(&next);
+            let mut typing = live.typing.lock().unwrap();
+            typing.note_typed(&next);
+            if let Some(started) = live.stream_keys.as_ref().and_then(|keys| keys.started.get()) {
+                typing.tail.first_key.get_or_insert_with(|| started.elapsed());
+            }
             *pasted = Some(Instant::now());
         }
         Typed::Gone => live.typing.lock().unwrap().leave(),
         Typed::Later => {}
     }
-    true
 }
 
 fn show_sentences(app: &AppHandle, run: u64, queue: &streaming_asr::Queue, live: Option<&Live>) {
@@ -285,20 +349,45 @@ fn stream_source(app: &AppHandle, run: u64, requests: Arc<streaming_asr::Request
     audio::SentenceSource::Stream(Box::new(move |audio, ending| {
         let cancelled = || app.state::<Session>().run.load(Ordering::SeqCst) != run;
         let stopped = || !matches!(ending.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
-        if let Some(live) = &live { *live.audio.lock().unwrap() = Some(audio.clone()); }
+        if let Some(live) = &live {
+            // The capture worker starts this source after the microphone stream starts playing.
+            if let Some(keys) = &live.stream_keys { keys.started.get_or_init(Instant::now); }
+            *live.audio.lock().unwrap() = Some(audio.clone());
+        }
         let mut sentences = Vec::<String>::new();
         dictation_stream::run(&audio, live.is_some(), stopped, cancelled, |index, text, end| {
             if cancelled() { return; }
-            let revision = (index < sentences.len()).then_some(index);
             if let Some(live) = &live {
-                if !update_sentence(live, text, end, revision, &cancelled) {
-                    if !cancelled() { report::note("串流修訂晚於逐句插入，保留已打出的文字"); }
-                    return;
-                }
+                let mut typing = live.typing.lock().unwrap();
+                if typing.ended() || cancelled() { return; }
+                let piece = correct(&clean(text, &live.prefs), &live.prefs);
+                typing.stream_final(&piece, end);
+                live.flush(&mut typing, &cancelled);
             }
-            if revision.is_some() { sentences[index] = text.to_owned(); } else { sentences.push(text.to_owned()); }
+            if index < sentences.len() { sentences[index] = text.to_owned(); } else { sentences.push(text.to_owned()); }
             requests.replace_sentences(&sentences, |q| show_sentences(&app, run, q, live.as_deref()));
-        }, |progress| audio.resume_local(progress.end, progress.count, local, stopped, cancelled));
+        }, |segment| {
+            if let Some(live) = &live {
+                let mut typing = live.typing.lock().unwrap();
+                if typing.ended() || cancelled() { return; }
+                match segment {
+                    dictation_stream::Preview::Segment(text) => {
+                        typing.segment(&correct(&clean(text, &live.prefs), &live.prefs));
+                    }
+                    dictation_stream::Preview::Freeze => typing.freeze_segment(),
+                    dictation_stream::Preview::Tick => {}
+                }
+                live.flush(&mut typing, &cancelled);
+            }
+        }, |progress| {
+            if let Some(live) = &live { live.finish_stream(&cancelled); }
+            audio.resume_local(progress.end, progress.count, local, stopped, cancelled);
+        });
+        if let Some(live) = &live {
+            live.finish_stream(&cancelled);
+        } else {
+            report_stream_typing(&live::Tail::default());
+        }
     }))
 }
 
@@ -309,7 +398,19 @@ fn cancel_streaming(app: &AppHandle) {
     }
     // Sentences already typed stay where they are; nothing more is typed.
     if let Some(live) = session.live.lock().unwrap().take() {
-        live.typing.lock().unwrap().end();
+        let generation = session.run.load(Ordering::SeqCst);
+        let handle = app.clone();
+        let mut typing = live.typing.lock().unwrap();
+        typing.cancel_draft();
+        if !live.flush(&mut typing, &|| false) {
+            drop(typing);
+            std::thread::spawn(move || {
+                let replaced = || handle.state::<Session>().run.load(Ordering::SeqCst) != generation;
+                while !replaced() && !live.flush(&mut live.typing.lock().unwrap(), &replaced) {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+        }
     }
     change_streaming_preview(app, streaming_preview::Preview::clear);
 }
@@ -476,7 +577,10 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
     } else {
         None
     };
-    let live = streaming.as_ref().and_then(|_| session.live.lock().unwrap().take());
+    let live = streaming.as_ref().and_then(|_| {
+        let mut active = session.live.lock().unwrap();
+        if active.as_ref().is_some_and(|live| live.stream_keys.is_some()) { active.clone() } else { active.take() }
+    });
     // Stopping an active stream keeps its recording ID valid while the tail drains.
     let run = if streaming.is_some() {
         session.run.load(Ordering::SeqCst)
@@ -531,7 +635,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             let _typed = live.pasted.lock().unwrap();
             let mut typing = live.typing.lock().unwrap();
             typing.end();
-            typing.started()
+            typing.started() || (live.stream_keys.is_some() && typing.away())
         });
         // Whether the end of the recording could not be recognised after its first sentences were typed.
         let mut missed = false;
@@ -607,12 +711,17 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 let mut left = None;
                 let outcome = match (target, live.as_deref()) {
                     (Some(spot), Some(live)) => {
-                        let typed = live.typing.lock().unwrap().typed().to_string();
+                        let typing = live.typing.lock().unwrap();
+                        let typed = typing.visible_prefix(&text);
+                        let manual = live.stream_keys.is_some() && typing.away();
+                        drop(typing);
                         match text.strip_prefix(typed.as_str()) {
                             Some("") => Outcome::typed(),
                             Some(rest) => {
                                 wait_for_paste(*live.pasted.lock().unwrap());
-                                let outcome = deliver::deliver(rest, Mode::Insert, &mut Desktop::new(spot), &cancelled);
+                                let mode = if manual { Mode::Copy } else { Mode::Insert };
+                                let mut outcome = deliver::deliver(rest, mode, &mut Desktop::new(spot), &cancelled);
+                                if manual { outcome.expand = true; }
                                 if !outcome.inserted && !typed.is_empty() {
                                     left = Some(rest.to_string());
                                 }
@@ -666,6 +775,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             if session.run.load(Ordering::SeqCst) != run {
                 return;
             }
+            session.live.lock().unwrap().take();
             if let Some(wav) = kept {
                 *session.kept.lock().unwrap() = Some(wav);
             } else {
@@ -806,7 +916,14 @@ fn toggle(app: &AppHandle) {
         let rule = rule_for(Some(spot));
         let here = apps::effective(&prefs, rule.as_ref());
         let live = (spot.window != 0 && here.mode() == Mode::Insert && !here.refine).then(|| {
-            Arc::new(Live { target: spot, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
+            let stream_keys = prefs.dictation_stream.then(|| {
+                // Clicking the mic can give our own window focus. Restore the original target
+                // once before capturing its field identity; subsequent checks never move focus.
+                if Spot::current().ours() { sys::bring_forward(&spot); }
+                sys::set_stream_shortcut(recording_keys(&prefs));
+                StreamTarget { started: Default::default(), activity: sys::input_activity(), focus: sys::stream_focus() }
+            });
+            Arc::new(Live { target: spot, stream_keys, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
         });
         *session.live.lock().unwrap() = live.clone();
         let local = segment_listener(app, run, prefs.clone(), requests.clone(), live.clone());
@@ -1196,13 +1313,18 @@ impl Keys {
 }
 
 /// The recording shortcut from the saved preferences; None when the user turned it off.
-fn shortcut(prefs: &Settings) -> Option<(Shortcut, String)> {
+fn recording_keys(prefs: &Settings) -> hotkey::Hotkey {
     let mut keys = prefs.hotkey();
     // A development override keeps this app from fighting the installed voice window for the same keys.
     if let Some(letter) = std::env::var("TINGZI_RECORD_KEY").ok().and_then(|value| value.bytes().next()).filter(u8::is_ascii_alphabetic) {
         let held = keys.modifiers & (hotkey::CONTROL | hotkey::ALT | hotkey::SUPER) != 0;
         keys = hotkey::Hotkey { modifiers: if held { keys.modifiers } else { hotkey::DEFAULT.modifiers }, key: u32::from(letter.to_ascii_uppercase()) };
     }
+    keys
+}
+
+fn shortcut(prefs: &Settings) -> Option<(Shortcut, String)> {
+    let keys = recording_keys(prefs);
     Some((keys.shortcut()?, keys.label()))
 }
 

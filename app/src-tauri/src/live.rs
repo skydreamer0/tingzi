@@ -4,17 +4,51 @@
 //! is remembered, so a piece is typed once, and whatever could not be typed waits for the end of the
 //! recording. Nothing here touches the keyboard or the clipboard.
 
+use std::time::Duration;
+
 use crate::apps::{self, AppRule};
 use crate::streaming_asr::join;
+
+/// The editable suffix after the last confirmed character sent to the target.
+#[derive(Default)]
+pub struct Tail {
+    shown: String,
+    draft: String,
+    confirmed: Option<String>,
+    /// Final for the draft already on screen, if a held shortcut delayed its correction.
+    visible_final: Option<String>,
+    pending: bool,
+    final_only: bool,
+    retracting: bool,
+    last_update: Option<Duration>,
+    last_guard: Option<Duration>,
+    pub updates: usize,
+    pub deleted: usize,
+    pub first_key: Option<Duration>,
+}
+
+pub enum KeyState { Ready, Held, Gone }
+
+pub trait Keys {
+    fn state(&mut self) -> KeyState;
+    fn erase(&mut self, count: usize) -> bool;
+    fn write(&mut self, text: &str) -> bool;
+}
+
+fn difference<'a>(old: &str, new: &'a str) -> (usize, &'a str) {
+    let prefix: usize = old.chars().zip(new.chars()).take_while(|(a, b)| a == b)
+        .map(|(c, _)| c.len_utf8()).sum();
+    (old[prefix..].chars().count(), &new[prefix..])
+}
 
 #[derive(Default)]
 pub struct Typing {
     rule: Option<AppRule>,
     pieces: Vec<String>,
     typed: String,
-    typed_pieces: usize,
     /// The sample position up to which the recording has been recognised.
     heard_to: usize,
+    pub tail: Tail,
     away: bool,
     ended: bool,
 }
@@ -28,12 +62,6 @@ impl Typing {
     pub fn add(&mut self, piece: &str, end: usize) {
         self.pieces.push(piece.trim().to_owned());
         self.heard_to = end;
-    }
-
-    pub fn revise(&mut self, index: usize, piece: &str) -> bool {
-        if index < self.typed_pieces { return false; }
-        self.pieces[index] = piece.trim().to_owned();
-        true
     }
 
     pub fn started(&self) -> bool {
@@ -50,6 +78,7 @@ impl Typing {
         apps::finish(&join(&self.pieces), self.rule.as_ref())
     }
 
+    #[cfg(test)]
     pub fn typed(&self) -> &str {
         &self.typed
     }
@@ -66,7 +95,6 @@ impl Typing {
 
     pub fn note_typed(&mut self, text: &str) {
         self.typed.push_str(text);
-        self.typed_pieces = self.pieces.len();
     }
 
     /// The user moved away from where recording started; the rest is kept for the end.
@@ -79,6 +107,119 @@ impl Typing {
         self.ended = true;
     }
 
+    pub fn visible_prefix(&self, final_text: &str) -> String {
+        let mut prefix = self.typed.clone();
+        if let Some(rest) = final_text.strip_prefix(&prefix) {
+            if rest.starts_with(&self.tail.shown) { prefix.push_str(&self.tail.shown); }
+        }
+        prefix
+    }
+
+    pub fn cancel_draft(&mut self) {
+        // Correct an already visible utterance, but do not start typing later queued finals.
+        self.tail.confirmed = self.tail.visible_final.take();
+        self.retract();
+        self.end();
+    }
+
+    pub fn away(&self) -> bool { self.away }
+
+    pub fn segment(&mut self, piece: &str) {
+        self.tail.retracting = false;
+        let confirmed = self.text();
+        self.pieces.push(piece.trim().to_owned());
+        let display = self.text();
+        self.pieces.pop();
+        self.tail.draft = display.strip_prefix(&confirmed).unwrap_or_default().to_owned();
+        if self.tail.confirmed.is_none() && difference(&self.tail.shown, &self.tail.draft).0 > 20 {
+            self.tail.final_only = true;
+        }
+        self.tail.pending = true;
+    }
+
+    /// A later utterance started before this one was final. Leave its visible text
+    /// in place, but discard the queued revision so a timer cannot type stale text.
+    pub fn freeze_segment(&mut self) {
+        self.tail.draft.clear();
+        self.tail.pending = self.tail.confirmed.is_some();
+    }
+
+    pub fn stream_final(&mut self, piece: &str, end: usize) {
+        self.tail.retracting = false;
+        self.add(piece, end);
+        let waiting = self.waiting();
+        if self.tail.confirmed.is_none() && !self.tail.shown.is_empty() {
+            self.tail.visible_final = Some(waiting.clone());
+        }
+        self.tail.confirmed = Some(waiting);
+        self.tail.draft.clear();
+        self.tail.last_update = None;
+        self.tail.final_only = false;
+        self.tail.pending = true;
+    }
+
+    /// Removing a draft uses the same guarded key path as correcting it.
+    pub fn retract(&mut self) {
+        self.tail.retracting = true;
+        self.tail.draft.clear();
+        self.tail.final_only = false;
+        self.tail.last_update = None;
+        self.tail.pending = !self.tail.shown.is_empty() || self.tail.confirmed.is_some();
+    }
+
+    /// False means a modifier or the throttle is holding a pending edit.
+    pub fn flush(&mut self, now: Duration, keys: &mut impl Keys) -> bool {
+        if self.away { return true; }
+        // The socket polls every 10 ms. Idle focus checks may query another process.
+        if !self.tail.pending && self.tail.last_guard.is_some_and(|last|
+            now.saturating_sub(last) < Duration::from_millis(100)) { return true; }
+        self.tail.last_guard = Some(now);
+        match keys.state() {
+            KeyState::Gone => { self.leave(); return true; }
+            KeyState::Held => return !self.tail.pending,
+            KeyState::Ready => {}
+        }
+        let tail = &mut self.tail;
+        if !tail.pending { return true; }
+        let final_pending = tail.confirmed.is_some();
+        if !final_pending && (tail.final_only || tail.last_update.is_some_and(|last|
+            now.saturating_sub(last) < Duration::from_millis(250))) { return false; }
+
+        let mut desired = tail.confirmed.clone().unwrap_or_default();
+        let confirmed_bytes = desired.len();
+        desired.push_str(&tail.draft);
+        let (erase, write) = difference(&tail.shown, &desired);
+        if !final_pending && erase > 20 && !tail.retracting {
+            tail.final_only = true;
+            return false;
+        }
+        if erase > 0 {
+            if !keys.erase(erase) { self.leave(); return true; }
+            tail.deleted += erase;
+            tail.shown.truncate(desired.len() - write.len());
+        }
+        if !write.is_empty() {
+            match keys.state() {
+                KeyState::Gone => { self.leave(); return true; }
+                KeyState::Held => return false,
+                KeyState::Ready => {}
+            }
+            if !keys.write(write) { self.leave(); return true; }
+            tail.first_key.get_or_insert(now);
+        }
+        if !tail.retracting && (erase > 0 || !write.is_empty()) && (!final_pending || !tail.draft.is_empty()) {
+            tail.updates += 1;
+            tail.last_update = Some(now);
+        }
+        tail.shown = desired[confirmed_bytes..].to_owned();
+        tail.pending = false;
+        tail.visible_final = None;
+        if let Some(confirmed) = tail.confirmed.take() {
+            self.note_typed(&confirmed);
+        }
+        true
+    }
+
     pub fn ended(&self) -> bool {
         self.ended
     }
@@ -87,6 +228,138 @@ impl Typing {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[derive(Default)]
+    struct Keyboard {
+        held: bool,
+        gone: bool,
+        strokes: Vec<String>,
+    }
+
+    impl Keys for Keyboard {
+        fn state(&mut self) -> KeyState {
+            if self.gone { KeyState::Gone } else if self.held { KeyState::Held } else { KeyState::Ready }
+        }
+        fn erase(&mut self, count: usize) -> bool {
+            self.strokes.push(format!("back {count}"));
+            true
+        }
+        fn write(&mut self, text: &str) -> bool {
+            self.strokes.push(text.into());
+            true
+        }
+    }
+
+    #[test]
+    fn differences_count_characters_and_return_the_new_suffix() {
+        for (old, new, erase, add) in [
+            ("你😀AB", "你😀CD", 2, "CD"), ("👋好", "world", 2, "world"),
+            ("A", "A中", 0, "中"), ("abc好", "ab", 2, ""), ("同", "同", 0, ""),
+        ] {
+            assert_eq!(difference(old, new), (erase, add));
+        }
+    }
+
+    #[test]
+    fn segments_coalesce_and_large_deletions_wait_until_final() {
+        let mut t = Typing::default();
+        let mut k = Keyboard::default();
+        let ms = Duration::from_millis;
+        t.segment("A");
+        t.flush(ms(50), &mut k);
+        t.segment("AB");
+        t.flush(ms(249), &mut k);
+        let long = "A".repeat(22);
+        t.segment(&long);
+        t.flush(ms(300), &mut k);
+        t.segment("B");
+        t.flush(ms(550), &mut k);
+        t.segment("Able");
+        t.flush(ms(800), &mut k);
+        t.stream_final("ABC", 100);
+        t.flush(ms(810), &mut k);
+        assert_eq!(k.strokes, ["A", &"A".repeat(21), "back 21", "BC"]);
+        assert_eq!((t.typed(), t.heard_to()), ("ABC", 100));
+        assert_eq!((t.tail.updates, t.tail.deleted, t.tail.first_key), (2, 21, Some(ms(50))));
+    }
+
+    #[test]
+    fn release_applies_the_latest_draft_and_finalized_prefix_together() {
+        let mut t = Typing::default();
+        let mut k = Keyboard { held: true, ..Default::default() };
+        t.segment("old");
+        t.flush(Duration::ZERO, &mut k);
+        t.stream_final("use", 5);
+        t.flush(Duration::ZERO, &mut k);
+        t.segment("one");
+        t.segment("two");
+        assert!(k.strokes.is_empty());
+        k.held = false;
+        t.flush(Duration::ZERO, &mut k);
+        assert_eq!(k.strokes, ["use two"]);
+        assert_eq!(t.typed(), "use");
+        t.stream_final("too", 10);
+        t.flush(Duration::ZERO, &mut k);
+        assert_eq!(k.strokes, ["use two", "back 2", "oo"]);
+        assert_eq!(t.typed(), "use too");
+    }
+
+    #[test]
+    fn exactly_twenty_backspaces_are_allowed_and_unchanged_text_sends_no_keys() {
+        let mut t = Typing::default();
+        let mut k = Keyboard::default();
+        let long = format!("A{}", "字".repeat(20));
+        t.segment(&long);
+        t.flush(Duration::ZERO, &mut k);
+        t.segment("A");
+        t.flush(Duration::from_millis(250), &mut k);
+        t.segment("A");
+        t.flush(Duration::from_millis(500), &mut k);
+        t.stream_final("A", 1);
+        t.flush(Duration::from_millis(510), &mut k);
+        assert_eq!(k.strokes, [long.as_str(), "back 20"]);
+        assert_eq!(t.tail.updates, 2);
+    }
+
+    #[test]
+    fn starting_a_later_utterance_discards_the_unsent_revision() {
+        let mut t = Typing::default();
+        let mut k = Keyboard::default();
+        t.segment("早");
+        t.flush(Duration::ZERO, &mut k);
+        t.segment("早點來");
+        t.freeze_segment();
+        t.flush(Duration::from_millis(300), &mut k);
+        t.stream_final("早安", 1);
+        t.flush(Duration::from_millis(310), &mut k);
+        assert_eq!(k.strokes, ["早", "安"]);
+    }
+
+    #[test]
+    fn rollback_only_erases_the_provisional_suffix_when_still_at_target() {
+        for (cancel, gone) in [(false, false), (true, false), (true, true)] {
+            let mut t = Typing::new(Some(AppRule { drop_final_stop: true, ..Default::default() }));
+            let mut k = Keyboard::default();
+            t.stream_final("確認。", 100);
+            t.flush(Duration::ZERO, &mut k);
+            t.segment("中😀");
+            t.flush(Duration::ZERO, &mut k);
+            k.gone = gone;
+            if cancel { t.cancel_draft(); } else { t.retract(); }
+            t.flush(Duration::ZERO, &mut k);
+            assert_eq!(t.typed(), "確認");
+            assert_eq!(t.text(), "確認");
+            if gone {
+                k.gone = false;
+                t.flush(Duration::from_secs(1), &mut k);
+                assert_eq!(k.strokes, ["確認", "。中😀"]);
+                assert!(t.away());
+            } else {
+                assert_eq!(k.strokes, ["確認", "。中😀", "back 3"]);
+                assert_eq!(t.tail.deleted, 3);
+            }
+        }
+    }
 
     #[test]
     fn each_piece_is_typed_once_and_joined_like_the_whole_text() {
@@ -115,15 +388,19 @@ mod tests {
     }
 
     #[test]
-    fn only_sentences_still_waiting_can_be_revised() {
-        let mut typing = Typing::default();
-        typing.add("第一句", 10);
-        typing.note_typed("第一句");
-        typing.add("未定", 20);
-        assert!(!typing.revise(0, "晚到"));
-        assert!(typing.revise(1, "第二句"));
-        assert_eq!(typing.next().as_deref(), Some("第二句"));
-        assert_eq!(typing.text(), "第一句第二句");
+    fn cancel_after_a_held_final_keeps_the_visible_sentence_only() {
+        let mut t = Typing::default();
+        let mut k = Keyboard::default();
+        t.segment("台杯");
+        t.flush(Duration::ZERO, &mut k);
+        k.held = true;
+        t.stream_final("台北", 20);
+        t.stream_final("第二句", 30);
+        t.cancel_draft();
+        t.flush(Duration::ZERO, &mut k);
+        k.held = false;
+        t.flush(Duration::ZERO, &mut k);
+        assert_eq!(k.strokes, ["台杯", "back 1", "北"]);
     }
 
     #[test]

@@ -202,13 +202,24 @@ struct Piece {
     stopped: Option<(Duration, usize)>,
     revision: Option<u64>,
     text: String,
-    ready: Duration,
     dirty: bool,
     final_end: usize,
+    segment_revision: Option<u64>,
+    segment_text: String,
+    previewed_revision: Option<u64>,
+}
+
+/// A complete replacement draft, an ordinary polling tick, or a blocked utterance.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Preview<'a> {
+    Segment(&'a str),
+    Tick,
+    Freeze,
 }
 
 struct Session {
     rate: usize,
+    live: bool,
     stop_request: Option<String>,
     started: bool,
     rotate: bool,
@@ -217,9 +228,10 @@ struct Session {
 }
 
 impl Session {
-    fn new(rate: usize) -> Self {
+    fn new(rate: usize, live: bool) -> Self {
         Self {
             rate,
+            live,
             started: false,
             rotate: false,
             closed: false,
@@ -229,18 +241,22 @@ impl Session {
     }
 
     fn piece(&mut self, id: &str) -> &mut Piece {
-        let index = self
-            .pieces
-            .iter()
-            .position(|piece| piece.id == id)
-            .unwrap_or_else(|| {
-                self.pieces.push(Piece {
-                    id: id.into(),
-                    ..Piece::default()
-                });
-                self.pieces.len() - 1
-            });
-        &mut self.pieces[index]
+        if let Some(index) = self.pieces.iter().position(|piece| piece.id == id) {
+            return &mut self.pieces[index];
+        }
+        self.pieces.push(Piece { id: id.into(), ..Piece::default() });
+        self.pieces.last_mut().unwrap()
+    }
+
+    fn transcript_piece(&mut self, id: &str) -> &mut Piece {
+        // A stop can precede the first identified transcript. A new speech.started,
+        // on the other hand, belongs to a new utterance and must not claim that stop.
+        if !self.pieces.iter().any(|piece| piece.id == id) {
+            if let Some(piece) = self.pieces.iter_mut().find(|piece| piece.id.is_empty()) {
+                piece.id = id.into();
+            }
+        }
+        self.piece(id)
     }
 
     /// Returns the stop-to-final latency for a new revision, when its speech boundary is known.
@@ -258,17 +274,24 @@ impl Session {
             }
             Some("session.updated") if e["session"]["status"] == "closed" => self.closed = true,
             Some("speech.started") => {
-                for piece in &mut self.pieces {
-                    piece.ready = now;
-                }
                 if let Some(id) = id {
                     self.piece(id);
                 }
             }
-            // Track the utterance for recovery at close. Only a final supplies text.
+            // Segment text is a complete preview; deltas never supply preview text.
             Some("transcript.segment") => {
                 if let Some(id) = id {
-                    self.piece(id);
+                    let piece = self.transcript_piece(id);
+                    if let (Some(revision), Some(text)) =
+                        (e["revision"].as_u64(), e["text"].as_str())
+                    {
+                        if piece.revision.is_none()
+                            && piece.segment_revision.is_none_or(|old| revision > old)
+                        {
+                            piece.segment_revision = Some(revision);
+                            piece.segment_text = text.trim().to_owned();
+                        }
+                    }
                 }
             }
             Some("speech.stopped") => {
@@ -291,13 +314,11 @@ impl Session {
                 else {
                     return Ok(None);
                 };
-                // Some servers identify the utterance only when returning its transcript.
-                if !self.pieces.iter().any(|p| p.id == id) {
-                    if let Some(p) = self.pieces.iter_mut().find(|p| p.id.is_empty()) {
-                        p.id = id.into();
-                    }
+                let live = self.live;
+                let p = self.transcript_piece(id);
+                if live && p.revision.is_some() {
+                    return Ok(None);
                 }
-                let p = self.piece(id);
                 if p.revision.is_some_and(|old| old >= revision) {
                     return Ok(None);
                 }
@@ -306,7 +327,6 @@ impl Session {
                 }
                 p.revision = Some(revision);
                 p.text = text.trim().to_owned();
-                p.ready = now + Duration::from_secs(1);
                 p.dirty = true;
                 return Ok(p.stopped.map(|(stop, _)| now.saturating_sub(stop)));
             }
@@ -330,9 +350,9 @@ impl Session {
         }
     }
 
-    fn publish(&mut self, now: Duration, live: bool, mut emit: impl FnMut(usize, &str, usize)) {
+    fn publish(&mut self, mut emit: impl FnMut(usize, &str, usize)) {
         for (index, piece) in self.pieces.iter_mut().enumerate() {
-            if piece.revision.is_none() || (live && now < piece.ready) {
+            if piece.revision.is_none() {
                 break;
             }
             if piece.dirty {
@@ -344,6 +364,30 @@ impl Session {
                 piece.dirty = false;
             }
         }
+    }
+
+    fn preview(&mut self) -> Preview<'_> {
+        let prefix = self
+            .pieces
+            .iter()
+            .take_while(|p| p.revision.is_some())
+            .count();
+        if prefix == self.pieces.len() {
+            return Preview::Tick;
+        }
+        if prefix + 1 != self.pieces.len() {
+            // A newer utterance supersedes any pending draft for the earlier gap.
+            return Preview::Freeze;
+        }
+        let piece = &mut self.pieces[prefix];
+        let Some(revision) = piece.segment_revision else {
+            return Preview::Tick;
+        };
+        if piece.previewed_revision == Some(revision) {
+            return Preview::Tick;
+        }
+        piece.previewed_revision = Some(revision);
+        Preview::Segment(&piece.segment_text)
     }
 
     fn rotating(&self, sent: usize) -> bool {
@@ -457,6 +501,7 @@ fn sessions(
     cancelled: &dyn Fn() -> bool,
     progress: &mut Progress,
     emit: &mut impl FnMut(usize, &str, usize),
+    preview: &mut impl FnMut(Preview<'_>),
     rotations: &mut usize,
     mut open: impl FnMut() -> Result<Socket>,
 ) -> std::result::Result<(), String> {
@@ -490,7 +535,7 @@ fn sessions(
         send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
         report::note(describe_start(session_number, rate, audio.noise_suppression()));
         let began = Instant::now();
-        let mut state = Session::new(rate);
+        let mut state = Session::new(rate, live);
         let mut sent = 0;
         let base = progress.count;
         let mut closing = None;
@@ -511,30 +556,18 @@ fn sessions(
                     report::note(format!("串流辨識：停頓至定稿 {} ms", latency.as_millis()));
                 }
             }
-            state.publish(
-                began.elapsed(),
-                live && !(state.closed && stopped()),
-                |i, text, end| {
-                    let boundary = audio.source_position(total + end);
-                    emit(base + i, text, boundary);
-                    progress.count = progress.count.max(base + i + 1);
-                    progress.end = progress.end.max(boundary);
-                },
-            );
+            state.publish(|i, text, end| {
+                let boundary = audio.source_position(total + end);
+                emit(base + i, text, boundary);
+                progress.count = progress.count.max(base + i + 1);
+                progress.end = progress.end.max(boundary);
+            });
+            if live {
+                preview(state.preview());
+            }
             if state.closed {
                 if closing.is_none() {
                     return Err("串流提前關閉".into());
-                }
-                // publish only releases a contiguous prefix. Any finals beyond a gap
-                // belong to the local suffix and must never reach the typing queue.
-                if state
-                    .pieces
-                    .iter()
-                    .take_while(|p| p.revision.is_some())
-                    .any(|p| p.dirty)
-                {
-                    std::thread::sleep(Duration::from_millis(10));
-                    continue;
                 }
                 if let Some(reason) = state.stop_request {
                     return Err(reason);
@@ -604,6 +637,7 @@ pub fn run(
     stopped: impl Fn() -> bool,
     cancelled: impl Fn() -> bool,
     mut emit: impl FnMut(usize, &str, usize),
+    mut preview: impl FnMut(Preview<'_>),
     fallback: impl FnOnce(Progress),
 ) {
     let mut rotations = 0;
@@ -617,6 +651,7 @@ pub fn run(
                 &cancelled,
                 progress,
                 &mut emit,
+                &mut preview,
                 &mut rotations,
                 connect,
             )
@@ -637,7 +672,7 @@ mod tests {
     use crate::{
         audio::SegmentEvent,
         live::Typing,
-        streaming_asr::{join, Requests, Transcript},
+        streaming_asr::{Requests, Transcript},
     };
     use std::cell::RefCell;
     use std::net::TcpListener;
@@ -683,59 +718,140 @@ mod tests {
     }
 
     #[test]
-    fn revisions_keep_order_and_live_typing_waits_for_a_boundary() {
-        let mut session = Session::new(RATE);
-        let event = |kind| json!({"type":kind});
-        let final_text = |id, revision, text| json!({"type":"transcript.final","utterance_id":id,"revision":revision,"text":text});
-        let ms = Duration::from_millis;
-        session
-            .receive(&event("session.started"), 0, ms(0))
-            .unwrap();
-        assert!(session.started);
-        session
-            .receive(&event("speech.stopped"), 100, ms(10))
-            .unwrap();
-        assert_eq!(
-            session.receive(&final_text("a", 1, "舊稿"), 200, ms(30)),
-            Ok(Some(ms(20)))
-        );
-        session
-            .receive(&final_text("a", 3, "第一句"), 200, ms(60))
-            .unwrap();
-        session
-            .receive(&final_text("a", 2, "晚到的舊稿"), 200, ms(90))
-            .unwrap();
-        session.publish(ms(100), true, |_, _, _| panic!("too early"));
-        session
-            .receive(&event("speech.started"), 200, ms(100))
-            .unwrap();
-        let mut pieces = Vec::new();
-        session.publish(ms(100), true, |i, t, end| {
-            assert_eq!((i, end), (0, 100));
-            pieces.push(t.to_owned());
+    fn live_finals_publish_immediately_and_ignore_later_revisions() {
+        let mut session = Session::new(RATE, true);
+        for (revision, text) in [(1, "first"), (2, "revised")] {
+            session
+                .receive(
+                    &json!({"type":"transcript.final","utterance_id":"a",
+                "revision":revision,"text":text}),
+                    100,
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+        let mut output = Vec::new();
+        session.publish(|_, text, _| {
+            output.push(text.to_owned())
         });
-        session
-            .receive(&final_text("b", 1, "第二句"), 400, ms(110))
-            .unwrap();
-        session.publish(ms(1109), true, |_, _, _| panic!("too early"));
-        session.publish(ms(1110), true, |i, t, _| {
-            assert_eq!(i, 1);
-            pieces.push(t.to_owned());
-        });
+        assert_eq!(output, ["first"]);
+        session.publish(|_, _, _| panic!("duplicate final"));
+    }
+
+    #[test]
+    fn previews_use_highest_complete_revision_once_at_latest_contiguous_piece() {
+        let mut session = Session::new(RATE, true);
+        let segment = |id, revision, text| {
+            json!({"type":"transcript.segment",
+            "utterance_id":id,"revision":revision,"text":text})
+        };
         session
             .receive(
-                &json!({"type":"session.updated","session":{"status":"closed"}}),
-                400,
-                ms(1300),
+                &json!({"type":"speech.started","utterance_id":"a"}),
+                0,
+                Duration::ZERO,
             )
             .unwrap();
-        assert!(session.closed);
-        assert_eq!(join(&pieces), "第一句第二句");
+        session
+            .receive(&segment("b", 3, "full preview"), 0, Duration::ZERO)
+            .unwrap();
+        session
+            .receive(&segment("b", 2, "stale"), 0, Duration::ZERO)
+            .unwrap();
+        assert_eq!(session.preview(), Preview::Freeze);
+        session
+            .receive(
+                &json!({"type":"transcript.final","utterance_id":"a",
+            "revision":1,"text":"final"}),
+                0,
+                Duration::ZERO,
+            )
+            .unwrap();
+        assert_eq!(session.preview(), Preview::Segment("full preview"));
+        assert_eq!(session.preview(), Preview::Tick);
+        session
+            .receive(&segment("b", 3, "duplicate"), 0, Duration::ZERO)
+            .unwrap();
+        assert_eq!(session.preview(), Preview::Tick);
+        session
+            .receive(&segment("b", 4, "new complete preview"), 0, Duration::ZERO)
+            .unwrap();
+        assert_eq!(session.preview(), Preview::Segment("new complete preview"));
+        session
+            .receive(
+                &json!({"type":"speech.started","utterance_id":"c"}),
+                0,
+                Duration::ZERO,
+            )
+            .unwrap();
+        session
+            .receive(&segment("b", 5, "old utterance"), 0, Duration::ZERO)
+            .unwrap();
+        assert_eq!(session.preview(), Preview::Freeze);
+    }
+
+    #[test]
+    fn a_new_utterance_freezes_pending_drafts_until_the_preceding_final_arrives() {
+        let mut session = Session::new(RATE, true);
+        assert_eq!(session.preview(), Preview::Tick);
+        session.receive(&json!({"type":"transcript.segment","utterance_id":"a",
+            "revision":1,"text":"old draft"}), 100, Duration::ZERO).unwrap();
+        assert_eq!(session.preview(), Preview::Segment("old draft"));
+        assert_eq!(session.preview(), Preview::Tick);
+        session.receive(&json!({"type":"speech.started","utterance_id":"b"}), 150, Duration::ZERO).unwrap();
+        assert_eq!(session.preview(), Preview::Freeze);
+        assert_eq!(session.preview(), Preview::Freeze);
+        session.receive(&json!({"type":"transcript.segment","utterance_id":"b",
+            "revision":2,"text":"latest draft"}), 200, Duration::ZERO).unwrap();
+        assert_eq!(session.preview(), Preview::Freeze);
+        session.receive(&json!({"type":"transcript.final","utterance_id":"a",
+            "revision":1,"text":"old final"}), 250, Duration::ZERO).unwrap();
+        session.publish(|_, text, _| assert_eq!(text, "old final"));
+        assert_eq!(session.preview(), Preview::Segment("latest draft"));
+        assert_eq!(session.preview(), Preview::Tick);
+        session.receive(&json!({"type":"transcript.final","utterance_id":"b",
+            "revision":1,"text":"latest final"}), 300, Duration::ZERO).unwrap();
+        session.publish(|_, text, _| assert_eq!(text, "latest final"));
+        assert_eq!(session.preview(), Preview::Tick);
+    }
+
+    #[test]
+    fn identified_segment_reuses_anonymous_stop_and_preserves_recovery_boundary() {
+        let mut session = Session::new(RATE, true);
+        session.receive(&json!({"type":"speech.stopped"}), 100, Duration::ZERO).unwrap();
+        session.receive(&json!({"type":"transcript.segment","utterance_id":"a",
+            "revision":1,"text":"preview"}), 150, Duration::ZERO).unwrap();
+        assert_eq!(session.pieces.len(), 1);
+        assert_eq!(session.preview(), Preview::Segment("preview"));
+        session.receive(&json!({"type":"transcript.final","utterance_id":"a",
+            "revision":1,"text":"final"}), 200, Duration::ZERO).unwrap();
+        let mut emitted = Vec::new();
+        session.publish(|index, text, end| emitted.push((index, text.to_owned(), end)));
+        assert_eq!(emitted, [(0, "final".to_owned(), 100)]);
+        assert_eq!(session.preview(), Preview::Tick);
+    }
+
+    #[test]
+    fn nonlive_finals_keep_highest_revision() {
+        let mut session = Session::new(RATE, false);
+        for (revision, text) in [(1, "first"), (3, "highest"), (2, "stale")] {
+            session
+                .receive(
+                    &json!({"type":"transcript.final","utterance_id":"a",
+                "revision":revision,"text":text}),
+                    100,
+                    Duration::ZERO,
+                )
+                .unwrap();
+        }
+        session.publish(|_, text, _| {
+            assert_eq!(text, "highest")
+        });
     }
 
     #[test]
     fn session_failures_and_rotation() {
-        let mut s = Session::new(RATE);
+        let mut s = Session::new(RATE, false);
         let mut receive = |e: Value| s.receive(&e, 0, Duration::ZERO);
         assert!(receive(json!({"type":"transcript.failed"})).is_err());
         assert!(receive(json!({"type":"session.error","fatal":false})).is_ok());
@@ -743,13 +859,13 @@ mod tests {
         receive(json!({"type":"session.stop_requested"})).unwrap();
         assert!(!s.rotating(1));
         assert_eq!(s.stop_request.as_deref(), Some("stop_requested"));
-        let mut s = Session::new(RATE);
+        let mut s = Session::new(RATE, false);
         let stop = json!({"type":"speech.stopped"});
         s.receive(&stop, 240 * RATE - 1, Duration::ZERO).unwrap();
         assert!(!s.rotating(240 * RATE));
         s.receive(&stop, 240 * RATE, Duration::ZERO).unwrap();
         assert!(s.rotating(240 * RATE));
-        let s = Session::new(RATE);
+        let s = Session::new(RATE, false);
         assert!(!s.rotating(285 * RATE - 1));
         assert!(s.rotating(285 * RATE));
         assert!(blocked(403, false));
@@ -761,7 +877,7 @@ mod tests {
     #[test]
     fn malformed_events_do_not_create_or_revise_a_sentence() {
         assert!(parse_event("{").is_none());
-        let mut s = Session::new(RATE);
+        let mut s = Session::new(RATE, false);
         for event in [
             json!({"type":"transcript.final","revision":1,"text":"x"}),
             json!({"type":"transcript.final","utterance_id":"a","text":"x"}),
@@ -916,6 +1032,7 @@ mod tests {
                         t.note_typed(&next);
                         requests.replace_sentences(&[text.to_owned()], |_| {});
                     },
+                    &mut |_| {},
                     &mut rotations,
                     || {
                         assert!(server.borrow().is_none(), "unexpected second session");

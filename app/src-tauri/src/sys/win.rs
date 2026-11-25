@@ -831,3 +831,160 @@ mod tests {
 pub fn preferred_language() -> Option<String> {
     sys_locale::get_locale()
 }
+
+
+// Count events rather than polling held keys: a tap can start and finish between updates.
+static INPUT_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static INPUT_ACTIVITY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+unsafe extern "system" fn watch_keyboard(
+    code: i32,
+    message: WPARAM,
+    data: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    if code >= 0 && matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
+        let event = &*(data.0 as *const KBDLLHOOKSTRUCT);
+        // All injected keys are excluded, including Tingzi's Unicode and shortcut events.
+        let modifier = matches!(event.vkCode, 0x10..=0x12 | 0x5B..=0x5C | 0xA0..=0xA5);
+        if !modifier && event.flags.0 & LLKHF_INJECTED.0 == 0 && !is_stream_shortcut(event.vkCode) {
+            INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    CallNextHookEx(None, code, message, data)
+}
+
+unsafe extern "system" fn watch_mouse(
+    code: i32,
+    message: WPARAM,
+    data: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    if code >= 0
+        && matches!(
+            message.0 as u32,
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+        )
+    {
+        let event = &*(data.0 as *const MSLLHOOKSTRUCT);
+        if event.flags & 1 == 0 {
+            INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    CallNextHookEx(None, code, message, data)
+}
+
+/// Changes on physical non-modifier key presses and mouse clicks. Failure changes every read,
+/// so callers abandon an insertion rather than assuming an unobserved caret stayed still.
+pub fn input_activity() -> u64 {
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let ready = READY.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        if std::thread::Builder::new()
+            .name("input-activity".into())
+            .spawn(move || {
+                use windows::Win32::UI::WindowsAndMessaging::*;
+                // SAFETY: callbacks are static and execute on this dedicated message-loop thread.
+                unsafe {
+                    let keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, Some(watch_keyboard), None, 0);
+                    let mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(watch_mouse), None, 0);
+                    INPUT_WATCHING.store(
+                        keyboard.is_ok() && mouse.is_ok(),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    let _ = send.send(keyboard.is_ok() && mouse.is_ok());
+                    match (keyboard, mouse) {
+                        (Ok(keyboard), Ok(mouse)) => {
+                            let mut message = MSG::default();
+                            while GetMessageW(&mut message, None, 0, 0).0 > 0 {}
+                            let _ = UnhookWindowsHookEx(keyboard);
+                            let _ = UnhookWindowsHookEx(mouse);
+                        }
+                        (keyboard, mouse) => {
+                            if let Ok(hook) = keyboard {
+                                let _ = UnhookWindowsHookEx(hook);
+                            }
+                            if let Ok(hook) = mouse {
+                                let _ = UnhookWindowsHookEx(hook);
+                            }
+                        }
+                    }
+                    INPUT_WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            })
+            .is_err()
+        {
+            return false;
+        }
+        receive.recv().unwrap_or(false)
+    });
+    if !ready || !INPUT_WATCHING.load(std::sync::atomic::Ordering::SeqCst) {
+        INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    INPUT_ACTIVITY.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Sends Unicode keyboard input without changing the clipboard.
+pub fn type_text(text: &str) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE;
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        for up in [false, true] {
+            let mut event = key(VIRTUAL_KEY(0), up);
+            // SAFETY: key() initializes the keyboard member of the INPUT union.
+            unsafe {
+                event.Anonymous.ki.wScan = unit;
+                event.Anonymous.ki.dwFlags |= KEYEVENTF_UNICODE;
+            }
+            inputs.push(event);
+        }
+    }
+    inputs.is_empty()
+        || unsafe {
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len()
+        }
+}
+
+/// Deletes `count` preceding characters using Backspace key presses.
+pub fn backspace(count: usize) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_BACK;
+    let inputs: Vec<_> = (0..count)
+        .flat_map(|_| [key(VK_BACK, false), key(VK_BACK, true)])
+        .collect();
+    inputs.is_empty()
+        || unsafe {
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len()
+        }
+}
+
+/// Windows focus is already identified by the window/control handles in Spot.
+pub fn stream_focus() -> Option<u64> {
+    Some(0)
+}
+
+static STREAM_SHORTCUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Excludes only the registered recording shortcut from manual-input cancellation.
+pub fn set_stream_shortcut(shortcut: crate::hotkey::Hotkey) {
+    STREAM_SHORTCUT.store(
+        (u64::from(shortcut.modifiers) << 32) | u64::from(shortcut.key),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+}
+
+fn is_stream_shortcut(key: u32) -> bool {
+    use crate::hotkey;
+    let shortcut = STREAM_SHORTCUT.load(std::sync::atomic::Ordering::SeqCst);
+    if key == 0 || key != shortcut as u32 {
+        return false;
+    }
+    let modifiers = if held(VK_MENU) { hotkey::ALT } else { 0 }
+        | if held(VK_CONTROL) { hotkey::CONTROL } else { 0 }
+        | if held(VK_SHIFT) { hotkey::SHIFT } else { 0 }
+        | if held(VK_LWIN) || held(VK_RWIN) {
+            hotkey::SUPER
+        } else {
+            0
+        };
+    modifiers == (shortcut >> 32) as u32
+}
