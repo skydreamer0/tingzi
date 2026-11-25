@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 mod denoise;
 mod segments;
@@ -83,40 +83,13 @@ impl SegmentAudio {
         self.samples.lock().unwrap().len()
     }
 
-    pub fn noise_suppression(&self) -> bool {
-        self.noise_suppression
-    }
-
     pub fn stream_rate(&self) -> usize {
-        if self.noise_suppression { TARGET_RATE as usize } else { self.rate as usize }
+        self.rate as usize
     }
 
-    pub fn stream_len(&self) -> usize {
-        (self.len() as u64 * self.stream_rate() as u64 / u64::from(self.rate)) as usize
-    }
-
-    pub fn source_position(&self, stream_position: usize) -> usize {
-        (stream_position as u64 * u64::from(self.rate) / self.stream_rate() as u64) as usize
-    }
-
-    /// The range is in stream samples, measured from the start of capture.
+    /// Stream and fallback boundaries both use native mono sample positions.
     pub fn pcm(&self, range: std::ops::Range<usize>) -> Vec<i16> {
-        if range.is_empty() {
-            return Vec::new();
-        }
-        let samples = if self.noise_suppression {
-            // Start on a shared sample boundary so fractional phases carry across packets.
-            let period = (TARGET_RATE / gcd(self.rate, TARGET_RATE)) as usize;
-            let skip = range.start % period;
-            let start = self.source_position(range.start - skip);
-            let end = (range.end as u64 * u64::from(self.rate))
-                .div_ceil(u64::from(TARGET_RATE)) as usize;
-            let source = self.samples.lock().unwrap()[start..end].to_vec();
-            let resampled = resample(&source, self.rate);
-            denoise::suppress(&resampled[skip..skip + range.len()])
-        } else {
-            self.samples.lock().unwrap()[range].to_vec()
-        };
+        let samples = self.samples.lock().unwrap()[range].to_vec();
         samples.into_iter()
             .map(|s| (s.clamp(-1.0, 1.0) * 32767.0).round() as i16).collect()
     }
@@ -179,7 +152,7 @@ pub type SegmentListener = (u64, Box<dyn Fn(SegmentEvent, &SegmentAudio) + Send>
 
 pub enum SentenceSource {
     Local(SegmentListener),
-    Stream(Box<dyn FnOnce(SegmentAudio, mpsc::Receiver<()>) + Send>),
+    Stream(Sender<u32>, Box<dyn FnOnce(SegmentAudio, mpsc::Receiver<()>, Instant) + Send>),
 }
 
 impl Recorder {
@@ -187,7 +160,7 @@ impl Recorder {
     /// and fails when that microphone cannot be used: the microphone test checks this one only.
     /// `level` receives the peak of each buffer, from 0 to 1.
     pub fn start(microphone: Option<String>, level: impl Fn(f32) + Send + 'static) -> Result<Self, String> {
-        Self::start_capture(move || open(microphone.as_deref(), level).map(|opened| (opened, None)), false, None, || {})
+        Self::start_capture(move || open(microphone.as_deref(), level, None).map(|opened| (opened, None)), false, None, || {})
     }
 
     /// Starts a dictation. When the chosen microphone is unplugged or cannot be opened, the Windows
@@ -200,7 +173,11 @@ impl Recorder {
         segments: Option<SentenceSource>,
         on_failure: impl FnOnce() + Send + 'static,
     ) -> Result<Self, String> {
-        Self::start_capture(move || open_or_default(microphone.as_deref(), level), noise_suppression, segments, on_failure)
+        let rate = match &segments {
+            Some(SentenceSource::Stream(rate, _)) => Some(rate.clone()),
+            _ => None,
+        };
+        Self::start_capture(move || open_or_default(microphone.as_deref(), level, rate.as_ref()), noise_suppression, segments, on_failure)
     }
 
     /// What the user is told when the chosen microphone gave way to the default.
@@ -226,7 +203,7 @@ impl Recorder {
         let (ready, started) = mpsc::channel();
         let worker = thread::spawn(move || -> Result<FinishedCapture, String> {
             // The stream is not Send, so the thread that opens it also owns and closes it.
-            let (Opened { stream, samples, info, failed }, substitute) = match open() {
+            let (Opened { stream, samples, info, failed, began }, substitute) = match open() {
                 Ok(parts) => parts,
                 Err(reason) => {
                     let _ = ready.send(Err(reason.clone()));
@@ -241,9 +218,9 @@ impl Recorder {
                 Some(SentenceSource::Local((recording_id, notify))) => Some(
                     SegmentReader::new(rate, recording_id, Box::new(move |event| notify(event, &audio)))
                 ),
-                Some(SentenceSource::Stream(process)) => {
+                Some(SentenceSource::Stream(_, process)) => {
                     let (finish, ending) = mpsc::channel();
-                    remote = Some((finish, thread::spawn(move || process(audio, ending))));
+                    remote = Some((finish, thread::spawn(move || process(audio, ending, began))));
                     None
                 }
                 None => None,
@@ -386,6 +363,7 @@ fn encode_recording(samples: &[f32], rate: u32, failed: bool, noise_suppression:
 }
 
 struct Opened<Stream = cpal::Stream> {
+    began: Instant,
     stream: Stream,
     samples: Arc<Mutex<Vec<f32>>>,
     info: CaptureInfo,
@@ -397,19 +375,19 @@ pub fn microphones() -> Vec<String> {
     cpal::default_host().input_devices().map(|devices| devices.filter_map(|device| device.name().ok()).collect()).unwrap_or_default()
 }
 
-fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
+fn open(microphone: Option<&str>, level: impl Fn(f32) + Send + 'static, rate: Option<&Sender<u32>>) -> Result<Opened, String> {
     let host = cpal::default_host();
     let device = match microphone {
         Some(name) => find(&host, name).ok_or_else(|| missing(name))?,
         None => host.default_input_device().ok_or("找不到麥克風")?,
     };
-    open_device(&device, level)
+    open_device(&device, level, rate)
 }
 
 /// Opens the chosen microphone, or the system default when the chosen one is not there or will not open.
-fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync + 'static) -> Result<(Opened, Option<String>), String> {
+fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync + 'static, rate: Option<&Sender<u32>>) -> Result<(Opened, Option<String>), String> {
     let Some(name) = microphone else {
-        return open(None, level).map(|opened| (opened, None));
+        return open(None, level, rate).map(|opened| (opened, None));
     };
     let level = Arc::new(level);
     let host = cpal::default_host();
@@ -417,9 +395,9 @@ fn open_or_default(microphone: Option<&str>, level: impl Fn(f32) + Send + Sync +
     let default = host.default_input_device();
     chosen_or_default(
         name,
-        || find(&host, name).ok_or_else(|| missing(name)).and_then(|device| open_device(&device, move |peak| (*shared)(peak))),
+        || find(&host, name).ok_or_else(|| missing(name)).and_then(|device| open_device(&device, move |peak| (*shared)(peak), rate)),
         default.as_ref().and_then(|device| device.name().ok()),
-        || default.as_ref().ok_or_else(String::new).and_then(|device| open_device(device, move |peak| (*level)(peak))),
+        || default.as_ref().ok_or_else(String::new).and_then(|device| open_device(device, move |peak| (*level)(peak), rate)),
     )
 }
 
@@ -459,7 +437,7 @@ pub fn low_rate_note(rate: u32) -> Option<String> {
     })
 }
 
-fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> Result<Opened, String> {
+fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static, rate: Option<&Sender<u32>>) -> Result<Opened, String> {
     let config = device.default_input_config().map_err(|_| "無法讀取麥克風格式")?;
     let info = CaptureInfo {
         name: device.name().unwrap_or_else(|_| "未知".into()),
@@ -467,6 +445,7 @@ fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> R
         channels: config.channels(),
         format: config.sample_format(),
     };
+    if let Some(rate) = rate { let _ = rate.send(info.rate); }
     let channels = usize::from(info.channels.max(1));
     let samples = Arc::new(Mutex::new(Vec::<f32>::new()));
     let sink = samples.clone();
@@ -507,8 +486,9 @@ fn open_device(device: &cpal::Device, level: impl Fn(f32) + Send + 'static) -> R
         _ => return Err("不支援這支麥克風的取樣格式".into()),
     }
     .map_err(|_| format!("無法開啟麥克風，請確認 {} 的麥克風權限", crate::sys::SYSTEM))?;
+    let began = Instant::now();
     stream.play().map_err(|_| "無法開始錄音")?;
-    Ok(Opened { stream, samples, info, failed })
+    Ok(Opened { stream, samples, info, failed, began })
 }
 
 fn capture_mono(samples: &mut Vec<f32>, frames: impl Iterator<Item = f32>, channels: usize, limit: usize) -> f32 {
@@ -803,6 +783,7 @@ mod tests {
 
     fn test_input<Stream>(stream: Stream, samples: Arc<Mutex<Vec<f32>>>, rate: u32) -> Opened<Stream> {
         Opened {
+            began: Instant::now(),
             stream,
             samples,
             info: CaptureInfo { name: "測試麥克風".into(), rate, channels: 2, format: cpal::SampleFormat::I16 },

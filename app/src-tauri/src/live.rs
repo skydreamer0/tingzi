@@ -20,8 +20,6 @@ pub struct Tail {
     pending: bool,
     final_only: bool,
     retracting: bool,
-    last_update: Option<Duration>,
-    last_guard: Option<Duration>,
     pub updates: usize,
     pub deleted: usize,
     pub first_key: Option<Duration>,
@@ -153,7 +151,6 @@ impl Typing {
         }
         self.tail.confirmed = Some(waiting);
         self.tail.draft.clear();
-        self.tail.last_update = None;
         self.tail.final_only = false;
         self.tail.pending = true;
     }
@@ -163,27 +160,15 @@ impl Typing {
         self.tail.retracting = true;
         self.tail.draft.clear();
         self.tail.final_only = false;
-        self.tail.last_update = None;
         self.tail.pending = !self.tail.shown.is_empty() || self.tail.confirmed.is_some();
     }
 
-    /// False means a modifier or the throttle is holding a pending edit.
+    /// False means a held modifier requires a timed retry.
     pub fn flush(&mut self, now: Duration, keys: &mut impl Keys) -> bool {
-        if self.away { return true; }
-        // The socket polls every 10 ms. Idle focus checks may query another process.
-        if !self.tail.pending && self.tail.last_guard.is_some_and(|last|
-            now.saturating_sub(last) < Duration::from_millis(100)) { return true; }
-        self.tail.last_guard = Some(now);
-        match keys.state() {
-            KeyState::Gone => { self.leave(); return true; }
-            KeyState::Held => return !self.tail.pending,
-            KeyState::Ready => {}
-        }
+        if self.away || !self.tail.pending { return true; }
         let tail = &mut self.tail;
-        if !tail.pending { return true; }
         let final_pending = tail.confirmed.is_some();
-        if !final_pending && (tail.final_only || tail.last_update.is_some_and(|last|
-            now.saturating_sub(last) < Duration::from_millis(250))) { return false; }
+        if !final_pending && tail.final_only { return true; }
 
         let mut desired = tail.confirmed.clone().unwrap_or_default();
         let confirmed_bytes = desired.len();
@@ -191,9 +176,14 @@ impl Typing {
         let (erase, write) = difference(&tail.shown, &desired);
         if !final_pending && erase > 20 && !tail.retracting {
             tail.final_only = true;
-            return false;
+            return true;
         }
         if erase > 0 {
+            match keys.state() {
+                KeyState::Gone => { self.leave(); return true; }
+                KeyState::Held => return false,
+                KeyState::Ready => {}
+            }
             if !keys.erase(erase) { self.leave(); return true; }
             tail.deleted += erase;
             tail.shown.truncate(desired.len() - write.len());
@@ -209,7 +199,6 @@ impl Typing {
         }
         if !tail.retracting && (erase > 0 || !write.is_empty()) && (!final_pending || !tail.draft.is_empty()) {
             tail.updates += 1;
-            tail.last_update = Some(now);
         }
         tail.shown = desired[confirmed_bytes..].to_owned();
         tail.pending = false;
@@ -261,7 +250,7 @@ mod tests {
     }
 
     #[test]
-    fn segments_coalesce_and_large_deletions_wait_until_final() {
+    fn segments_update_immediately_and_large_deletions_wait_until_final() {
         let mut t = Typing::default();
         let mut k = Keyboard::default();
         let ms = Duration::from_millis;
@@ -278,9 +267,9 @@ mod tests {
         t.flush(ms(800), &mut k);
         t.stream_final("ABC", 100);
         t.flush(ms(810), &mut k);
-        assert_eq!(k.strokes, ["A", &"A".repeat(21), "back 21", "BC"]);
+        assert_eq!(k.strokes, ["A", "B", "back 1", &"A".repeat(21), "back 21", "BC"]);
         assert_eq!((t.typed(), t.heard_to()), ("ABC", 100));
-        assert_eq!((t.tail.updates, t.tail.deleted, t.tail.first_key), (2, 21, Some(ms(50))));
+        assert_eq!((t.tail.updates, t.tail.deleted, t.tail.first_key), (3, 22, Some(ms(50))));
     }
 
     #[test]
@@ -312,9 +301,9 @@ mod tests {
         t.segment(&long);
         t.flush(Duration::ZERO, &mut k);
         t.segment("A");
-        t.flush(Duration::from_millis(250), &mut k);
+        t.flush(Duration::ZERO, &mut k);
         t.segment("A");
-        t.flush(Duration::from_millis(500), &mut k);
+        t.flush(Duration::ZERO, &mut k);
         t.stream_final("A", 1);
         t.flush(Duration::from_millis(510), &mut k);
         assert_eq!(k.strokes, [long.as_str(), "back 20"]);

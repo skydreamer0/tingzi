@@ -343,50 +343,72 @@ fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<st
     }))
 }
 
+fn stream_text_worker(app: &AppHandle, run: u64, requests: &streaming_asr::Requests,
+                      live: Option<&Live>, updates: &dictation_stream::Updates, cancelled: &dyn Fn() -> bool) {
+    use dictation_stream::Update;
+    let mut sentences = Vec::<String>::new();
+    let mut retry = false;
+    let mut max_segment = Duration::ZERO;
+    loop {
+        let update = updates.next(retry);
+        if matches!(update, Some(Update::Finish)) { break; }
+        retry = false;
+        if cancelled() { continue; }
+        if let Some(live) = live {
+            let began = Instant::now();
+            let mut typing = live.typing.lock().unwrap();
+            if typing.ended() || cancelled() { continue; }
+            match &update {
+                Some(Update::Segment(text)) => {
+                    typing.segment(&correct(&clean(text, &live.prefs), &live.prefs));
+                }
+                Some(Update::Final(_, text, end)) => {
+                    typing.stream_final(&correct(&clean(text, &live.prefs), &live.prefs), *end);
+                }
+                Some(Update::Freeze) => typing.freeze_segment(),
+                None => {}
+                Some(Update::Finish) => unreachable!(),
+            }
+            retry = !live.flush(&mut typing, cancelled);
+            if matches!(update, Some(Update::Segment(_))) {
+                max_segment = max_segment.max(began.elapsed());
+            }
+        }
+        if let Some(Update::Final(index, text, _)) = update {
+            if index < sentences.len() { sentences[index] = text; } else { sentences.push(text); }
+            requests.replace_sentences(&sentences, |q| show_sentences(app, run, q, live));
+        }
+    }
+    if let Some(live) = live {
+        live.finish_stream(cancelled);
+        report::note(format!("串流打字：中途修訂處理最長 {} ms", max_segment.as_millis()));
+    } else {
+        report_stream_typing(&live::Tail::default());
+    }
+}
+
 fn stream_source(app: &AppHandle, run: u64, requests: Arc<streaming_asr::Requests>,
-                 live: Option<Arc<Live>>, local: audio::SegmentListener) -> audio::SentenceSource {
+                 live: Option<Arc<Live>>, local: audio::SegmentListener,
+                 connection: dictation_stream::Preconnection) -> audio::SentenceSource {
     let app = app.clone();
-    audio::SentenceSource::Stream(Box::new(move |audio, ending| {
+    let recording = connection.began;
+    audio::SentenceSource::Stream(connection.rate.clone(), Box::new(move |audio, ending, capture| {
         let cancelled = || app.state::<Session>().run.load(Ordering::SeqCst) != run;
         let stopped = || !matches!(ending.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
         if let Some(live) = &live {
-            // The capture worker starts this source after the microphone stream starts playing.
-            if let Some(keys) = &live.stream_keys { keys.started.get_or_init(Instant::now); }
+            if let Some(keys) = &live.stream_keys { keys.started.get_or_init(|| capture); }
             *live.audio.lock().unwrap() = Some(audio.clone());
         }
-        let mut sentences = Vec::<String>::new();
-        dictation_stream::run(&audio, live.is_some(), stopped, cancelled, |index, text, end| {
-            if cancelled() { return; }
-            if let Some(live) = &live {
-                let mut typing = live.typing.lock().unwrap();
-                if typing.ended() || cancelled() { return; }
-                let piece = correct(&clean(text, &live.prefs), &live.prefs);
-                typing.stream_final(&piece, end);
-                live.flush(&mut typing, &cancelled);
-            }
-            if index < sentences.len() { sentences[index] = text.to_owned(); } else { sentences.push(text.to_owned()); }
-            requests.replace_sentences(&sentences, |q| show_sentences(&app, run, q, live.as_deref()));
-        }, |segment| {
-            if let Some(live) = &live {
-                let mut typing = live.typing.lock().unwrap();
-                if typing.ended() || cancelled() { return; }
-                match segment {
-                    dictation_stream::Preview::Segment(text) => {
-                        typing.segment(&correct(&clean(text, &live.prefs), &live.prefs));
-                    }
-                    dictation_stream::Preview::Freeze => typing.freeze_segment(),
-                    dictation_stream::Preview::Tick => {}
-                }
-                live.flush(&mut typing, &cancelled);
-            }
-        }, |progress| {
-            if let Some(live) = &live { live.finish_stream(&cancelled); }
-            audio.resume_local(progress.end, progress.count, local, stopped, cancelled);
+        let updates = dictation_stream::Updates::default();
+        let recovery = std::thread::scope(|scope| {
+            scope.spawn(|| stream_text_worker(&app, run, &requests, live.as_deref(), &updates, &cancelled));
+            let recovery = dictation_stream::run(&audio, live.is_some(), stopped, cancelled,
+                &updates, recording, capture, |rate| connection.finish(rate));
+            updates.push(dictation_stream::Update::Finish);
+            recovery
         });
-        if let Some(live) = &live {
-            live.finish_stream(&cancelled);
-        } else {
-            report_stream_typing(&live::Tail::default());
+        if let Some(progress) = recovery {
+            audio.resume_local(progress.end, progress.count, local, stopped, cancelled);
         }
     }))
 }
@@ -905,6 +927,7 @@ fn toggle(app: &AppHandle) {
     let spot = deliver::begin();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
     let segments: Option<audio::SentenceSource> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
+        let connection = prefs.dictation_stream.then(dictation_stream::preconnect);
         change_streaming_preview(app, |preview| {
             preview.begin(run);
             true
@@ -927,8 +950,8 @@ fn toggle(app: &AppHandle) {
         });
         *session.live.lock().unwrap() = live.clone();
         let local = segment_listener(app, run, prefs.clone(), requests.clone(), live.clone());
-        Some(if prefs.dictation_stream {
-            stream_source(app, run, requests, live, local)
+        Some(if let Some(connection) = connection {
+            stream_source(app, run, requests, live, local, connection)
         } else {
             audio::SentenceSource::Local(local)
         })

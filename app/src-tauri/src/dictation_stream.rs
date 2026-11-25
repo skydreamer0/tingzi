@@ -2,6 +2,8 @@
 use crate::{audio::SegmentAudio, report};
 use base64::{engine::general_purpose::STANDARD, Engine as _};
 use serde_json::{json, Value};
+use std::collections::VecDeque;
+use std::sync::{mpsc, Condvar, Mutex};
 use std::io::{BufRead, BufReader, ErrorKind, Read, Write};
 use std::net::{TcpStream, ToSocketAddrs};
 use std::time::{Duration, Instant};
@@ -209,12 +211,50 @@ struct Piece {
     previewed_revision: Option<u64>,
 }
 
-/// A complete replacement draft, an ordinary polling tick, or a blocked utterance.
 #[derive(Debug, PartialEq, Eq)]
-pub enum Preview<'a> {
+enum Preview<'a> {
     Segment(&'a str),
-    Tick,
     Freeze,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Update {
+    Segment(String),
+    Freeze,
+    Final(usize, String, usize),
+    Finish,
+}
+
+/// Session publishes drafts only for the first unfinished utterance. A final or
+/// freeze supersedes its queued draft, and each final remains an ordered barrier.
+#[derive(Default)]
+pub struct Updates {
+    items: Mutex<VecDeque<Update>>,
+    ready: Condvar,
+}
+
+impl Updates {
+    pub fn push(&self, update: Update) {
+        let mut items = self.items.lock().unwrap();
+        if !matches!(update, Update::Finish)
+            && matches!(items.back(), Some(Update::Segment(_) | Update::Freeze))
+        {
+            items.pop_back();
+        }
+        items.push_back(update);
+        self.ready.notify_one();
+    }
+
+    /// None is a modifier retry. Idle workers wait indefinitely.
+    pub fn next(&self, retry: bool) -> Option<Update> {
+        let items = self.items.lock().unwrap();
+        let mut items = if retry {
+            self.ready.wait_timeout_while(items, Duration::from_millis(20), |q| q.is_empty()).unwrap().0
+        } else {
+            self.ready.wait_while(items, |q| q.is_empty()).unwrap()
+        };
+        items.pop_front()
+    }
 }
 
 struct Session {
@@ -222,6 +262,7 @@ struct Session {
     live: bool,
     stop_request: Option<String>,
     started: bool,
+    frozen: bool,
     rotate: bool,
     closed: bool,
     pieces: Vec<Piece>,
@@ -233,6 +274,7 @@ impl Session {
             rate,
             live,
             started: false,
+            frozen: false,
             rotate: false,
             closed: false,
             stop_request: None,
@@ -366,28 +408,29 @@ impl Session {
         }
     }
 
-    fn preview(&mut self) -> Preview<'_> {
+    fn preview(&mut self) -> Option<Preview<'_>> {
         let prefix = self
             .pieces
             .iter()
             .take_while(|p| p.revision.is_some())
             .count();
         if prefix == self.pieces.len() {
-            return Preview::Tick;
+            return None;
         }
         if prefix + 1 != self.pieces.len() {
             // A newer utterance supersedes any pending draft for the earlier gap.
-            return Preview::Freeze;
+            return (!std::mem::replace(&mut self.frozen, true)).then_some(Preview::Freeze);
         }
+        self.frozen = false;
         let piece = &mut self.pieces[prefix];
         let Some(revision) = piece.segment_revision else {
-            return Preview::Tick;
+            return None;
         };
         if piece.previewed_revision == Some(revision) {
-            return Preview::Tick;
+            return None;
         }
         piece.previewed_revision = Some(revision);
-        Preview::Segment(&piece.segment_text)
+        Some(Preview::Segment(&piece.segment_text))
     }
 
     fn rotating(&self, sent: usize) -> bool {
@@ -408,6 +451,7 @@ struct Interim {
 #[derive(Default)]
 struct Trace {
     session: usize,
+    max_queue: Duration,
     delta: Interim,
     segment: Interim,
 }
@@ -457,11 +501,50 @@ impl Trace {
     }
 }
 
-fn describe_start(session: usize, rate: usize, noise_suppression: bool) -> String {
-    format!(
-        "串流事件 #{session}：session.start sample_rate_hz {rate}，降噪{}",
-        if noise_suppression { "開啟" } else { "關閉" }
-    )
+pub(crate) struct Connection {
+    socket: Socket,
+    handshake: Instant,
+    requested: Instant,
+}
+
+fn begin(socket: Socket, handshake: Instant, rate: usize) -> Result<Connection> {
+    let mut socket = socket;
+    send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
+    Ok(Connection { socket, handshake, requested: Instant::now() })
+}
+
+fn open_session(rate: usize) -> Result<Connection> {
+    let socket = connect()?;
+    begin(socket, Instant::now(), rate)
+}
+
+/// One recording attempt owns the handshake even if microphone setup fails.
+pub struct Preconnection {
+    pub rate: mpsc::Sender<u32>,
+    worker: std::thread::JoinHandle<Result<(usize, Connection)>>,
+    pub began: Instant,
+}
+
+impl Preconnection {
+    pub fn finish(self, actual: usize) -> Result<Connection> {
+        let (rate, connection) = self.worker.join().map_err(|_| "串流連線中斷")??;
+        if rate == actual { return Ok(connection); }
+        // The selected input failed to start and its substitute uses another format.
+        drop(connection);
+        open_session(actual)
+    }
+}
+
+pub fn preconnect() -> Preconnection {
+    let began = Instant::now();
+    let (rate, rates) = mpsc::channel::<u32>();
+    let worker = std::thread::spawn(move || {
+        let socket = connect()?;
+        let handshake = Instant::now();
+        let rate = rates.recv().map_err(|_| "錄音已取消")? as usize;
+        Ok((rate, begin(socket, handshake, rate)?))
+    });
+    Preconnection { rate, worker, began }
 }
 
 /// Logs the interim counts when a session ends, however it ends.
@@ -470,6 +553,7 @@ struct TraceLog(Trace);
 impl Drop for TraceLog {
     fn drop(&mut self) {
         report::note(self.0.summary());
+        report::note(format!("串流事件 #{}：音訊排隊最長 {} ms", self.0.session, self.0.max_queue.as_millis()));
     }
 }
 
@@ -500,13 +584,13 @@ fn sessions(
     stopped: &dyn Fn() -> bool,
     cancelled: &dyn Fn() -> bool,
     progress: &mut Progress,
-    emit: &mut impl FnMut(usize, &str, usize),
-    preview: &mut impl FnMut(Preview<'_>),
+    updates: &Updates,
+    recording: Instant,
+    capture: Instant,
     rotations: &mut usize,
-    mut open: impl FnMut() -> Result<Socket>,
+    mut open: impl FnMut() -> Result<Connection>,
 ) -> std::result::Result<(), String> {
     let rate = audio.stream_rate();
-    let recording = Instant::now();
     let mut total = 0;
     let mut first = true;
     let mut session_number = 0;
@@ -515,14 +599,14 @@ fn sessions(
             return Ok(());
         }
         let done = stopped();
-        if total == audio.stream_len() {
+        if !first && total == audio.len() {
             if done {
                 return Ok(());
             }
             std::thread::sleep(Duration::from_millis(10));
             continue;
         }
-        let mut socket = open()?;
+        let Connection { mut socket, handshake, requested: began } = open()?;
         if cancelled() {
             return Ok(());
         }
@@ -532,9 +616,8 @@ fn sessions(
         first = false;
         session_number += 1;
         let mut trace = TraceLog(Trace { session: session_number, ..Trace::default() });
-        send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
-        report::note(describe_start(session_number, rate, audio.noise_suppression()));
-        let began = Instant::now();
+        report::note(format!("串流事件 #{session_number}：握手完成 {} ms，session.start sample_rate_hz {rate}，串流不降噪",
+            handshake.duration_since(recording).as_millis()));
         let mut state = Session::new(rate, live);
         let mut sent = 0;
         let base = progress.count;
@@ -552,18 +635,26 @@ fn sessions(
                 if let Some(line) = trace.0.record(&event, recording.elapsed().as_millis()) {
                     report::note(line);
                 }
+                if !state.started && event["type"] == "session.started" {
+                    report::note(format!("串流事件 #{session_number}：session.started {} ms", recording.elapsed().as_millis()));
+                }
                 if let Some(latency) = state.receive(&event, sent, began.elapsed())? {
                     report::note(format!("串流辨識：停頓至定稿 {} ms", latency.as_millis()));
                 }
             }
             state.publish(|i, text, end| {
-                let boundary = audio.source_position(total + end);
-                emit(base + i, text, boundary);
+                let boundary = total + end;
+                updates.push(Update::Final(base + i, text.into(), boundary));
                 progress.count = progress.count.max(base + i + 1);
                 progress.end = progress.end.max(boundary);
             });
             if live {
-                preview(state.preview());
+                if let Some(change) = state.preview() {
+                    updates.push(match change {
+                        Preview::Segment(text) => Update::Segment(text.into()),
+                        Preview::Freeze => Update::Freeze,
+                    });
+                }
             }
             if state.closed {
                 if closing.is_none() {
@@ -590,21 +681,32 @@ fn sessions(
                 continue;
             }
             let done = stopped();
-            let cursor = total + sent;
-            let available = audio.stream_len() - cursor;
-            let size = packet_size(sent).min(285 * rate - sent);
-            let end_session = state.stop_request.is_some() || state.rotating(sent);
-            if !end_session && available >= size {
-                append(&mut socket, &audio.pcm(cursor..cursor + size))?;
+            // Snapshot once so a fast producer cannot starve incoming socket events.
+            let mut remaining = audio.len() - (total + sent);
+            let limit = 285 * rate;
+            let mut record_delay = |end| {
+                let captured = Duration::from_secs_f64((total + end) as f64 / rate as f64);
+                trace.0.max_queue = trace.0.max_queue.max(capture.elapsed().saturating_sub(captured));
+            };
+            while state.stop_request.is_none() && !state.rotating(sent) {
+                let size = packet_size(sent).min(limit - sent);
+                if remaining < size { break; }
+                if cancelled() { return Ok(()); }
+                append(&mut socket, &audio.pcm(total + sent..total + sent + size))?;
                 sent += size;
-            } else if end_session || done {
-                let tail = if end_session { 0 } else { available };
-                let mut last = audio.pcm(cursor..cursor + tail);
+                remaining -= size;
+                record_delay(sent);
+            }
+            let end_session = state.stop_request.is_some() || state.rotating(sent);
+            if end_session || done {
+                let tail = if end_session { 0 } else { remaining };
+                let mut last = audio.pcm(total + sent..total + sent + tail);
                 last.resize(tail + rate / 4, 0);
                 let mut offset = 0;
                 while offset < last.len() {
                     let end = (offset + packet_size(sent + offset)).min(last.len());
                     append(&mut socket, &last[offset..end])?;
+                    if offset < tail { record_delay(sent + end.min(tail)); }
                     offset = end;
                 }
                 sent += tail;
@@ -636,10 +738,14 @@ pub fn run(
     live: bool,
     stopped: impl Fn() -> bool,
     cancelled: impl Fn() -> bool,
-    mut emit: impl FnMut(usize, &str, usize),
-    mut preview: impl FnMut(Preview<'_>),
-    fallback: impl FnOnce(Progress),
-) {
+    updates: &Updates,
+    recording: Instant,
+    capture: Instant,
+    first: impl FnOnce(usize) -> Result<Connection>,
+) -> Option<Progress> {
+    let rate = audio.stream_rate();
+    let mut first = Some(first);
+    let mut recovery = None;
     let mut rotations = 0;
     report::note("使用 Codex 串流辨識");
     with_fallback(
@@ -650,20 +756,22 @@ pub fn run(
                 &stopped,
                 &cancelled,
                 progress,
-                &mut emit,
-                &mut preview,
+                updates,
+                recording,
+                capture,
                 &mut rotations,
-                connect,
+                || match first.take() { Some(open) => open(rate), None => open_session(rate) },
             )
         },
         |progress, reason| {
             if !cancelled() {
                 report::note(format!("串流退回本機切句與逐句辨識：{reason}"));
-                fallback(progress);
+                recovery = Some(progress);
             }
         },
     );
     report::note(format!("串流辨識結束，換了 {rotations} 次連線"));
+    recovery
 }
 
 #[cfg(test)]
@@ -676,7 +784,7 @@ mod tests {
     };
     use std::cell::RefCell;
     use std::net::TcpListener;
-    use std::sync::{Arc, Mutex};
+    use std::sync::Arc;
     use tungstenite::protocol::Role;
 
     const RATE: usize = 44_100;
@@ -705,8 +813,6 @@ mod tests {
             trace.summary(),
             "串流事件 #1：transcript.delta 0 次，transcript.segment 2 次（900–1500 ms，最後 3 字）"
         );
-        assert_eq!(describe_start(1, 16_000, true), "串流事件 #1：session.start sample_rate_hz 16000，降噪開啟");
-        assert_eq!(describe_start(2, 48_000, false), "串流事件 #2：session.start sample_rate_hz 48000，降噪關閉");
     }
 
     #[test]
@@ -758,7 +864,7 @@ mod tests {
         session
             .receive(&segment("b", 2, "stale"), 0, Duration::ZERO)
             .unwrap();
-        assert_eq!(session.preview(), Preview::Freeze);
+        assert_eq!(session.preview(), Some(Preview::Freeze));
         session
             .receive(
                 &json!({"type":"transcript.final","utterance_id":"a",
@@ -767,16 +873,16 @@ mod tests {
                 Duration::ZERO,
             )
             .unwrap();
-        assert_eq!(session.preview(), Preview::Segment("full preview"));
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), Some(Preview::Segment("full preview")));
+        assert_eq!(session.preview(), None);
         session
             .receive(&segment("b", 3, "duplicate"), 0, Duration::ZERO)
             .unwrap();
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), None);
         session
             .receive(&segment("b", 4, "new complete preview"), 0, Duration::ZERO)
             .unwrap();
-        assert_eq!(session.preview(), Preview::Segment("new complete preview"));
+        assert_eq!(session.preview(), Some(Preview::Segment("new complete preview")));
         session
             .receive(
                 &json!({"type":"speech.started","utterance_id":"c"}),
@@ -787,32 +893,32 @@ mod tests {
         session
             .receive(&segment("b", 5, "old utterance"), 0, Duration::ZERO)
             .unwrap();
-        assert_eq!(session.preview(), Preview::Freeze);
+        assert_eq!(session.preview(), Some(Preview::Freeze));
     }
 
     #[test]
     fn a_new_utterance_freezes_pending_drafts_until_the_preceding_final_arrives() {
         let mut session = Session::new(RATE, true);
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), None);
         session.receive(&json!({"type":"transcript.segment","utterance_id":"a",
             "revision":1,"text":"old draft"}), 100, Duration::ZERO).unwrap();
-        assert_eq!(session.preview(), Preview::Segment("old draft"));
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), Some(Preview::Segment("old draft")));
+        assert_eq!(session.preview(), None);
         session.receive(&json!({"type":"speech.started","utterance_id":"b"}), 150, Duration::ZERO).unwrap();
-        assert_eq!(session.preview(), Preview::Freeze);
-        assert_eq!(session.preview(), Preview::Freeze);
+        assert_eq!(session.preview(), Some(Preview::Freeze));
+        assert_eq!(session.preview(), None);
         session.receive(&json!({"type":"transcript.segment","utterance_id":"b",
             "revision":2,"text":"latest draft"}), 200, Duration::ZERO).unwrap();
-        assert_eq!(session.preview(), Preview::Freeze);
+        assert_eq!(session.preview(), None);
         session.receive(&json!({"type":"transcript.final","utterance_id":"a",
             "revision":1,"text":"old final"}), 250, Duration::ZERO).unwrap();
         session.publish(|_, text, _| assert_eq!(text, "old final"));
-        assert_eq!(session.preview(), Preview::Segment("latest draft"));
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), Some(Preview::Segment("latest draft")));
+        assert_eq!(session.preview(), None);
         session.receive(&json!({"type":"transcript.final","utterance_id":"b",
             "revision":1,"text":"latest final"}), 300, Duration::ZERO).unwrap();
         session.publish(|_, text, _| assert_eq!(text, "latest final"));
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), None);
     }
 
     #[test]
@@ -822,13 +928,13 @@ mod tests {
         session.receive(&json!({"type":"transcript.segment","utterance_id":"a",
             "revision":1,"text":"preview"}), 150, Duration::ZERO).unwrap();
         assert_eq!(session.pieces.len(), 1);
-        assert_eq!(session.preview(), Preview::Segment("preview"));
+        assert_eq!(session.preview(), Some(Preview::Segment("preview")));
         session.receive(&json!({"type":"transcript.final","utterance_id":"a",
             "revision":1,"text":"final"}), 200, Duration::ZERO).unwrap();
         let mut emitted = Vec::new();
         session.publish(|index, text, end| emitted.push((index, text.to_owned(), end)));
         assert_eq!(emitted, [(0, "final".to_owned(), 100)]);
-        assert_eq!(session.preview(), Preview::Tick);
+        assert_eq!(session.preview(), None);
     }
 
     #[test]
@@ -940,14 +1046,6 @@ mod tests {
                 };
                 ws.send(Message::text(next)).unwrap();
             }
-            if ending == Ending::Disconnect {
-                // Each received event allows the client to send another packet.
-                for _ in 0..3 {
-                    let _ = ws.read();
-                }
-                ws.close(None).unwrap();
-                return;
-            }
             let mut audio_bytes = Vec::new();
             loop {
                 let msg = ws.read().unwrap();
@@ -957,6 +1055,10 @@ mod tests {
                 }
                 assert_eq!(e["type"], "audio.append");
                 audio_bytes.extend(STANDARD.decode(e["audio"].as_str().unwrap()).unwrap());
+            }
+            if ending == Ending::Disconnect {
+                // Drop after reading the client's backlog, before the closing acknowledgement.
+                return;
             }
             assert!(audio_bytes.ends_with(&vec![0; stream_rate / 4 * 2]));
             if ending == Ending::MissingFinal {
@@ -985,6 +1087,68 @@ mod tests {
     }
 
     #[test]
+    fn queued_revisions_coalesce_without_overwriting_finals() {
+        let updates = Updates::default();
+        updates.push(Update::Segment("old".into()));
+        updates.push(Update::Segment("latest".into()));
+        assert_eq!(updates.next(true), Some(Update::Segment("latest".into())));
+        for index in 0..2 {
+            updates.push(Update::Segment("pending".into()));
+            updates.push(Update::Final(index, index.to_string(), index + 1));
+        }
+        updates.push(Update::Segment("next".into()));
+        for index in 0..2 {
+            assert_eq!(updates.next(true), Some(Update::Final(index, index.to_string(), index + 1)));
+        }
+        assert_eq!(updates.next(true), Some(Update::Segment("next".into())));
+    }
+
+    #[test]
+    fn buffered_native_samples_arrive_in_order_before_typing_consumes_any_updates() {
+        let samples: Vec<_> = (0..5333).map(|i| (i as f32 - 2500.0) / 8192.0).collect();
+        let expected: Vec<_> = samples.iter().map(|x| (x * 32767.0).round() as i16).collect();
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(Duration::from_millis(10))).unwrap();
+        let peer = listener.accept().unwrap().0;
+        let (buffered, captured) = mpsc::channel();
+        let server = std::thread::spawn(move || {
+            peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+            let mut ws = WebSocket::from_raw_socket(peer, Role::Server, None);
+            let config: Value = serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(config["config"]["sample_rate_hz"], RATE);
+            captured.recv_timeout(Duration::from_secs(5)).unwrap();
+            ws.send(Message::text(r#"{"type":"session.started"}"#)).unwrap();
+            let mut received = Vec::new();
+            loop {
+                let packet: Value = serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+                if packet["type"] == "session.close" { break; }
+                let bytes = STANDARD.decode(packet["audio"].as_str().unwrap()).unwrap();
+                let size = packet_size(received.len()).min(expected.len() + RATE / 4 - received.len());
+                assert_eq!(bytes.len(), size * 2);
+                received.extend(bytes.chunks_exact(2).map(|b| i16::from_le_bytes([b[0], b[1]])));
+            }
+            assert_eq!(&received[..expected.len()], expected);
+            assert_eq!(&received[expected.len()..], vec![0; RATE / 4]);
+            for event in [
+                json!({"type":"transcript.segment","utterance_id":"a","revision":1,"text":"draft"}),
+                json!({"type":"transcript.final","utterance_id":"a","revision":2,"text":"final"}),
+                json!({"type":"session.updated","session":{"status":"closed"}})
+            ] { ws.send(Message::text(event.to_string())).unwrap(); }
+        });
+        let socket = WebSocket::from_raw_socket(MaybeTlsStream::Plain(Route::Plain(client)), Role::Client, None);
+        let mut connection = Some(begin(socket, Instant::now(), RATE).unwrap());
+        let audio = SegmentAudio::synthetic(samples, RATE as u32, true);
+        buffered.send(()).unwrap();
+        let updates = Updates::default();
+        let mut progress = Progress { count: 0, end: 0 };
+        sessions(&audio, true, &|| true, &|| false, &mut progress, &updates,
+            Instant::now(), Instant::now(), &mut 0, || Ok(connection.take().unwrap())).unwrap();
+        server.join().unwrap();
+        assert_eq!(updates.next(true), Some(Update::Final(0, "final".into(), 5333)));
+    }
+
+    #[test]
     fn server_stop_drains_finals_then_resumes_local_without_a_second_session() {
         assert_local_recovery(Ending::StopRequest, false);
     }
@@ -995,7 +1159,7 @@ mod tests {
     }
 
     #[test]
-    fn denoised_stream_sends_16_khz_and_recovers_at_the_native_boundary() {
+    fn noise_setting_preserves_native_stream_rate_and_recovery_boundary() {
         assert_local_recovery(Ending::MissingFinal, true);
     }
 
@@ -1014,6 +1178,7 @@ mod tests {
         let requests = Arc::new(Requests::default());
         let typing = Arc::new(Mutex::new(Typing::default()));
         let server = RefCell::new(None);
+        let updates = Updates::default();
         let mut rotations = 0;
         with_fallback(
             |progress| {
@@ -1023,30 +1188,32 @@ mod tests {
                     &|| ending != Ending::StopRequest,
                     &|| false,
                     progress,
-                    &mut |index, text, end| {
-                        assert_eq!(index, 0);
-                        assert_eq!(end, RATE / 2);
-                        let mut t = typing.lock().unwrap();
-                        t.add(text, end);
-                        let next = t.next().unwrap();
-                        t.note_typed(&next);
-                        requests.replace_sentences(&[text.to_owned()], |_| {});
-                    },
-                    &mut |_| {},
+                    &updates,
+                    Instant::now(),
+                    Instant::now(),
                     &mut rotations,
                     || {
                         assert!(server.borrow().is_none(), "unexpected second session");
                         if !interrupted {
                             return Err("連線失敗");
                         }
-                        let expected_rate = if noise_suppression { 16_000 } else { RATE };
+                        let expected_rate = RATE;
                         let (socket, worker) = peer_after_first(ending, expected_rate);
                         assert!(server.replace(Some(worker)).is_none());
-                        Ok(socket)
+                        begin(socket, Instant::now(), expected_rate)
                     },
                 )
             },
             |progress, reason| {
+                if interrupted {
+                    let Some(Update::Final(index, text, end)) = updates.next(true) else { panic!("missing final") };
+                    assert_eq!((index, end), (0, RATE / 2));
+                    let mut t = typing.lock().unwrap();
+                    t.add(&text, end);
+                    let next = t.next().unwrap();
+                    t.note_typed(&next);
+                    requests.replace_sentences(&[text], |_| {});
+                }
                 if ending == Ending::StopRequest {
                     assert_eq!(reason, "stop_requested limit");
                 }
