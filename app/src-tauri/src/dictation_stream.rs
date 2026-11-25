@@ -351,6 +351,84 @@ impl Session {
     }
 }
 
+/// Interim text counts for one event type: how many, first and last time, last length.
+#[derive(Default)]
+struct Interim {
+    count: usize,
+    first_ms: u128,
+    last_ms: u128,
+    chars: usize,
+}
+
+/// What one session received, for the log only: event times and lengths, never text, audio or tokens.
+#[derive(Default)]
+struct Trace {
+    session: usize,
+    delta: Interim,
+    segment: Interim,
+}
+
+impl Trace {
+    /// One log line for a speech or final event; interim events are only counted.
+    fn record(&mut self, e: &Value, ms: u128) -> Option<String> {
+        let id = e["utterance_id"].as_str().unwrap_or("-");
+        let chars = e["text"].as_str().map_or(0, |t| t.trim().chars().count());
+        let interim = match e["type"].as_str()? {
+            "speech.started" => return Some(format!("串流事件 #{}：{ms} ms speech.started {id}", self.session)),
+            "speech.stopped" => return Some(format!("串流事件 #{}：{ms} ms speech.stopped {id}", self.session)),
+            "transcript.final" => {
+                let revision = e["revision"].as_u64().map_or("-".to_owned(), |r| r.to_string());
+                return Some(format!(
+                    "串流事件 #{}：{ms} ms transcript.final {id} 修訂 {revision}，{chars} 字",
+                    self.session
+                ));
+            }
+            "transcript.delta" => &mut self.delta,
+            "transcript.segment" => &mut self.segment,
+            _ => return None,
+        };
+        if interim.count == 0 {
+            interim.first_ms = ms;
+        }
+        interim.count += 1;
+        interim.last_ms = ms;
+        interim.chars = chars;
+        None
+    }
+
+    fn summary(&self) -> String {
+        let part = |name: &str, i: &Interim| {
+            if i.count == 0 {
+                format!("{name} 0 次")
+            } else {
+                format!("{name} {} 次（{}–{} ms，最後 {} 字）", i.count, i.first_ms, i.last_ms, i.chars)
+            }
+        };
+        format!(
+            "串流事件 #{}：{}，{}",
+            self.session,
+            part("transcript.delta", &self.delta),
+            part("transcript.segment", &self.segment)
+        )
+    }
+}
+
+fn describe_start(session: usize, rate: usize, noise_suppression: bool) -> String {
+    format!(
+        "串流事件 #{session}：session.start sample_rate_hz {rate}，降噪{}",
+        if noise_suppression { "開啟" } else { "關閉" }
+    )
+}
+
+/// Logs the interim counts when a session ends, however it ends.
+struct TraceLog(Trace);
+
+impl Drop for TraceLog {
+    fn drop(&mut self) {
+        report::note(self.0.summary());
+    }
+}
+
 fn parse_event(text: &str) -> Option<Value> {
     serde_json::from_str(text).ok()
 }
@@ -383,8 +461,10 @@ fn sessions(
     mut open: impl FnMut() -> Result<Socket>,
 ) -> std::result::Result<(), String> {
     let rate = audio.stream_rate();
+    let recording = Instant::now();
     let mut total = 0;
     let mut first = true;
+    let mut session_number = 0;
     loop {
         if cancelled() {
             return Ok(());
@@ -405,7 +485,10 @@ fn sessions(
             *rotations += 1;
         }
         first = false;
+        session_number += 1;
+        let mut trace = TraceLog(Trace { session: session_number, ..Trace::default() });
         send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
+        report::note(describe_start(session_number, rate, audio.noise_suppression()));
         let began = Instant::now();
         let mut state = Session::new(rate);
         let mut sent = 0;
@@ -421,6 +504,9 @@ fn sessions(
                 read(&mut socket)?
             };
             if let Some(event) = event {
+                if let Some(line) = trace.0.record(&event, recording.elapsed().as_millis()) {
+                    report::note(line);
+                }
                 if let Some(latency) = state.receive(&event, sent, began.elapsed())? {
                     report::note(format!("串流辨識：停頓至定稿 {} ms", latency.as_millis()));
                 }
@@ -559,6 +645,34 @@ mod tests {
     use tungstenite::protocol::Role;
 
     const RATE: usize = 44_100;
+
+    #[test]
+    fn the_trace_logs_event_times_and_lengths_without_text() {
+        let mut trace = Trace { session: 1, ..Trace::default() };
+        assert_eq!(
+            trace.record(&json!({"type":"speech.started","utterance_id":"u1"}), 120),
+            Some("串流事件 #1：120 ms speech.started u1".into())
+        );
+        assert_eq!(
+            trace.record(&json!({"type":"speech.stopped","utterance_id":"u1"}), 2400),
+            Some("串流事件 #1：2400 ms speech.stopped u1".into())
+        );
+        for (ms, text) in [(900, "你"), (1500, "你好嗎")] {
+            assert_eq!(trace.record(&json!({"type":"transcript.segment","utterance_id":"u1","text":text}), ms), None);
+        }
+        let line = trace
+            .record(&json!({"type":"transcript.final","utterance_id":"u1","revision":2,"text":" 你好嗎？ "}), 3000)
+            .unwrap();
+        assert_eq!(line, "串流事件 #1：3000 ms transcript.final u1 修訂 2，4 字");
+        assert!(!line.contains("你好"));
+        assert_eq!(trace.record(&json!({"type":"audio.frame_processed"}), 3100), None);
+        assert_eq!(
+            trace.summary(),
+            "串流事件 #1：transcript.delta 0 次，transcript.segment 2 次（900–1500 ms，最後 3 字）"
+        );
+        assert_eq!(describe_start(1, 16_000, true), "串流事件 #1：session.start sample_rate_hz 16000，降噪開啟");
+        assert_eq!(describe_start(2, 48_000, false), "串流事件 #2：session.start sample_rate_hz 48000，降噪關閉");
+    }
 
     #[test]
     fn streaming_reads_the_same_sign_in_as_per_sentence_uploads() {

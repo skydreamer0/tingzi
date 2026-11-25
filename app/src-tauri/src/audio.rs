@@ -83,6 +83,10 @@ impl SegmentAudio {
         self.samples.lock().unwrap().len()
     }
 
+    pub fn noise_suppression(&self) -> bool {
+        self.noise_suppression
+    }
+
     pub fn stream_rate(&self) -> usize {
         if self.noise_suppression { TARGET_RATE as usize } else { self.rate as usize }
     }
