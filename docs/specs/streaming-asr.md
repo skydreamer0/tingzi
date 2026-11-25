@@ -23,6 +23,10 @@
 
 在設定的「語音」頁提供「邊講邊出字」開關，並說明「錄音中會逐句經 Codex 傳到 ChatGPT 辨識」。新安裝與缺少此欄位的舊設定一律預設關閉。只有選用 Codex 時可以操作開關；切換到其他引擎時停用控制項，提示「使用 Codex 時可開啟」。
 
+選擇「Codex 線上辨識」時，設定頁顯示「Codex 登入狀態」。Rust 在本機讀取逐句與串流辨識共用的 Codex 登入檔（`CODEX_HOME` 下的 `auth.json`，預設在使用者資料夾的 `.codex` 下），依登入方式、access token 和 JWT 的 `exp` 判斷狀態。缺少 `exp` 的 JWT 視為已登入。缺檔、檔案無法解析或缺少 token 時顯示「未登入」。設定頁只收到狀態和顯示文字。聽字不在這個流程中連網、記錄憑證或更新登入。
+
+未登入、登入過期或登入方式不支援時，顯示「登入 Codex」。按鈕依序找 Codex 桌面版、`PATH` 內的 Codex CLI。找到 CLI 時用新終端機視窗執行 `codex login`。兩者都找不到時，用預設瀏覽器開啟 [OpenAI 官方下載頁](https://chatgpt.com/download/)。設定頁回到前景時重新檢查，按下按鈕後每兩秒檢查一次，最多 30 秒，已登入時提早停止。尚未登入時，兩個開關依原有條件操作，旁邊顯示「需要先登入 Codex」。錄音沿用既有的錯誤處理與本機辨識流程。
+
 Rust 在一般口述開始時記下引擎與開關，本次錄音沿用這份設定。開關關閉、使用其他引擎、匯入 WAV 或語音改寫選取文字時，沿用原流程。預設由本機切句，每句都呼叫現有的 `recognise::run(Engine::Codex, …)`，由 `codex-asr` 對一個完整 WAV 做一次辨識。此設計不使用 OpenAI Realtime API 或 Codex 的 WebRTC 內部介面。[辨識路徑](../../app/src-tauri/src/recognise.rs)
 
 ## 串流辨識（實驗）

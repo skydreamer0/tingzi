@@ -115,6 +115,8 @@ Traditional Chinese voice and Zhuyin input for Windows.
 > [!WARNING]
 > 「Codex 線上辨識」透過第三方的非官方元件 [codex-asr](https://crates.io/crates/codex-asr)，沿用這台電腦上 Codex 的 ChatGPT 登入來辨識錄音。這不是 OpenAI 提供或支援的功能，OpenAI 調整服務時可能隨時無法使用。需要穩定運作時，請改用本機 Whisper 或自選線上服務。
 
+在設定的「語音」頁選擇「Codex 線上辨識」後，可查看「Codex 登入狀態」。需要登入時，按「登入 Codex」並使用 ChatGPT 帳號。
+
 開啟 AI 潤稿時，送出的是辨識出的**文字**（不是錄音），連同自訂詞和你寫的補充說明；沒開啟時不會送出。金鑰存在 Windows 認證管理員，不寫進設定檔。辨識紀錄、從改字學到的詞和本機學習資料都只存在自己的電腦，可以在「隱私」頁清除。
 
 「關於」頁的自動更新開啟時，聽字每天最多向 GitHub 查詢一次有沒有新版，只送出目前的版本號；關閉後不會自動連線。

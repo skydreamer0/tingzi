@@ -16,9 +16,10 @@ use objc2_foundation::NSString;
 use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -247,6 +248,74 @@ pub fn processes_on_screen() -> Vec<u32> {
 /// None: on macOS the Codex recogniser reads the installed version itself.
 pub fn codex_version() -> Option<String> {
     None
+}
+
+pub fn open_codex_desktop() -> Option<bool> {
+    // The ChatGPT desktop app retains Codex's bundle identity:
+    // https://help.openai.com/en/articles/20001535-managing-chatgpt-desktop-browser-policies-with-mdm
+    const BUNDLE_ID: &str = "com.openai.codex";
+    let installed = autoreleasepool(|_| {
+        NSWorkspace::sharedWorkspace()
+            .URLForApplicationWithBundleIdentifier(&NSString::from_str(BUNDLE_ID))
+            .is_some()
+    });
+    if !installed {
+        return None;
+    }
+    Some(Command::new("/usr/bin/open")
+        .args(["-b", BUNDLE_ID])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success()))
+}
+
+pub fn codex_cli() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|folder| folder.join("codex"))
+        .find(|path| path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0))
+        .and_then(|path| std::path::absolute(path).ok())
+}
+
+pub fn open_codex_cli(cli: &Path) -> bool {
+    // Terminal opens a .command file in a new window without Apple Events permission.
+    let stamp = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos();
+    let path = std::env::temp_dir().join(format!("tingzi-codex-login-{}-{stamp}.command", std::process::id()));
+    let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&path) else {
+        return false;
+    };
+    let written = (|| -> std::io::Result<()> {
+        file.write_all(b"#!/bin/sh\n/bin/rm -f -- \"$0\"\n")?;
+        for name in ["PATH", "CODEX_HOME"] {
+            if let Some(value) = std::env::var_os(name) {
+                write!(file, "export {name}=")?;
+                write_shell_word(&mut file, &value)?;
+                writeln!(file)?;
+            }
+        }
+        file.write_all(b"exec ")?;
+        write_shell_word(&mut file, cli.as_os_str())?;
+        file.write_all(b" login\n")
+    })();
+    drop(file);
+    let opened = written.is_ok() && Command::new("/usr/bin/open")
+        .args(["-a", "Terminal"])
+        .arg(&path)
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !opened {
+        let _ = std::fs::remove_file(path);
+    }
+    opened
+}
+
+fn write_shell_word(file: &mut std::fs::File, word: &std::ffi::OsStr) -> std::io::Result<()> {
+    file.write_all(b"'")?;
+    for byte in word.as_bytes() {
+        file.write_all(if *byte == b'\'' { b"'\\''" } else { std::slice::from_ref(byte) })?;
+    }
+    file.write_all(b"'")
 }
 
 /// Whether the keyboard is in the Codex desktop app. Telling its message box from its other

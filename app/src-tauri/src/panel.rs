@@ -552,6 +552,23 @@ pub fn running_programs() -> Vec<String> {
     apps::running()
 }
 
+#[tauri::command]
+pub async fn codex_sign_in_status() -> Result<(&'static str, bool), &'static str> {
+    tauri::async_runtime::spawn_blocking(|| {
+        let status = crate::recognise::codex_sign_in();
+        (status.message(), status == crate::recognise::CodexSignIn::SignedIn)
+    })
+    .await
+    .map_err(|_| "無法讀取 Codex 登入狀態")
+}
+
+#[tauri::command]
+pub async fn open_codex_sign_in() -> Result<(), &'static str> {
+    tauri::async_runtime::spawn_blocking(crate::codex::open_sign_in)
+        .await
+        .map_err(|_| "無法開啟 Codex 登入")?
+}
+
 /// Opens one of the fixed places the settings page links to. Returns false when it could not be opened.
 #[tauri::command(async)]
 pub fn open_target(which: String) -> bool {

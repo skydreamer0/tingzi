@@ -2,6 +2,7 @@
 //! or through a transcription service the user chose and holds a key for.
 
 use crate::settings::{Engine, Settings};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use codex_asr::{CodexAsrClient, CodexAsrError, CodexAuth};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -131,6 +132,61 @@ fn auth_file_in(codex_home: Option<std::ffi::OsString>, home: PathBuf) -> PathBu
 /// The Codex sign-in that both per-sentence uploads and streaming dictation use.
 pub(crate) fn codex_auth() -> Result<CodexAuth, String> {
     CodexAuth::from_auth_file(auth_file()).map_err(explain)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CodexSignIn {
+    SignedIn,
+    Expired,
+    SignedOut,
+    Unsupported,
+}
+
+impl CodexSignIn {
+    pub(crate) fn message(&self) -> &'static str {
+        match self {
+            Self::SignedIn => "已登入",
+            Self::Expired => "登入已過期，請開啟 Codex 一次讓登入更新",
+            Self::SignedOut => "未登入",
+            Self::Unsupported => "登入方式不支援，請以 ChatGPT 帳號登入 Codex",
+        }
+    }
+}
+
+pub(crate) fn codex_sign_in() -> CodexSignIn {
+    let now = SystemTime::UNIX_EPOCH.elapsed().unwrap_or_default().as_secs();
+    sign_in_at(CodexAuth::from_auth_file(auth_file()), now)
+}
+
+fn sign_in_at(auth: Result<CodexAuth, CodexAsrError>, now: u64) -> CodexSignIn {
+    let auth = match auth {
+        Ok(auth) => auth,
+        Err(CodexAsrError::UnsupportedAuthMode { .. }) => return CodexSignIn::Unsupported,
+        Err(_) => return CodexSignIn::SignedOut,
+    };
+    let Some(payload) = jwt_payload(&auth.access_token) else {
+        return CodexSignIn::SignedOut;
+    };
+    match payload.get("exp") {
+        Some(exp) => match exp.as_f64() {
+            Some(exp) if exp <= now as f64 => CodexSignIn::Expired,
+            Some(_) => CodexSignIn::SignedIn,
+            None => CodexSignIn::SignedOut,
+        },
+        None => CodexSignIn::SignedIn,
+    }
+}
+
+// The payload is read only to show an expiry hint. Codex and the service validate the login.
+fn jwt_payload(token: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut parts = token.trim().split('.');
+    let header = parts.next()?;
+    let payload = parts.next()?;
+    let signature = parts.next()?;
+    if header.is_empty() || signature.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
 }
 
 pub const CODEX_LANGUAGE: Option<&str> = Some("zh");
@@ -446,6 +502,49 @@ mod tests {
         let home = PathBuf::from("profile");
         assert_eq!(auth_file_in(None, home.clone()), home.join(".codex").join("auth.json"));
         assert_eq!(auth_file_in(Some("elsewhere".into()), home), PathBuf::from("elsewhere").join("auth.json"));
+    }
+
+    #[test]
+    fn codex_sign_in_uses_local_auth_without_exposing_credentials() {
+        let file = std::env::temp_dir().join(format!("tingzi-auth-test-{}-{:?}.json", std::process::id(), std::thread::current().id()));
+        let check = || sign_in_at(CodexAuth::from_auth_file(&file), 100);
+        assert_eq!(check(), CodexSignIn::SignedOut);
+
+        for (raw, expected) in [
+            ("{broken", CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"chatgpt","tokens":{}}"#, CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"chatgpt","tokens":{"access_token":"   "}}"#, CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"apikey"}"#, CodexSignIn::Unsupported),
+            (r#"{"authMode":"fake-private-mode"}"#, CodexSignIn::Unsupported),
+        ] {
+            std::fs::write(&file, raw).unwrap();
+            let status = check();
+            assert_eq!(status, expected);
+            assert!(!status.message().contains("fake-private-mode"));
+        }
+        for (exp, expected) in [
+            (Some(99), CodexSignIn::Expired),
+            (Some(100), CodexSignIn::Expired),
+            (Some(101), CodexSignIn::SignedIn),
+            (None, CodexSignIn::SignedIn),
+        ] {
+            let mut claims = serde_json::json!({"email": "example@example.invalid"});
+            if let Some(exp) = exp {
+                claims["exp"] = exp.into();
+            }
+            let token = format!("eyJhbGciOiJIUzI1NiJ9.{}.ZmFrZQ", URL_SAFE_NO_PAD.encode(claims.to_string()));
+            let raw = serde_json::json!({
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": token, "account_id": "fake-account"}
+            });
+            std::fs::write(&file, raw.to_string()).unwrap();
+            let status = check();
+            assert_eq!(status, expected);
+            for private in [token.as_str(), "fake-account", "example@example.invalid"] {
+                assert!(!status.message().contains(private));
+            }
+        }
+        std::fs::remove_file(file).unwrap();
     }
 
     #[test]

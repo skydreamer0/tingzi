@@ -116,6 +116,8 @@ Choose a recognition method on the 語音 (Voice) settings page. Where your audi
 > [!WARNING]
 > Codex online recognition uses [codex-asr](https://crates.io/crates/codex-asr), an unofficial third-party component that reuses the ChatGPT sign-in of Codex on this computer to transcribe your audio. It is not provided or supported by OpenAI and may stop working at any time if OpenAI changes the service. If you need it to work reliably, use local Whisper or your own online service instead.
 
+Select Codex online recognition on the Voice page in Settings to see your Codex sign-in status. If prompted, select Sign in to Codex and use your ChatGPT account.
+
 With AI refinement on, Tingzi sends the recognized **text** (not the audio), with your custom words and any notes you wrote. With it off, nothing is sent. API keys are stored in Windows Credential Manager, not in the settings file. History, learned words and local learning data stay on your computer and can be cleared on the 隱私 (Privacy) page.
 
 While automatic updates are on (關於 About page), Tingzi asks GitHub at most once a day whether a new version exists, sending only the current version number. With them off, it doesn't connect on its own.

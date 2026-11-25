@@ -37,6 +37,7 @@ function openPage(tab) {
     byId(other.getAttribute('aria-controls')).hidden = !chosen;
   }
   document.querySelector('.pages').scrollTop = 0;
+  if (tab.id === 'tab-voice') refreshCodexSignIn();
 }
 tabs.forEach((tab, index) => {
   tab.addEventListener('click', () => openPage(tab));
@@ -178,11 +179,64 @@ function collect(engineFromPage) {
 const engineNotes = {
   local: () => local.ready ? '在這台電腦辨識，錄音不會離開電腦。' : '這台電腦還沒有模型，請在下面下載一個；下載後錄音不會離開電腦。',
   api: () => '錄音會傳到你填的服務，費用依該服務計算；網址是 localhost 時錄音留在這台電腦。',
-  codex: () => '錄音會經第三方的 codex-asr 傳到 ChatGPT，需要這台電腦上有效的 Codex 登入。',
+  codex: () => '錄音會經第三方元件傳到 ChatGPT，需要先在這台電腦用 ChatGPT 帳號登入 Codex。',
 };
+const codexSignInButton = byId('codex-sign-in');
+let codexSignedIn = null;
+let checkingCodexSignIn = false;
+let codexSignInTimer;
+
+function showCodexSignIn() {
+  const selected = byId('engine').value === 'codex';
+  byId('codex-sign-in-row').hidden = !selected;
+  codexSignInButton.hidden = codexSignedIn !== false;
+  const needsSignIn = selected && codexSignedIn === false;
+  for (const id of ['streaming-asr', 'dictation-stream']) {
+    byId(id + '-sign-in').hidden = !needsSignIn;
+    byId(id).setAttribute('aria-describedby', id + '-note' + (needsSignIn ? ' ' + id + '-sign-in' : ''));
+  }
+}
+
+async function refreshCodexSignIn() {
+  if (byId('engine').value !== 'codex' || checkingCodexSignIn) return;
+  checkingCodexSignIn = true;
+  const [message, signedIn] = await invoke('codex_sign_in_status')
+    .catch(() => ['無法讀取 Codex 登入狀態', false]);
+  checkingCodexSignIn = false;
+  const label = byId('codex-sign-in-status');
+  if (label.textContent !== message) label.textContent = message;
+  codexSignedIn = signedIn;
+  showCodexSignIn();
+  if (signedIn) clearInterval(codexSignInTimer);
+}
+
+window.addEventListener('focus', refreshCodexSignIn);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshCodexSignIn();
+});
+codexSignInButton.addEventListener('click', async () => {
+  codexSignInButton.disabled = true;
+  clearInterval(codexSignInTimer);
+  const until = Date.now() + 30_000;
+  codexSignInTimer = setInterval(() => {
+    if (Date.now() >= until) clearInterval(codexSignInTimer);
+    refreshCodexSignIn();
+  }, 2_000);
+  try {
+    await invoke('open_codex_sign_in');
+    refreshCodexSignIn();
+  } catch (reason) {
+    say(String(reason));
+  } finally {
+    codexSignInButton.disabled = false;
+  }
+});
+
 function showEngine() {
   const engine = byId('engine').value;
   byId('engine-note').textContent = engineNotes[engine]();
+  showCodexSignIn();
+  refreshCodexSignIn();
   const streaming = byId('streaming-asr');
   streaming.disabled = engine !== 'codex';
   const available = !streaming.disabled && streaming.checked;

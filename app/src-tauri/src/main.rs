@@ -180,6 +180,28 @@ struct StreamTarget {
     started: std::sync::OnceLock<Instant>,
     activity: u64,
     focus: Option<u64>,
+    /// Set once the first time typing stops, so the reason is logged only once.
+    stopped: std::sync::OnceLock<()>,
+}
+
+/// Why streaming stopped sending keys to the field recording started from.
+#[derive(Clone, Copy)]
+enum StreamStop {
+    Window,
+    NoField,
+    Field,
+    UserInput,
+}
+
+fn describe_stream_stop(stop: StreamStop, at: Option<Duration>) -> String {
+    let reason = match stop {
+        StreamStop::Window => "前景視窗不是錄音開始時的視窗",
+        StreamStop::NoField => "錄音開始時沒有取得輸入欄位",
+        StreamStop::Field => "輸入欄位已改變",
+        StreamStop::UserInput => "偵測到使用者按鍵或點擊",
+    };
+    let at = at.map_or_else(|| "打字開始前".into(), |at| format!("{} ms", at.as_millis()));
+    format!("串流打字停止送鍵：{reason}（{at}）")
 }
 
 struct StreamKeyboard<'a> {
@@ -193,11 +215,22 @@ impl live::Keys for StreamKeyboard<'_> {
         if (self.cancelled)() {
             return live::KeyState::Held;
         }
-        if !deliver::at_target(self.target)
-            || self.target_keys.focus.is_none()
-            || sys::stream_focus() != self.target_keys.focus
-            || sys::input_activity() != self.target_keys.activity
-        {
+        let stop = if !deliver::at_target(self.target) {
+            Some(StreamStop::Window)
+        } else if self.target_keys.focus.is_none() {
+            Some(StreamStop::NoField)
+        } else if sys::stream_focus() != self.target_keys.focus {
+            Some(StreamStop::Field)
+        } else if sys::input_activity() != self.target_keys.activity {
+            Some(StreamStop::UserInput)
+        } else {
+            None
+        };
+        if let Some(stop) = stop {
+            let at = self.target_keys.started.get().map(Instant::elapsed);
+            if self.target_keys.stopped.set(()).is_ok() {
+                report::note(describe_stream_stop(stop, at));
+            }
             live::KeyState::Gone
         } else if sys::modifier_held() {
             live::KeyState::Held
@@ -944,7 +977,7 @@ fn toggle(app: &AppHandle) {
                 // once before capturing its field identity; subsequent checks never move focus.
                 if Spot::current().ours() { sys::bring_forward(&spot); }
                 sys::set_stream_shortcut(recording_keys(&prefs));
-                StreamTarget { started: Default::default(), activity: sys::input_activity(), focus: sys::stream_focus() }
+                StreamTarget { started: Default::default(), activity: sys::input_activity(), focus: sys::stream_focus(), stopped: Default::default() }
             });
             Arc::new(Live { target: spot, stream_keys, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
         });
@@ -1579,6 +1612,8 @@ fn main() {
             panel::learned_words,
             panel::forget_learned_word,
             panel::open_target,
+            panel::codex_sign_in_status,
+            panel::open_codex_sign_in,
             panel::voice_learned,
             panel::forget_voice_learned,
             fetch::local_state,
@@ -1636,6 +1671,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reason_typing_stopped_is_logged_with_its_time() {
+        assert_eq!(
+            describe_stream_stop(StreamStop::UserInput, Some(Duration::from_millis(3965))),
+            "串流打字停止送鍵：偵測到使用者按鍵或點擊（3965 ms）"
+        );
+        assert_eq!(
+            describe_stream_stop(StreamStop::Window, None),
+            "串流打字停止送鍵：前景視窗不是錄音開始時的視窗（打字開始前）"
+        );
+        for stop in [StreamStop::NoField, StreamStop::Field] {
+            assert!(describe_stream_stop(stop, Some(Duration::ZERO)).ends_with("（0 ms）"));
+        }
+    }
 
     #[test]
     fn shortcut_follows_saved_preferences() {

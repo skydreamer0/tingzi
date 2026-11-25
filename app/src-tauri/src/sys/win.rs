@@ -254,6 +254,45 @@ pub fn codex_version() -> Option<String> {
     names.iter().filter_map(|name| crate::codex::package_version(name)).max().map(crate::codex::version_text)
 }
 
+/// Opens the installed Codex desktop app. None means its package is absent.
+pub fn open_codex_desktop() -> Option<bool> {
+    codex_version()?;
+    // Read the registered application ID from the package manifest rather than guessing its suffix.
+    let output = quiet(&mut powershell())
+        .args(["-NoProfile", "-NonInteractive", "-Command",
+            "$pkg = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1; (Get-AppxPackageManifest $pkg).Package.Applications.Application.Id"])
+        .output()
+        .ok();
+    let opened = output.filter(|output| output.status.success()).is_some_and(|output| {
+        String::from_utf8_lossy(&output.stdout).lines().map(str::trim).filter(|id| !id.is_empty())
+            .any(|id| open(&format!(r"shell:AppsFolder\{CODEX_PACKAGE}!{id}")))
+    });
+    Some(opened)
+}
+
+fn powershell() -> Command {
+    Command::new(system_file(r"WindowsPowerShell\v1.0\powershell.exe"))
+}
+
+pub fn codex_cli() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .flat_map(|folder| ["codex.exe", "codex.cmd", "codex.bat", "codex.ps1"].map(|name| folder.join(name)))
+        .find(|path| path.is_file())
+        .and_then(|path| std::path::absolute(path).ok())
+}
+
+pub fn open_codex_cli(cli: &Path) -> bool {
+    const NEW_CONSOLE: u32 = 0x0000_0010;
+    powershell()
+        .creation_flags(NEW_CONSOLE)
+        .env("TINGZI_CODEX_CLI", cli)
+        .args(["-NoProfile", "-NoExit", "-Command", "& $env:TINGZI_CODEX_CLI login"])
+        .spawn()
+        .is_ok()
+}
+
 /// Whether `process` is the Codex desktop app, by the package Windows installed it from.
 fn is_codex(process: u32) -> bool {
     // SAFETY: the handle is closed before returning and the buffer length is passed with the buffer.
