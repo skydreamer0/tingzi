@@ -119,9 +119,18 @@ fn drop_echo(heard: String, hint: &str) -> String {
 /// The upload limit the service accepts for one request.
 const LARGEST_UPLOAD: usize = 50 * 1024 * 1024;
 
-fn auth_file() -> PathBuf {
-    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::sys::home().join(".codex"));
-    home.join("auth.json")
+/// Where Codex keeps its sign-in. `codex_asr::default_auth_file` reads `HOME`, which Windows does not set.
+pub(crate) fn auth_file() -> PathBuf {
+    auth_file_in(std::env::var_os("CODEX_HOME"), crate::sys::home())
+}
+
+fn auth_file_in(codex_home: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
+    codex_home.map(PathBuf::from).unwrap_or_else(|| home.join(".codex")).join("auth.json")
+}
+
+/// The Codex sign-in that both per-sentence uploads and streaming dictation use.
+pub(crate) fn codex_auth() -> Result<CodexAuth, String> {
+    CodexAuth::from_auth_file(auth_file()).map_err(explain)
 }
 
 pub const CODEX_LANGUAGE: Option<&str> = Some("zh");
@@ -160,7 +169,7 @@ fn client() -> Result<CodexAsrClient, String> {
             return Ok(ready.clone());
         }
     }
-    let auth = CodexAuth::from_auth_file(&file).map_err(explain)?;
+    let auth = codex_auth()?;
     let mut builder = CodexAsrClient::builder(auth);
     if let Some(name) = &named {
         builder = builder.user_agent(name.clone());
@@ -431,6 +440,13 @@ fn run_whisper(parts: &Parts, folder: &Path, wav: &[u8], cancelled: &dyn Fn() ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_codex_sign_in_is_found_without_home_set() {
+        let home = PathBuf::from("profile");
+        assert_eq!(auth_file_in(None, home.clone()), home.join(".codex").join("auth.json"));
+        assert_eq!(auth_file_in(Some("elsewhere".into()), home), PathBuf::from("elsewhere").join("auth.json"));
+    }
 
     #[test]
     fn one_proxy_for_every_protocol_is_used() {

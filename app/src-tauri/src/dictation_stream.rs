@@ -107,7 +107,10 @@ fn transport() -> Result<(Route, TcpStream)> {
 }
 
 fn connect() -> Result<Socket> {
-    let auth = codex_asr::CodexAuth::from_codex_home().map_err(|_| "無法讀取 Codex 登入")?;
+    let auth = crate::recognise::codex_auth().map_err(|reason| {
+        report::note(format!("串流無法讀取 Codex 登入：{reason}"));
+        "無法讀取 Codex 登入"
+    })?;
     let mut request = URL.into_client_request().map_err(|_| "串流網址無效")?;
     let headers = request.headers_mut();
     let agent = crate::codex::user_agent().unwrap_or_else(|| {
@@ -556,6 +559,14 @@ mod tests {
     use tungstenite::protocol::Role;
 
     const RATE: usize = 44_100;
+
+    #[test]
+    fn streaming_reads_the_same_sign_in_as_per_sentence_uploads() {
+        let source = include_str!("dictation_stream.rs");
+        assert!(source.contains(concat!("recognise::", "codex_auth()")));
+        assert!(!source.contains(concat!("from_codex", "_home")));
+        assert!(!source.contains(concat!("default_auth", "_file")));
+    }
 
     #[test]
     fn revisions_keep_order_and_live_typing_waits_for_a_boundary() {
