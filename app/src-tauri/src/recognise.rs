@@ -119,6 +119,10 @@ fn drop_echo(heard: String, hint: &str) -> String {
 /// The upload limit the service accepts for one request.
 const LARGEST_UPLOAD: usize = 50 * 1024 * 1024;
 
+pub fn codex_sign_in_present() -> bool {
+    auth_file().is_file()
+}
+
 fn auth_file() -> PathBuf {
     let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::sys::home().join(".codex"));
     home.join("auth.json")
