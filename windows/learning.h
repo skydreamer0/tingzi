@@ -58,6 +58,7 @@ inline Text localLearningDir(){
 inline constexpr int wordConfirmations=2;
 class Learning {
     sqlite3* db=nullptr;
+    std::filesystem::path dbPath;
     static void bind(sqlite3_stmt* s,int i,const Text& t){
         sqlite3_bind_text16(s,i,t.data(),(int)(t.size()*sizeof(wchar_t)),SQLITE_TRANSIENT);
     }
@@ -66,7 +67,8 @@ public:
     explicit Learning(const Text& dir=localLearningDir(),bool create=false){
         if(dir.empty())return;
         std::error_code error;
-        auto path=std::filesystem::path(dir)/L"preferences.sqlite3";
+        dbPath=std::filesystem::path(dir)/L"preferences.sqlite3";
+        const auto& path=dbPath;
         if(!create && !std::filesystem::is_regular_file(path,error))return;
         if(create)std::filesystem::create_directories(dir,error);
         if(error || sqlite3_open16(path.c_str(),&db)!=SQLITE_OK)return;
@@ -260,7 +262,34 @@ public:
         }
         sqlite3_finalize(s);return list;
     }
-    bool clear(){bool ok=exec("DELETE FROM choices");exec("DELETE FROM picked");exec("DELETE FROM words");exec("DELETE FROM sentences");exec("DELETE FROM recent_symbols");exec("DELETE FROM fixes");exec("DELETE FROM dictations");return ok;}
+    bool clear(){
+        // No existing profile is already clear; inaccessible or non-file paths are not.
+        if(!db && !dbPath.empty()){
+            std::error_code ec;
+            auto st=std::filesystem::symlink_status(dbPath,ec);
+            if(st.type()==std::filesystem::file_type::not_found &&
+               (!ec || ec==std::errc::no_such_file_or_directory))return true;
+        }
+        if(!exec("BEGIN IMMEDIATE"))return false;
+        bool ok=true;
+        // Older databases may not have all lazily-created learning tables.
+        for(const char* table:{"choices","picked","words","sentences","recent_symbols","fixes","dictations"}){
+            sqlite3_stmt* query=nullptr;
+            int rc=sqlite3_prepare_v2(db,"SELECT type FROM main.sqlite_master WHERE name=?1 COLLATE NOCASE AND type IN ('table','view')",-1,&query,nullptr);
+            if(rc==SQLITE_OK)rc=sqlite3_bind_text(query,1,table,-1,SQLITE_STATIC);
+            if(rc==SQLITE_OK)rc=sqlite3_step(query);
+            const bool isTable=rc==SQLITE_ROW && sqlite3_column_text(query,0) &&
+                std::string(reinterpret_cast<const char*>(sqlite3_column_text(query,0)))=="table";
+            sqlite3_finalize(query);
+            const auto name=std::string(table);
+            if(rc==SQLITE_DONE && name!="choices" && name!="picked")continue;
+            if(!isTable || !exec(("DELETE FROM main."+name).c_str())){
+                ok=false;break;
+            }
+        }
+        if(ok && exec("COMMIT"))return true;
+        exec("ROLLBACK");return false;
+    }
     // Reads the file exportTo writes; rows already present are replaced.
     bool importFrom(const std::filesystem::path& path){
         std::ifstream in(path,std::ios::binary);

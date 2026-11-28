@@ -458,8 +458,31 @@ fn owner(app: &AppHandle) -> isize {
 /// Imports, exports or clears the learning data. None means the user closed the dialog.
 #[tauri::command(async)]
 pub fn learning_data(app: AppHandle, action: String) -> Option<bool> {
+    legacy_learning_result(learning_data_result(app, &action))
+}
+
+#[cfg(test)]
+#[test]
+fn learning_data_legacy_result_preserves_boolean_contract() {
+    assert_eq!(legacy_learning_result(None), None);
+    assert_eq!(legacy_learning_result(Some("done")), Some(true));
+    for status in ["failed", "typing_clear_failed", "dictation_clear_partial"] {
+        assert_eq!(legacy_learning_result(Some(status)), Some(false));
+    }
+}
+
+fn legacy_learning_result(result: Option<&str>) -> Option<bool> {
+    result.map(|status| status == "done")
+}
+
+#[tauri::command(async)]
+pub fn learning_clear_v1(app: AppHandle) -> Option<&'static str> {
+    learning_data_result(app, "clear")
+}
+
+fn learning_data_result(app: AppHandle, action: &str) -> Option<&'static str> {
     let owner = owner(&app);
-    let done = match action.as_str() {
+    let done = match action {
         "import" => {
             let file = dialogs::pick(owner, Kind::Table, None)?;
             learning_tool(&["import".as_ref(), file.as_os_str()])
@@ -474,13 +497,15 @@ pub fn learning_data(app: AppHandle, action: String) -> Option<bool> {
             if !dialogs::confirm(owner, "會刪除所有記住的改字習慣，無法復原。要繼續嗎？") {
                 return None;
             }
-            // What dictation learned from those habits goes with them.
-            let cleared = crate::learn::clear();
-            learning_tool(&["clear".as_ref(), "--confirm".as_ref()]).map(|(done, said)| (done && cleared, said))
+            if !learning_tool(&["clear".as_ref(), "--confirm".as_ref()]).is_some_and(|(done, _)| done) {
+                return Some("typing_clear_failed");
+            }
+            // This is a separate store; failure cannot undo the completed Windows SQLite clear.
+            return Some(if crate::learn::clear() { "done" } else { "dictation_clear_partial" });
         }
         _ => None,
     };
-    Some(done.is_some_and(|(done, _)| done))
+    Some(if done.is_some_and(|(done, _)| done) { "done" } else { "failed" })
 }
 
 #[tauri::command(async)]

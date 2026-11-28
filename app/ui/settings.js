@@ -587,8 +587,18 @@ const dataNotes = {
 };
 for (const action of Object.keys(dataNotes)) {
   byId('learning-' + action).addEventListener('click', async () => {
-    const done = await invoke('learning_data', { action });
-    if (done !== null) byId('learning-data-note').textContent = dataNotes[action][done ? 0 : 1];
+    const done = action === 'clear'
+      ? await invoke('learning_clear_v1')
+      : await invoke('learning_data', { action });
+    if (done === null) return;
+    const note = byId('learning-data-note');
+    if (done === 'typing_clear_failed') {
+      note.textContent = '無法清除輸入學習資料，未清除語音學習資料。';
+    } else if (done === 'dictation_clear_partial') {
+      note.textContent = '輸入學習資料已清除，但語音學習資料未完全清除。';
+    } else {
+      note.textContent = dataNotes[action][done === 'done' || done === true ? 0 : 1];
+    }
   });
 }
 

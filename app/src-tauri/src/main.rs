@@ -1382,6 +1382,7 @@ fn main() {
             panel::learning_state,
             panel::set_learning,
             panel::learning_data,
+            panel::learning_clear_v1,
             panel::words_load,
             panel::words_save,
             panel::word_readings,

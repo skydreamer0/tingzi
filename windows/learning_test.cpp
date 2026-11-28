@@ -7,6 +7,7 @@ int wmain(int argc,wchar_t** argv){
     if(!dict.load(Text(argv[1])+L"\\") || std::filesystem::exists(argv[2]))return 2;
     auto check=[](bool value,const char* msg){std::cout<<(value?"PASS ":"FAIL ")<<msg<<"\n";if(!value)std::exit(1);};
     auto type=[](Input& input,const std::string& keys){for(unsigned char k:keys)input.press(k);};
+    check(Learning(argv[2]).clear(),"a previously absent profile is already cleared");
     {Learning store(argv[2],true);check(!store.enabled() && store.enable(true),"explicit opt-in");}
     for(int run=0;run<4;++run){
         Learning store(argv[2]);
@@ -69,6 +70,31 @@ int wmain(int argc,wchar_t** argv){
         check(reopened.recentDictations().empty(),"no dictations until the voice window writes them");
         auto file=std::filesystem::path(argv[2])/L"export.tsv";
         size_t before=reopened.ranks().size();
+        sqlite3* fault=nullptr;
+        auto dbPath=std::filesystem::path(argv[2])/L"preferences.sqlite3";
+        check(sqlite3_open16(dbPath.c_str(),&fault)==SQLITE_OK,"open synthetic learning DB for fault injection");
+        check(sqlite3_exec(fault,"CREATE TRIGGER fail_symbol_clear BEFORE DELETE ON recent_symbols "
+              "BEGIN SELECT RAISE(ABORT,'synthetic delete failure'); END",nullptr,nullptr,nullptr)==SQLITE_OK,
+              "inject a symbol-specific delete failure");
+        check(before>0 && !reopened.clear(),"clear reports a symbol-specific delete failure");
+        check(reopened.ranks().size()==before && reopened.recentSymbols()==expected,
+              "failed clear rolls back earlier deletes and preserves symbol history");
+        check(sqlite3_exec(fault,"DROP TRIGGER fail_symbol_clear",nullptr,nullptr,nullptr)==SQLITE_OK,
+              "remove the synthetic fault before normal clear");
+        auto schema=[&](const char* sql,const char* msg){
+            check(sqlite3_exec(fault,sql,nullptr,nullptr,nullptr)==SQLITE_OK,msg);
+        };
+        schema("ALTER TABLE recent_symbols RENAME TO saved_symbols; "
+               "CREATE VIEW recent_symbols AS SELECT mark FROM saved_symbols","install an incompatible optional object");
+        check(!reopened.clear() && reopened.ranks().size()==before,
+              "clear rejects a same-name view and rolls back earlier deletes");
+        schema("DROP VIEW recent_symbols; ALTER TABLE saved_symbols RENAME TO recent_symbols","restore symbol table");
+        check(reopened.recentSymbols()==expected,"view rejection preserves the underlying symbols in order");
+        schema("ALTER TABLE choices RENAME TO saved_choices","hide the required choices table");
+        check(!reopened.clear() && reopened.recentSymbols()==expected,"clear rejects a missing required choices table");
+        schema("ALTER TABLE saved_choices RENAME TO choices","restore required choices table");
+        check(reopened.ranks().size()==before,"schema failures retain earlier learning");
+        sqlite3_close(fault);
         check(before>0 && reopened.exportTo(file) && reopened.clear() && reopened.ranks().empty() && reopened.learnedWords().empty() && reopened.sentences().empty() && reopened.fixes().empty(),"clear removes choices, words, sentences and fixes");
         check(reopened.importFrom(file) && reopened.ranks().size()==before,"import restores exported choices");
         check(Learning(argv[2]).recentSymbols().empty(),"clear removes all saved symbols");
