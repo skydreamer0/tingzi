@@ -129,7 +129,10 @@ impl Typing {
     pub fn segment(&mut self, piece: &str) {
         self.tail.retracting = false;
         let confirmed = self.text();
-        self.pieces.push(piece.trim().to_owned());
+        // A preview can insert a pause comma before text already on screen.
+        // Wait for the sentence final before rewriting the target for that punctuation.
+        // ASCII commas (e.g. 1,200) and the final transcript are unchanged.
+        self.pieces.push(piece.trim().replace('，', ""));
         let display = self.text();
         self.pieces.pop();
         self.tail.draft = display.strip_prefix(&confirmed).unwrap_or_default().to_owned();
@@ -312,6 +315,40 @@ mod tests {
         t.flush(Duration::from_millis(510), &mut k);
         assert_eq!(k.strokes, [long.as_str(), "back 20"]);
         assert_eq!(t.tail.updates, 2);
+    }
+
+    #[test]
+    fn late_pause_commas_do_not_retype_a_fast_preview() {
+        let mut t = Typing::default();
+        let mut k = Keyboard::default();
+        t.segment("第一段ASR");
+        t.flush(Duration::ZERO, &mut k);
+        t.segment("第一段，ASR");
+        t.flush(Duration::ZERO, &mut k);
+        t.segment("第一段，ASR是1.25和1,200");
+        t.flush(Duration::ZERO, &mut k);
+        assert_eq!(k.strokes, ["第一段ASR", "是1.25和1,200"]);
+        assert_eq!(t.tail.deleted, 0);
+
+        // A final is an ordered barrier, even if the next preview is already queued.
+        t.stream_final("第一段，ASR是1.25和1,200。", 100);
+        t.segment("下一段");
+        t.flush(Duration::ZERO, &mut k);
+        assert_eq!(t.typed(), "第一段，ASR是1.25和1,200。");
+        t.stream_final("下一段", 200);
+        t.flush(Duration::ZERO, &mut k);
+        let mut field = String::new();
+        for stroke in &k.strokes {
+            if let Some(count) = stroke.strip_prefix("back ") {
+                for _ in 0..count.parse::<usize>().unwrap() {
+                    assert!(field.pop().is_some());
+                }
+            } else {
+                field.push_str(stroke);
+            }
+        }
+        assert_eq!(field, "第一段，ASR是1.25和1,200。下一段");
+        assert_eq!(t.typed(), field);
     }
 
     #[test]

@@ -124,6 +124,8 @@ While automatic updates are on (關於 About page), Tingzi asks GitHub at most o
 
 Tingzi keeps an activity record, `tingzi-log.txt`, in your personal folder, to help with problem reports. It notes when and how a recording started (shortcut, window button or menu), which program the text was for, which method was used, how long it took, and what failed or crashed. The Zhuyin input method keeps its own record, `tingzi-ime-log.txt`, noting which programs it ran in, keys it could not take and compositions a program cut short; it never notes which keys you pressed or what you typed. It holds nothing you said or typed, no audio and no keys, and stays on your computer; past 256 KB it starts a new file and keeps only one older one. Press 回報問題… (Report a problem) on the 關於 (About) page or in the tray menu to see what a report would include and edit it. Only 到 GitHub 回報 (Report on GitHub) opens the issue page in your browser, and you decide whether to submit it.
 
+With experimental streaming on, Tingzi types while you speak and waits for each sentence to finalize before inserting full-width Chinese commas.
+
 ## Documentation
 
 The documents below are in Traditional Chinese.
