@@ -6,6 +6,17 @@
 use serde::{Deserialize, Serialize};
 use tauri_plugin_global_shortcut::{Code, Modifiers, Shortcut};
 
+/// Tracks a physical shortcut press through modifier release and key repeat.
+pub fn manual_key(held: &std::sync::atomic::AtomicU32, key: u32, down: bool, shortcut: bool) -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    if !down {
+        let _ = held.compare_exchange(key, 0, Relaxed, Relaxed);
+        return false;
+    }
+    if shortcut { held.store(key, Relaxed); }
+    held.load(Relaxed) != key
+}
+
 pub const ALT: u32 = 1;
 pub const CONTROL: u32 = 2;
 pub const SHIFT: u32 = 4;
@@ -147,6 +158,16 @@ pub fn suggestion(taken: Hotkey, free: impl Fn(&Hotkey) -> bool) -> Option<Hotke
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn recording_shortcut_repeat_and_release_are_not_manual_edits() {
+        let held = std::sync::atomic::AtomicU32::new(0);
+        assert!(!super::manual_key(&held, 82, true, true));
+        assert!(!super::manual_key(&held, 82, true, false));
+        assert!(super::manual_key(&held, 37, true, false));
+        assert!(!super::manual_key(&held, 82, false, false));
+        assert!(super::manual_key(&held, 82, true, false));
+    }
+
     use super::*;
 
     fn keys(modifiers: u32, key: u32) -> Hotkey {

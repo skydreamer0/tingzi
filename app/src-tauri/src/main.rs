@@ -4,6 +4,7 @@
 mod api;
 mod apps;
 mod audio;
+mod dictation_stream;
 mod codex;
 mod deliver;
 mod dialogs;
@@ -164,6 +165,7 @@ fn change_streaming_preview(app: &AppHandle, change: impl FnOnce(&mut streaming_
 /// A recording whose sentences go where the user was typing as soon as each is recognised.
 struct Live {
     target: Spot,
+    stream_keys: Option<Arc<StreamTarget>>,
     /// The choices for the program being dictated into, which finish each sentence.
     prefs: Settings,
     typing: Mutex<live::Typing>,
@@ -172,6 +174,168 @@ struct Live {
     pasted: Mutex<Option<Instant>>,
     /// The recording's sound, to recognise what is left of it if a sentence fails.
     audio: Mutex<Option<audio::SegmentAudio>>,
+}
+
+struct StreamTarget {
+    started: std::sync::OnceLock<Instant>,
+    activity: u64,
+    focus: Option<u64>,
+    program: String,
+    probed: AtomicBool,
+    stop_time: std::sync::OnceLock<Instant>,
+    /// Set once the first time typing stops, so the reason is logged only once.
+    stopped: std::sync::OnceLock<StreamStop>,
+}
+
+/// Why streaming stopped sending keys to the field recording started from.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum StreamStop {
+    Window,
+    NoField,
+    Field,
+    UserInput,
+    UnicodeRejected,
+    PartialInput,
+    Ignored,
+}
+
+fn describe_stream_stop(stop: StreamStop, at: Option<Duration>) -> String {
+    let reason = match stop {
+        StreamStop::UnicodeRejected => "程式未接受 Unicode 送鍵，改為定稿後貼上",
+        StreamStop::Ignored => "送出 Unicode 後欄位仍空白，改為定稿後貼上",
+        StreamStop::PartialInput => "送鍵不完整，保留欄位內容",
+        StreamStop::Window => "前景視窗不是錄音開始時的視窗",
+        StreamStop::NoField => "錄音開始時沒有取得輸入欄位",
+        StreamStop::Field => "輸入欄位已改變",
+        StreamStop::UserInput => "偵測到使用者按鍵或點擊",
+    };
+    let at = at.map_or_else(|| "打字開始前".into(), |at| format!("{} ms", at.as_millis()));
+    format!("串流打字停止送鍵：{reason}（{at}）")
+}
+
+struct StreamKeyboard<'a> {
+    target: Spot,
+    target_keys: &'a StreamTarget,
+    cancelled: &'a dyn Fn() -> bool,
+}
+
+impl StreamKeyboard<'_> {
+    fn note(&self, reason: StreamStop) {
+        if self.target_keys.stopped.set(reason).is_ok() {
+            let at = self.target_keys.started.get().map(Instant::elapsed);
+            report::note(format!("目標程式 {}，{}", self.target_keys.program, describe_stream_stop(reason, at)));
+        }
+    }
+}
+
+impl live::Keys for StreamKeyboard<'_> {
+    fn state(&mut self) -> live::KeyState {
+        if (self.cancelled)() {
+            return live::KeyState::Held;
+        }
+        let stop = if !deliver::at_target(self.target) {
+            Some(StreamStop::Window)
+        } else if self.target_keys.focus.is_none() {
+            Some(StreamStop::NoField)
+        } else if sys::stream_focus() != self.target_keys.focus {
+            Some(StreamStop::Field)
+        } else if sys::input_activity() != self.target_keys.activity {
+            Some(StreamStop::UserInput)
+        } else {
+            None
+        };
+        if let Some(stop) = stop {
+            self.note(stop);
+            live::KeyState::Gone
+        } else if sys::modifier_held() {
+            live::KeyState::Held
+        } else {
+            live::KeyState::Ready
+        }
+    }
+
+    fn erase(&mut self, count: usize) -> bool {
+        let ok = sys::backspace(count);
+        if !ok { self.note(StreamStop::PartialInput); }
+        ok
+    }
+    fn write(&mut self, text: &str) -> bool {
+        let probe = !self.target_keys.probed.swap(true, Ordering::Relaxed) && sys::stream_field_empty() == Some(true);
+        if !matches!(live::Keys::state(self), live::KeyState::Ready) { return false; }
+        match sys::type_text(text) {
+            Ok(()) if probe => {
+                // Posted keys are asynchronous. Give the target time to process the first batch.
+                for _ in 0..4 {
+                    std::thread::sleep(Duration::from_millis(25));
+                    if sys::stream_field_empty() != Some(true) { return true; }
+                }
+                self.note(StreamStop::Ignored);
+                false
+            }
+            Ok(()) => true,
+            Err(partial) => {
+                self.note(if partial { StreamStop::PartialInput } else { StreamStop::UnicodeRejected });
+                false
+            }
+        }
+    }
+}
+
+impl Live {
+    fn flush(&self, typing: &mut live::Typing, cancelled: &dyn Fn() -> bool) -> bool {
+        let Some(target_keys) = &self.stream_keys else { return true };
+        if cancelled() { return true; }
+        let Some(started) = target_keys.started.get() else { return true };
+        typing.flush(started.elapsed(), &mut StreamKeyboard { target: self.target, target_keys, cancelled })
+    }
+
+    fn finish_stream(&self, cancelled: &dyn Fn() -> bool) {
+        let mut typing = self.typing.lock().unwrap();
+        if typing.ended() || cancelled() { return; }
+        if self.stream_keys.as_ref().is_some_and(|keys| keys.stop_time.get().is_some()) { return; }
+        typing.retract();
+        while !self.flush(&mut typing, cancelled) {
+            drop(typing);
+            std::thread::sleep(Duration::from_millis(20));
+            typing = self.typing.lock().unwrap();
+            if typing.ended() || cancelled() || self.stream_keys.as_ref().is_some_and(|keys| keys.stop_time.get().is_some()) { return; }
+        }
+    }
+}
+
+fn deliver_stream_final(text: &str, live: Option<&Live>, keys: &StreamTarget, spot: Spot,
+                        cancelled: &dyn Fn() -> bool) -> Outcome {
+    use live::Keys;
+    let safe = || {
+        let mut keyboard = StreamKeyboard { target: spot, target_keys: keys, cancelled };
+        matches!(keyboard.state(), live::KeyState::Ready) && match keys.stopped.get() {
+            None | Some(StreamStop::UnicodeRejected) => true,
+            Some(StreamStop::Ignored) => sys::stream_field_empty() == Some(true),
+            _ => false,
+        }
+    };
+    let suffix = match live {
+        Some(live) => live.typing.lock().unwrap().remaining_final(text),
+        None => Some(text),
+    };
+    match suffix {
+        Some("") => Outcome::typed(),
+        Some(rest) => deliver::paste_final(rest, &mut Desktop::new(spot), &safe),
+        None => Outcome::retained(),
+    }
+}
+
+fn report_stream_typing(tail: &live::Tail) {
+    let first = tail.first_key.map_or_else(|| "未打字".into(), |at| format!("{} ms", at.as_millis()));
+    report::note(format!("串流打字：中途更新 {} 次，退格 {} 字，首字 {first}", tail.updates, tail.deleted));
+}
+
+impl Drop for Live {
+    fn drop(&mut self) {
+        if self.stream_keys.is_some() {
+            report_stream_typing(&self.typing.get_mut().unwrap_or_else(|err| err.into_inner()).tail);
+        }
+    }
 }
 
 /// A program reads the clipboard a moment after the paste keys, so the clipboard is left alone for half a second.
@@ -185,19 +349,30 @@ fn wait_for_paste(pasted: Option<Instant>) {
 /// Sentences come here one at a time, in order, on the thread that recognises them.
 fn type_sentence(live: &Live, heard: &str, end: usize, cancelled: &dyn Fn() -> bool) {
     let mut pasted = live.pasted.lock().unwrap();
+    if live.stream_keys.is_some() {
+        let mut typing = live.typing.lock().unwrap();
+        if !typing.ended() {
+            typing.stream_final(&correct(&clean(heard, &live.prefs), &live.prefs), end);
+            live.flush(&mut typing, cancelled);
+        }
+        return;
+    }
     let next = {
         let mut typing = live.typing.lock().unwrap();
-        if typing.ended() {
-            return;
-        }
-        typing.add(&correct(&clean(heard, &live.prefs), &live.prefs), end);
+        if typing.ended() || cancelled() { return; }
+        let piece = correct(&clean(heard, &live.prefs), &live.prefs);
+        typing.add(&piece, end);
         typing.next()
     };
     let Some(next) = next else { return };
     wait_for_paste(*pasted);
     match deliver::type_now(&next, &mut Desktop::new(live.target), cancelled) {
         Typed::Inserted => {
-            live.typing.lock().unwrap().note_typed(&next);
+            let mut typing = live.typing.lock().unwrap();
+            typing.note_typed(&next);
+            if let Some(started) = live.stream_keys.as_ref().and_then(|keys| keys.started.get()) {
+                typing.tail.first_key.get_or_insert_with(|| started.elapsed());
+            }
             *pasted = Some(Instant::now());
         }
         Typed::Gone => live.typing.lock().unwrap().leave(),
@@ -251,14 +426,14 @@ fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<st
                 let live = live.clone();
                 requests.submit(segment.sequence, segment.start..segment.end, move |range, abandoned| {
                     let replaced = || handle.state::<Session>().run.load(Ordering::SeqCst) != run;
-                    let cancelled = || abandoned() || replaced();
+                    let cancelled = || abandoned() || (replaced() && !prefs.dictation_stream);
                     let end = range.end;
                     // How long each sentence was and how long it took to come back, to tune where sentences are cut.
                     let length = audio.millis(range.len());
                     let began = Instant::now();
                     let heard = recognise::run(Engine::Codex, &prefs, audio.encode(range)?, &cancelled)?;
                     report::note(format!("逐句辨識：語音 {length} ms，辨識 {} ms，{} 字", began.elapsed().as_millis(), heard.chars().count()));
-                    if let Some(live) = live.as_deref().filter(|_| !heard.trim().is_empty() && !replaced()) {
+                    if let Some(live) = live.as_deref().filter(|_| !heard.trim().is_empty() && (!replaced() || prefs.dictation_stream)) {
                         type_sentence(live, &heard, end, &replaced);
                     }
                     Ok(heard)
@@ -270,6 +445,81 @@ fn segment_listener(app: &AppHandle, run: u64, prefs: Settings, requests: Arc<st
     }))
 }
 
+fn stream_text_worker(app: &AppHandle, run: u64, requests: &streaming_asr::Requests,
+                      live: Option<&Live>, updates: &dictation_stream::Updates, cancelled: &dyn Fn() -> bool) {
+    use dictation_stream::Update;
+    let mut sentences = Vec::<String>::new();
+    let mut retry = false;
+    let mut max_segment = Duration::ZERO;
+    loop {
+        let update = updates.next(retry);
+        if matches!(update, Some(Update::Finish)) { break; }
+        retry = false;
+        if let Some(live) = live {
+            let began = Instant::now();
+            let mut typing = live.typing.lock().unwrap();
+            if typing.ended() { continue; }
+            match &update {
+                Some(Update::Segment(_)) if live.stream_keys.as_ref().is_some_and(|keys| keys.stop_time.get().is_some()) => continue,
+                Some(Update::Segment(text)) => {
+                    typing.segment(&correct(&clean(text, &live.prefs), &live.prefs));
+                }
+                Some(Update::Final(_, text, end)) => {
+                    typing.stream_final(&correct(&clean(text, &live.prefs), &live.prefs), *end);
+                }
+                Some(Update::Freeze) => typing.freeze_segment(),
+                None if live.stream_keys.as_ref().is_some_and(|keys| keys.stop_time.get().is_some()) => typing.freeze_segment(),
+                None => {}
+                Some(Update::Finish) => unreachable!(),
+            }
+            retry = !live.flush(&mut typing, cancelled);
+            if matches!(update, Some(Update::Segment(_))) {
+                max_segment = max_segment.max(began.elapsed());
+            }
+        }
+        if let Some(Update::Final(index, text, _)) = update {
+            if index < sentences.len() { sentences[index] = text; } else { sentences.push(text); }
+            requests.replace_sentences(&sentences, |q| show_sentences(app, run, q, live));
+        }
+    }
+    if let Some(live) = live {
+        live.finish_stream(cancelled);
+        report::note(format!("串流打字：中途修訂處理最長 {} ms", max_segment.as_millis()));
+    } else {
+        report_stream_typing(&live::Tail::default());
+    }
+}
+
+fn stream_source(app: &AppHandle, run: u64, keys: Arc<StreamTarget>, requests: Arc<streaming_asr::Requests>,
+                 live: Option<Arc<Live>>, local: audio::SegmentListener,
+                 connection: dictation_stream::Preconnection) -> audio::SentenceSource {
+    let app = app.clone();
+    let recording = connection.began;
+    audio::SentenceSource::Stream(connection.rate.clone(), Box::new(move |audio, ending, capture| {
+        let replaced = || app.state::<Session>().run.load(Ordering::SeqCst) != run;
+        let cancelled = || replaced() && keys.stop_time.get().is_none();
+        let stopped = || !matches!(ending.try_recv(), Err(std::sync::mpsc::TryRecvError::Empty));
+        if let Some(live) = &live {
+            if let Some(keys) = &live.stream_keys { keys.started.get_or_init(|| capture); }
+            *live.audio.lock().unwrap() = Some(audio.clone());
+        }
+        let updates = dictation_stream::Updates::default();
+        let recovery = std::thread::scope(|scope| {
+            scope.spawn(|| stream_text_worker(&app, run, &requests, live.as_deref(), &updates, &replaced));
+            let recovery = dictation_stream::run(&audio, live.is_some(), stopped, cancelled,
+                &updates, recording, capture, |rate| connection.finish(rate));
+            updates.push(dictation_stream::Update::Finish);
+            recovery
+        });
+        if let (Some(stop), Some(final_at)) = (keys.stop_time.get(), *updates.last_final.lock().unwrap()) {
+            report::note(format!("目標程式 {}，停止到最後串流定稿 {} ms", keys.program, final_at.saturating_duration_since(*stop).as_millis()));
+        }
+        if let Some(progress) = recovery {
+            audio.resume_local(progress.end, progress.count, local, stopped, cancelled);
+        }
+    }))
+}
+
 fn cancel_streaming(app: &AppHandle) {
     let session = app.state::<Session>();
     if let Some(requests) = session.streaming.lock().unwrap().take() {
@@ -277,7 +527,19 @@ fn cancel_streaming(app: &AppHandle) {
     }
     // Sentences already typed stay where they are; nothing more is typed.
     if let Some(live) = session.live.lock().unwrap().take() {
-        live.typing.lock().unwrap().end();
+        let generation = session.run.load(Ordering::SeqCst);
+        let handle = app.clone();
+        let mut typing = live.typing.lock().unwrap();
+        typing.cancel_draft();
+        if !live.flush(&mut typing, &|| false) {
+            drop(typing);
+            std::thread::spawn(move || {
+                let replaced = || handle.state::<Session>().run.load(Ordering::SeqCst) != generation;
+                while !replaced() && !live.flush(&mut live.typing.lock().unwrap(), &replaced) {
+                    std::thread::sleep(Duration::from_millis(20));
+                }
+            });
+        }
     }
     change_streaming_preview(app, streaming_preview::Preview::clear);
 }
@@ -395,7 +657,7 @@ fn report_engine(engine: Engine) -> &'static str {
 }
 
 enum Sound {
-    Recording(audio::Recorder),
+    Recording(Recording),
     Wav(Vec<u8>),
 }
 
@@ -405,7 +667,7 @@ impl Sound {
     fn finish(self) -> (Result<Vec<u8>, String>, bool) {
         let capture = match self {
             Self::Wav(wav) => return (Ok(wav), false),
-            Self::Recording(recorder) => recorder.finish(),
+            Self::Recording(recording) => recording.recorder.finish(),
         };
         let capture = match capture {
             Ok(capture) => capture,
@@ -431,6 +693,7 @@ fn microphone_result(message: String, failed: bool) -> String {
 }
 
 struct Recording {
+    stream: Option<Arc<StreamTarget>>,
     recorder: audio::Recorder,
     engine: Engine,
 }
@@ -439,32 +702,52 @@ struct Recording {
 /// `target` is where the user was typing; None shows the text without inserting it.
 fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>) {
     let session = app.state::<Session>();
+    let stop = Instant::now();
+    let stream = match &sound {
+        Sound::Recording(recording) => {
+            if let Some(keys) = &recording.stream { let _ = keys.stop_time.set(stop); }
+            recording.recorder.request_stop();
+            recording.stream.clone()
+        }
+        _ => None,
+    };
     let streaming = if matches!(&sound, Sound::Recording(_)) {
-        session.streaming.lock().unwrap().clone()
+        let mut current = session.streaming.lock().unwrap();
+        if stream.is_some() { current.take() } else { current.clone() }
     } else {
         None
     };
-    let live = streaming.as_ref().and_then(|_| session.live.lock().unwrap().take());
+    let live = streaming.as_ref().and_then(|_| {
+        let mut active = session.live.lock().unwrap();
+        active.take()
+    });
     // Stopping an active stream keeps its recording ID valid while the tail drains.
     let run = if streaming.is_some() {
         session.run.load(Ordering::SeqCst)
     } else {
         session.run.fetch_add(1, Ordering::SeqCst) + 1
     };
-    session.working.store(true, Ordering::SeqCst);
+    session.working.store(stream.is_none(), Ordering::SeqCst);
     let rewrite = session.rewrite.lock().unwrap().take();
-    let label = if matches!(&sound, Sound::Recording(recorder) if recorder.failed()) {
+    let label = if matches!(&sound, Sound::Recording(recorder) if recorder.recorder.failed()) {
         RECOVER_RECORDING
     } else if streaming.is_some() {
         "逐句辨識中・再點一下取消"
     } else {
         recognise::working_label(engine, &Settings::load())
     };
-    show(app, "working", label, "", false);
+    if let Some(keys) = &stream {
+        change_streaming_preview(app, |preview| preview.clear_recording(run));
+        idle(app, "錄音已停止");
+        report::note(format!("目標程式 {}，停止到浮條結束 {} ms", keys.program, stop.elapsed().as_millis()));
+    } else {
+        show(app, "working", label, "", false);
+    }
     let app = app.clone();
     std::thread::spawn(move || {
         let session = app.state::<Session>();
         let cancelled = || session.run.load(Ordering::SeqCst) != run;
+        let cancel_recognition = || cancelled() && stream.is_none();
         if let Some(selection) = rewrite {
             return rewrite_with(&app, run, sound, engine, target, selection);
         }
@@ -478,7 +761,7 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         }
         let started = Instant::now();
         let transcript = streaming.map(|requests| {
-            let transcript = if wav.is_ok() {
+            let transcript = if wav.is_ok() || stream.is_some() {
                 requests.finish()
             } else {
                 requests.cancel();
@@ -491,21 +774,19 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             }
             transcript
         });
-        if cancelled() {
-            return;
-        }
+        if cancelled() && stream.is_none() { return; }
         // Sentences typed while recording stand as they are. Waiting for `pasted` lets one that is being typed finish.
         let live = live.filter(|live| {
             let _typed = live.pasted.lock().unwrap();
             let mut typing = live.typing.lock().unwrap();
             typing.end();
-            typing.started()
+            typing.started() || live.stream_keys.is_some()
         });
         // Whether the end of the recording could not be recognised after its first sentences were typed.
         let mut missed = false;
         let heard = match (live.as_deref(), wav.as_ref(), transcript) {
             (_, _, Some(streaming_asr::Transcript::Cancelled)) => return,
-            (_, Err(reason), _) if failed => Err(reason.clone()),
+            (_, Err(reason), _) if failed && stream.is_none() => Err(reason.clone()),
             (Some(live), _, transcript) => {
                 // A sentence failed part-way: only the recording after the last recognised sentence is heard again.
                 if transcript == Some(streaming_asr::Transcript::FullRecording) {
@@ -516,9 +797,14 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                     let from = live.typing.lock().unwrap().heard_to();
                     let audio = live.audio.lock().unwrap().clone();
                     let rest = audio.ok_or_else(|| "錄音資料損毀".to_string()).and_then(|audio| audio.encode_from(from));
-                    match rest.and_then(|rest| rest.map(|rest| recognise::run(engine, &prefs, rest, &cancelled)).transpose()) {
+                    match rest.and_then(|rest| rest.map(|rest| recognise::run(engine, &prefs, rest, &cancel_recognition)).transpose()) {
                         Ok(Some(rest)) if !rest.trim().is_empty() => {
-                            live.typing.lock().unwrap().add(&correct(&clean(&rest, &live.prefs), &live.prefs), usize::MAX);
+                            let piece = correct(&clean(&rest, &live.prefs), &live.prefs);
+                            let mut typing = live.typing.lock().unwrap();
+                            if stream.is_some() {
+                                typing.stream_final(&piece, usize::MAX);
+                                live.flush(&mut typing, &cancelled);
+                            } else { typing.add(&piece, usize::MAX); }
                         }
                         Ok(_) => {}
                         Err(reason) => {
@@ -529,17 +815,18 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
                 }
                 Ok(live.typing.lock().unwrap().text())
             }
-            (None, Err(reason), _) => Err(reason.clone()),
             (None, _, Some(streaming_asr::Transcript::Sentences(text))) => Ok(text),
+            (None, Err(reason), _) => Err(reason.clone()),
             (None, Ok(wav), transcript) => {
                 if !failed && transcript == Some(streaming_asr::Transcript::FullRecording) {
                     working(&app, run, "整段辨識中・再點一下取消");
                 }
-                recognise::run(engine, &prefs, wav.clone(), &cancelled)
+                recognise::run(engine, &prefs, wav.clone(), &cancel_recognition)
             }
         };
-        if cancelled() {
-            return;
+        if cancelled() && stream.is_none() { return; }
+        if let (Some(keys), Ok(_)) = (&stream, &heard) {
+            report::note(format!("目標程式 {}，停止到全文完成 {} ms", keys.program, stop.elapsed().as_millis()));
         }
         match &heard {
             Ok(heard) => report::note(format!("{}：辨識完成，{} 字，{} ms", report_engine(engine), heard.chars().count(), started.elapsed().as_millis())),
@@ -564,6 +851,12 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
         }) };
         // A request cannot be stopped once sent, so a cancel while refining is honoured when it returns.
         if cancelled() {
+            if stream.is_some() {
+                if let Ok(text) = &text {
+                    if prefs.keep_history && !text.is_empty() { history::add(text, before, false); }
+                }
+                report::note("串流定稿保留原欄位：已開始其他工作");
+            }
             return;
         }
         // An online failure keeps the recording so it can be tried on this computer.
@@ -573,28 +866,32 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             (Ok(text), _) if !text.is_empty() => {
                 // What the window shows when only the first sentences reached the user's window: the rest.
                 let mut left = None;
-                let outcome = match (target, live.as_deref()) {
-                    (Some(spot), Some(live)) => {
-                        let typed = live.typing.lock().unwrap().typed().to_string();
-                        match text.strip_prefix(typed.as_str()) {
-                            Some("") => Outcome::typed(),
-                            Some(rest) => {
-                                wait_for_paste(*live.pasted.lock().unwrap());
-                                let outcome = deliver::deliver(rest, Mode::Insert, &mut Desktop::new(spot), &cancelled);
-                                if !outcome.inserted && !typed.is_empty() {
-                                    left = Some(rest.to_string());
+                let outcome = if let (Some(keys), Some(spot), Mode::Insert) = (&stream, target, prefs.mode()) {
+                    deliver_stream_final(&text, live.as_deref(), keys, spot, &cancelled)
+                } else {
+                    match (target, live.as_deref()) {
+                        (Some(spot), Some(live)) => {
+                            let typing = live.typing.lock().unwrap();
+                            let typed = typing.visible_prefix(&text);
+                            drop(typing);
+                            match text.strip_prefix(typed.as_str()) {
+                                Some("") => Outcome::typed(),
+                                Some(rest) => {
+                                    wait_for_paste(*live.pasted.lock().unwrap());
+                                    let outcome = deliver::deliver(rest, Mode::Insert, &mut Desktop::new(spot), &cancelled);
+                                    if !outcome.inserted && !typed.is_empty() {
+                                        left = Some(rest.to_string());
+                                    }
+                                    outcome
                                 }
-                                outcome
+                                None => deliver::deliver(&text, Mode::Copy, &mut Desktop::new(spot), &cancelled),
                             }
-                            None => deliver::deliver(&text, Mode::Copy, &mut Desktop::new(spot), &cancelled),
                         }
+                        (Some(spot), None) => deliver::deliver(&text, prefs.mode(), &mut Desktop::new(spot), &cancelled),
+                        (None, _) => deliver::deliver(&text, Mode::Preview, &mut Desktop::new(Spot::default()), &cancelled),
                     }
-                    (Some(spot), None) => deliver::deliver(&text, prefs.mode(), &mut Desktop::new(spot), &cancelled),
-                    (None, _) => deliver::deliver(&text, Mode::Preview, &mut Desktop::new(Spot::default()), &cancelled),
                 };
-                if outcome.cancelled || cancelled() {
-                    return;
-                }
+                if outcome.cancelled || (cancelled() && stream.is_none()) { return; }
                 let settles = outcome.settles();
                 let program = target.filter(|spot| spot.process != 0).and_then(|spot| apps::program(spot.process)).unwrap_or_else(|| "無".into());
                 let mode = if target.is_some() { prefs.mode() } else { Mode::Preview };
@@ -634,13 +931,16 @@ fn recognise(app: &AppHandle, sound: Sound, engine: Engine, target: Option<Spot>
             if session.run.load(Ordering::SeqCst) != run {
                 return;
             }
+            session.live.lock().unwrap().take();
             if let Some(wav) = kept {
                 *session.kept.lock().unwrap() = Some(wav);
             } else {
                 deliver::end();
             }
             session.working.store(false, Ordering::SeqCst);
-            show(&handle, state, microphone_result(message, failed), text, expand);
+            if stream.is_none() || state != "done" || expand {
+                show(&handle, state, microphone_result(message, failed), text, expand);
+            }
             // The page folds the preview back once the user has left it alone for this long.
             if settles {
                 let _ = handle.emit("settle", deliver::SETTLE_SECONDS);
@@ -752,7 +1052,8 @@ fn toggle(app: &AppHandle) {
         return;
     }
     if let Some(recording) = session.recorder.lock().unwrap().take() {
-        recognise(app, Sound::Recording(recording.recorder), recording.engine, Some(deliver::target()));
+        let engine = recording.engine;
+        recognise(app, Sound::Recording(recording), engine, Some(deliver::target()));
         return;
     }
     if let Some(wav) = session.kept.lock().unwrap().take() {
@@ -762,7 +1063,9 @@ fn toggle(app: &AppHandle) {
     let prefs = Settings::load();
     let spot = deliver::begin();
     let run = session.run.fetch_add(1, Ordering::SeqCst) + 1;
-    let segments: Option<audio::SegmentListener> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
+    let mut stream = None;
+    let segments: Option<audio::SentenceSource> = if prefs.segment_dictation(session.rewrite.lock().unwrap().is_some()) {
+        let connection = prefs.dictation_stream.then(dictation_stream::preconnect);
         change_streaming_preview(app, |preview| {
             preview.begin(run);
             true
@@ -773,11 +1076,25 @@ fn toggle(app: &AppHandle) {
         // as it is. Refinement reads the whole text at once, so a refined dictation is still delivered at the end.
         let rule = rule_for(Some(spot));
         let here = apps::effective(&prefs, rule.as_ref());
+        stream = prefs.dictation_stream.then(|| {
+                // Clicking the mic can give our own window focus. Restore the original target
+                // once before capturing its field identity; subsequent checks never move focus.
+                if Spot::current().ours() { sys::bring_forward(&spot); }
+                sys::set_stream_shortcut(recording_keys(&prefs));
+                Arc::new(StreamTarget { started: Default::default(), activity: sys::input_activity(), focus: sys::stream_focus(),
+                    probed: AtomicBool::new(false), program: apps::program(spot.process).unwrap_or_else(|| "未知".into()), stopped: Default::default(), stop_time: Default::default() })
+        });
         let live = (spot.window != 0 && here.mode() == Mode::Insert && !here.refine).then(|| {
-            Arc::new(Live { target: spot, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
+            let stream_keys = stream.clone();
+            Arc::new(Live { target: spot, stream_keys, prefs: here, typing: Mutex::new(live::Typing::new(rule)), pasted: Mutex::default(), audio: Mutex::default() })
         });
         *session.live.lock().unwrap() = live.clone();
-        Some(segment_listener(app, run, prefs.clone(), requests, live))
+        let local = segment_listener(app, run, prefs.clone(), requests.clone(), live.clone());
+        Some(if let Some(connection) = connection {
+            stream_source(app, run, stream.clone().unwrap(), requests, live, local, connection)
+        } else {
+            audio::SentenceSource::Local(local)
+        })
     } else {
         None
     };
@@ -810,7 +1127,7 @@ fn toggle(app: &AppHandle) {
             for note in &notes {
                 report::note(note.clone());
             }
-            *session.recorder.lock().unwrap() = Some(Recording { recorder, engine: prefs.engine() });
+            *session.recorder.lock().unwrap() = Some(Recording { recorder, stream, engine: prefs.engine() });
             // While the user speaks: the connection to an online service is opened, and words typed
             // to fix earlier dictations are picked up, which needs those dictations to have been kept.
             let ahead = prefs.clone();
@@ -1159,13 +1476,18 @@ impl Keys {
 }
 
 /// The recording shortcut from the saved preferences; None when the user turned it off.
-fn shortcut(prefs: &Settings) -> Option<(Shortcut, String)> {
+fn recording_keys(prefs: &Settings) -> hotkey::Hotkey {
     let mut keys = prefs.hotkey();
     // A development override keeps this app from fighting the installed voice window for the same keys.
     if let Some(letter) = std::env::var("TINGZI_RECORD_KEY").ok().and_then(|value| value.bytes().next()).filter(u8::is_ascii_alphabetic) {
         let held = keys.modifiers & (hotkey::CONTROL | hotkey::ALT | hotkey::SUPER) != 0;
         keys = hotkey::Hotkey { modifiers: if held { keys.modifiers } else { hotkey::DEFAULT.modifiers }, key: u32::from(letter.to_ascii_uppercase()) };
     }
+    keys
+}
+
+fn shortcut(prefs: &Settings) -> Option<(Shortcut, String)> {
+    let keys = recording_keys(prefs);
     Some((keys.shortcut()?, keys.label()))
 }
 
@@ -1397,6 +1719,8 @@ fn main() {
             panel::learned_words,
             panel::forget_learned_word,
             panel::open_target,
+            panel::codex_sign_in_status,
+            panel::open_codex_sign_in,
             panel::voice_learned,
             panel::forget_voice_learned,
             fetch::local_state,
@@ -1454,6 +1778,21 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_reason_typing_stopped_is_logged_with_its_time() {
+        assert_eq!(
+            describe_stream_stop(StreamStop::UserInput, Some(Duration::from_millis(3965))),
+            "串流打字停止送鍵：偵測到使用者按鍵或點擊（3965 ms）"
+        );
+        assert_eq!(
+            describe_stream_stop(StreamStop::Window, None),
+            "串流打字停止送鍵：前景視窗不是錄音開始時的視窗（打字開始前）"
+        );
+        for stop in [StreamStop::NoField, StreamStop::Field] {
+            assert!(describe_stream_stop(stop, Some(Duration::ZERO)).ends_with("（0 ms）"));
+        }
+    }
 
     #[test]
     fn shortcut_follows_saved_preferences() {

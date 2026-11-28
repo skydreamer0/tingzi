@@ -254,6 +254,45 @@ pub fn codex_version() -> Option<String> {
     names.iter().filter_map(|name| crate::codex::package_version(name)).max().map(crate::codex::version_text)
 }
 
+/// Opens the installed Codex desktop app. None means its package is absent.
+pub fn open_codex_desktop() -> Option<bool> {
+    codex_version()?;
+    // Read the registered application ID from the package manifest rather than guessing its suffix.
+    let output = quiet(&mut powershell())
+        .args(["-NoProfile", "-NonInteractive", "-Command",
+            "$pkg = Get-AppxPackage -Name OpenAI.Codex | Sort-Object Version -Descending | Select-Object -First 1; (Get-AppxPackageManifest $pkg).Package.Applications.Application.Id"])
+        .output()
+        .ok();
+    let opened = output.filter(|output| output.status.success()).is_some_and(|output| {
+        String::from_utf8_lossy(&output.stdout).lines().map(str::trim).filter(|id| !id.is_empty())
+            .any(|id| open(&format!(r"shell:AppsFolder\{CODEX_PACKAGE}!{id}")))
+    });
+    Some(opened)
+}
+
+fn powershell() -> Command {
+    Command::new(system_file(r"WindowsPowerShell\v1.0\powershell.exe"))
+}
+
+pub fn codex_cli() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .filter(|folder| !folder.as_os_str().is_empty())
+        .flat_map(|folder| ["codex.exe", "codex.cmd", "codex.bat", "codex.ps1"].map(|name| folder.join(name)))
+        .find(|path| path.is_file())
+        .and_then(|path| std::path::absolute(path).ok())
+}
+
+pub fn open_codex_cli(cli: &Path) -> bool {
+    const NEW_CONSOLE: u32 = 0x0000_0010;
+    powershell()
+        .creation_flags(NEW_CONSOLE)
+        .env("TINGZI_CODEX_CLI", cli)
+        .args(["-NoProfile", "-NoExit", "-Command", "& $env:TINGZI_CODEX_CLI login"])
+        .spawn()
+        .is_ok()
+}
+
 /// Whether `process` is the Codex desktop app, by the package Windows installed it from.
 fn is_codex(process: u32) -> bool {
     // SAFETY: the handle is closed before returning and the buffer length is passed with the buffer.
@@ -826,4 +865,221 @@ mod tests {
         assert!(!is_codex(std::process::id()));
         assert!(program(std::process::id()).unwrap().to_lowercase().ends_with(".exe"));
     }
+}
+
+pub fn preferred_language() -> Option<String> {
+    sys_locale::get_locale()
+}
+
+
+// Count events rather than polling held keys: a tap can start and finish between updates.
+static INPUT_WATCHING: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+static INPUT_ACTIVITY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+unsafe extern "system" fn watch_keyboard(
+    code: i32,
+    message: WPARAM,
+    data: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    if code >= 0 && matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
+        let event = &*(data.0 as *const KBDLLHOOKSTRUCT);
+        // All injected keys are excluded, including Tingzi's Unicode and shortcut events.
+        let modifier = matches!(event.vkCode, 0x10..=0x12 | 0x5B..=0x5C | 0xA0..=0xA5);
+        if event.flags.0 & LLKHF_INJECTED.0 == 0 && !modifier && stream_manual_key(event.vkCode,
+            matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN)) {
+            INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    CallNextHookEx(None, code, message, data)
+}
+
+unsafe extern "system" fn watch_mouse(
+    code: i32,
+    message: WPARAM,
+    data: LPARAM,
+) -> windows::Win32::Foundation::LRESULT {
+    use windows::Win32::UI::WindowsAndMessaging::*;
+    if code >= 0
+        && matches!(
+            message.0 as u32,
+            WM_LBUTTONDOWN | WM_RBUTTONDOWN | WM_MBUTTONDOWN | WM_XBUTTONDOWN
+        )
+    {
+        let event = &*(data.0 as *const MSLLHOOKSTRUCT);
+        if event.flags & 1 == 0 {
+            INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        }
+    }
+    CallNextHookEx(None, code, message, data)
+}
+
+/// Changes on physical non-modifier key presses and mouse clicks. Failure changes every read,
+/// so callers abandon an insertion rather than assuming an unobserved caret stayed still.
+pub fn input_activity() -> u64 {
+    static READY: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    let ready = READY.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        if std::thread::Builder::new()
+            .name("input-activity".into())
+            .spawn(move || {
+                use windows::Win32::UI::WindowsAndMessaging::*;
+                // SAFETY: callbacks are static and execute on this dedicated message-loop thread.
+                unsafe {
+                    let keyboard = SetWindowsHookExW(WH_KEYBOARD_LL, Some(watch_keyboard), None, 0);
+                    let mouse = SetWindowsHookExW(WH_MOUSE_LL, Some(watch_mouse), None, 0);
+                    INPUT_WATCHING.store(
+                        keyboard.is_ok() && mouse.is_ok(),
+                        std::sync::atomic::Ordering::SeqCst,
+                    );
+                    let _ = send.send(keyboard.is_ok() && mouse.is_ok());
+                    match (keyboard, mouse) {
+                        (Ok(keyboard), Ok(mouse)) => {
+                            let mut message = MSG::default();
+                            while GetMessageW(&mut message, None, 0, 0).0 > 0 {}
+                            let _ = UnhookWindowsHookEx(keyboard);
+                            let _ = UnhookWindowsHookEx(mouse);
+                        }
+                        (keyboard, mouse) => {
+                            if let Ok(hook) = keyboard {
+                                let _ = UnhookWindowsHookEx(hook);
+                            }
+                            if let Ok(hook) = mouse {
+                                let _ = UnhookWindowsHookEx(hook);
+                            }
+                        }
+                    }
+                    INPUT_WATCHING.store(false, std::sync::atomic::Ordering::SeqCst);
+                }
+            })
+            .is_err()
+        {
+            return false;
+        }
+        receive.recv().unwrap_or(false)
+    });
+    if !ready || !INPUT_WATCHING.load(std::sync::atomic::Ordering::SeqCst) {
+        INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+    }
+    INPUT_ACTIVITY.load(std::sync::atomic::Ordering::SeqCst)
+}
+
+/// Sends Unicode keyboard input without changing the clipboard.
+pub fn type_text(text: &str) -> Result<(), bool> {
+    use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE;
+    let mut inputs = Vec::new();
+    for unit in text.encode_utf16() {
+        for up in [false, true] {
+            let mut event = key(VIRTUAL_KEY(0), up);
+            // SAFETY: key() initializes the keyboard member of the INPUT union.
+            unsafe {
+                event.Anonymous.ki.wScan = unit;
+                event.Anonymous.ki.dwFlags |= KEYEVENTF_UNICODE;
+            }
+            inputs.push(event);
+        }
+    }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
+    if sent == inputs.len() { Ok(()) } else { Err(sent != 0) }
+}
+
+/// Deletes `count` preceding characters using Backspace key presses.
+pub fn backspace(count: usize) -> bool {
+    use windows::Win32::UI::Input::KeyboardAndMouse::VK_BACK;
+    let inputs: Vec<_> = (0..count)
+        .flat_map(|_| [key(VK_BACK, false), key(VK_BACK, true)])
+        .collect();
+    inputs.is_empty()
+        || unsafe {
+            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len()
+        }
+}
+
+fn with_focused_element<T>(read: impl FnOnce(&windows::Win32::UI::Accessibility::IUIAutomationElement) -> Option<T>) -> Option<T> {
+    use windows::Win32::System::Com::CoUninitialize;
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let result = (|| {
+            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            read(&automation.GetFocusedElement().ok()?)
+        })();
+        if initialized { CoUninitialize(); }
+        result
+    }
+}
+
+/// Several Chromium fields can share one rendering HWND. Prefer their UI Automation runtime ID.
+pub fn stream_focus() -> Option<u64> {
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use windows::Win32::System::Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound};
+    let element = with_focused_element(|field| unsafe {
+        let id = field.GetRuntimeId().ok()?;
+        if id.is_null() { return None; }
+        let result = (|| {
+            let start = SafeArrayGetLBound(id, 1).ok()?;
+            let end = SafeArrayGetUBound(id, 1).ok()?;
+            if end < start { return None; }
+            let mut hash = DefaultHasher::new();
+            for index in start..=end {
+                let mut part = 0i32;
+                SafeArrayGetElement(id, &index, (&mut part as *mut i32).cast()).ok()?;
+                part.hash(&mut hash);
+            }
+            Some(hash.finish() | 1)
+        })();
+        let _ = SafeArrayDestroy(id);
+        result
+    });
+    element.or_else(|| {
+        let focus = spot().focus;
+        (focus != 0).then_some((focus as u64) << 1)
+    })
+}
+
+/// Only check observable empty editable fields. Never retain or log the contents.
+pub fn stream_field_empty() -> Option<bool> {
+    use windows::Win32::UI::Accessibility::{IUIAutomationValuePattern, UIA_ValuePatternId};
+    with_focused_element(|field| unsafe {
+        if field.CurrentIsPassword().ok()?.as_bool() || field.CurrentControlType().ok()? != UIA_EditControlTypeId {
+            return None;
+        }
+        let value: IUIAutomationValuePattern = field.GetCurrentPatternAs(UIA_ValuePatternId).ok()?;
+        Some(value.CurrentValue().ok()?.is_empty())
+    })
+}
+
+static STREAM_SHORTCUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Excludes only the registered recording shortcut from manual-input cancellation.
+pub fn set_stream_shortcut(shortcut: crate::hotkey::Hotkey) {
+    STREAM_SHORTCUT.store(
+        (u64::from(shortcut.modifiers) << 32) | u64::from(shortcut.key),
+        std::sync::atomic::Ordering::SeqCst,
+    );
+    if held(VIRTUAL_KEY(shortcut.key as u16)) && is_stream_shortcut(shortcut.key) {
+        HELD_SHORTCUT.store(shortcut.key, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+static HELD_SHORTCUT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn stream_manual_key(key: u32, down: bool) -> bool {
+    crate::hotkey::manual_key(&HELD_SHORTCUT, key, down, down && is_stream_shortcut(key))
+}
+
+fn is_stream_shortcut(key: u32) -> bool {
+    use crate::hotkey;
+    let shortcut = STREAM_SHORTCUT.load(std::sync::atomic::Ordering::SeqCst);
+    if key == 0 || key != shortcut as u32 {
+        return false;
+    }
+    let modifiers = if held(VK_MENU) { hotkey::ALT } else { 0 }
+        | if held(VK_CONTROL) { hotkey::CONTROL } else { 0 }
+        | if held(VK_SHIFT) { hotkey::SHIFT } else { 0 }
+        | if held(VK_LWIN) || held(VK_RWIN) {
+            hotkey::SUPER
+        } else {
+            0
+        };
+    modifiers == (shortcut >> 32) as u32
 }

@@ -207,6 +207,17 @@ impl Requests {
         }
     }
 
+    /// A WebSocket session may revise a sentence until the recording is closed.
+    pub fn replace_sentences(&self, sentences: &[String], publish: impl FnOnce(&Queue)) {
+        let mut queue = self.queue.lock().unwrap();
+        if queue.status == Status::Active {
+            queue.accepted = sentences.len();
+            queue.answered = sentences.len();
+            queue.sentences = sentences.iter().filter(|s| !s.is_empty()).cloned().collect();
+            publish(&queue);
+        }
+    }
+
     pub fn cancel(&self) {
         self.queue.lock().unwrap().close(Status::Cancelled);
         self.changed.notify_all();

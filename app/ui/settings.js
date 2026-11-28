@@ -37,6 +37,7 @@ function openPage(tab) {
     byId(other.getAttribute('aria-controls')).hidden = !chosen;
   }
   document.querySelector('.pages').scrollTop = 0;
+  if (tab.id === 'tab-voice') refreshCodexSignIn();
 }
 tabs.forEach((tab, index) => {
   tab.addEventListener('click', () => openPage(tab));
@@ -80,6 +81,7 @@ function fill() {
   byId('noise-suppression').checked = Boolean(prefs.NoiseSuppression);
   byId('engine').value = prefs.Engine || (prefs.Online ? 'codex' : 'local');
   byId('streaming-asr').checked = Boolean(prefs.StreamingAsr);
+  byId('dictation-stream').checked = Boolean(prefs.DictationStream);
   showLocal();
   byId('api-url').value = prefs.ApiUrl;
   byId('api-model').value = prefs.ApiModel;
@@ -140,6 +142,7 @@ function collect(engineFromPage) {
       Engine: engine,
       Online: engine === 'codex',
       StreamingAsr: byId('streaming-asr').checked,
+      DictationStream: byId('dictation-stream').checked,
       LocalModel: byId('local-model').disabled ? panel.prefs.LocalModel : byId('local-model').value,
       Gpu: byId('gpu').disabled ? panel.prefs.Gpu : byId('gpu').checked,
       ApiUrl: engineFromPage ? byId('api-url').value.trim() : panel.prefs.ApiUrl,
@@ -176,13 +179,69 @@ function collect(engineFromPage) {
 const engineNotes = {
   local: () => local.ready ? '在這台電腦辨識，錄音不會離開電腦。' : '這台電腦還沒有模型，請在下面下載一個；下載後錄音不會離開電腦。',
   api: () => '錄音會傳到你填的服務，費用依該服務計算；網址是 localhost 時錄音留在這台電腦。',
-  codex: () => '錄音會經第三方的 codex-asr 傳到 ChatGPT，需要這台電腦上有效的 Codex 登入。',
+  codex: () => '錄音會經第三方元件傳到 ChatGPT，需要先在這台電腦用 ChatGPT 帳號登入 Codex。',
 };
+const codexSignInButton = byId('codex-sign-in');
+let codexSignedIn = null;
+let checkingCodexSignIn = false;
+let codexSignInTimer;
+
+function showCodexSignIn() {
+  const selected = byId('engine').value === 'codex';
+  byId('codex-sign-in-row').hidden = !selected;
+  codexSignInButton.hidden = codexSignedIn !== false;
+  const needsSignIn = selected && codexSignedIn === false;
+  for (const id of ['streaming-asr', 'dictation-stream']) {
+    byId(id + '-sign-in').hidden = !needsSignIn;
+    byId(id).setAttribute('aria-describedby', id + '-note' + (needsSignIn ? ' ' + id + '-sign-in' : ''));
+  }
+}
+
+async function refreshCodexSignIn() {
+  if (byId('engine').value !== 'codex' || checkingCodexSignIn) return;
+  checkingCodexSignIn = true;
+  const [message, signedIn] = await invoke('codex_sign_in_status')
+    .catch(() => ['無法讀取 Codex 登入狀態', false]);
+  checkingCodexSignIn = false;
+  const label = byId('codex-sign-in-status');
+  if (label.textContent !== message) label.textContent = message;
+  codexSignedIn = signedIn;
+  showCodexSignIn();
+  if (signedIn) clearInterval(codexSignInTimer);
+}
+
+window.addEventListener('focus', refreshCodexSignIn);
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden) refreshCodexSignIn();
+});
+codexSignInButton.addEventListener('click', async () => {
+  codexSignInButton.disabled = true;
+  clearInterval(codexSignInTimer);
+  const until = Date.now() + 30_000;
+  codexSignInTimer = setInterval(() => {
+    if (Date.now() >= until) clearInterval(codexSignInTimer);
+    refreshCodexSignIn();
+  }, 2_000);
+  try {
+    await invoke('open_codex_sign_in');
+    refreshCodexSignIn();
+  } catch (reason) {
+    say(String(reason));
+  } finally {
+    codexSignInButton.disabled = false;
+  }
+});
+
 function showEngine() {
   const engine = byId('engine').value;
   byId('engine-note').textContent = engineNotes[engine]();
+  showCodexSignIn();
+  refreshCodexSignIn();
   const streaming = byId('streaming-asr');
   streaming.disabled = engine !== 'codex';
+  const available = !streaming.disabled && streaming.checked;
+  byId('dictation-stream-row').hidden = !available;
+  byId('dictation-stream').disabled = !available;
   byId('streaming-asr-note').textContent = streaming.disabled
     ? '實驗功能。使用 Codex 線上辨識時可開啟。'
     : '實驗功能。每次停頓後，剛說完的句子會直接打進錄音開始時游標所在的欄位。開著 AI 潤稿，或「辨識完成後」不是「自動插入並複製文字」時，句子先顯示在浮窗，停錄後才處理全文。錄音片段會經 Codex 傳到 ChatGPT 辨識。';
@@ -201,6 +260,7 @@ function showKey() {
   byId('api-key-clear').disabled = !panel.api_key_set;
 }
 byId('engine').addEventListener('change', showEngine);
+byId('streaming-asr').addEventListener('change', showEngine);
 
 // AI refinement's own key, kept apart from the recognition service's key; like that one, it is never shown back.
 function showRefineKey() {

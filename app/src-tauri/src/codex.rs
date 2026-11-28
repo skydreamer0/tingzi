@@ -1,6 +1,32 @@
 //! What the app knows about the Codex desktop app: its message box, for the Ctrl+Alt+V draft
 //! shortcut, and the version installed, which online recognition through Codex names itself by.
 
+// OpenAI's desktop migration guide links here for the app that includes Codex on both platforms:
+// https://help.openai.com/en/articles/20001276-moving-to-the-new-chatgpt-desktop-app
+const DOWNLOAD_PAGE: &str = "https://chatgpt.com/download/";
+
+pub(crate) fn open_sign_in() -> Result<(), &'static str> {
+    launch_sign_in(
+        crate::sys::open_codex_desktop,
+        || crate::sys::codex_cli().map(|cli| crate::sys::open_codex_cli(&cli)),
+        || crate::sys::open(DOWNLOAD_PAGE),
+    )
+}
+
+fn launch_sign_in(
+    desktop: impl FnOnce() -> Option<bool>,
+    cli: impl FnOnce() -> Option<bool>,
+    download: impl FnOnce() -> bool,
+) -> Result<(), &'static str> {
+    if let Some(opened) = desktop() {
+        return opened.then_some(()).ok_or("無法開啟 Codex 桌面版，請手動開啟");
+    }
+    if let Some(opened) = cli() {
+        return opened.then_some(()).ok_or("無法開啟終端機，請手動執行 codex login");
+    }
+    download().then_some(()).ok_or("無法開啟 Codex 下載頁")
+}
+
 /// Whether the keyboard is in Codex's message box rather than, say, its search field.
 pub fn in_message_box(process: u32) -> bool {
     crate::sys::in_codex_message_box(process)
@@ -43,6 +69,14 @@ pub fn user_agent() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn sign_in_opens_the_first_available_option() {
+        assert_eq!(launch_sign_in(|| Some(true), || panic!("CLI was checked"), || panic!("browser was opened")), Ok(()));
+        assert_eq!(launch_sign_in(|| None, || Some(true), || panic!("browser was opened")), Ok(()));
+        assert_eq!(launch_sign_in(|| None, || None, || true), Ok(()));
+        assert!(launch_sign_in(|| Some(false), || panic!("CLI was checked"), || panic!("browser was opened")).is_err());
+    }
 
     #[test]
     fn the_version_is_read_from_the_package_name() {

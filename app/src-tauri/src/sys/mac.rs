@@ -16,9 +16,10 @@ use objc2_foundation::NSString;
 use std::ffi::c_void;
 use std::io::{Read, Write};
 use std::os::unix::ffi::OsStrExt;
+use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Mutex, OnceLock};
 use std::time::Duration;
@@ -43,12 +44,16 @@ extern "C" {
     fn CGEventSourceButtonState(state: i32, button: u32) -> bool;
     fn CGEventCreateKeyboardEvent(source: *const c_void, key: u16, down: bool) -> *mut c_void;
     fn CGEventSetFlags(event: *mut c_void, flags: u64);
+    fn CGEventGetFlags(event: *mut c_void) -> u64;
     fn CGEventPost(tap: u32, event: *mut c_void);
 }
 
 #[link(name = "ApplicationServices", kind = "framework")]
 extern "C" {
     static kAXTrustedCheckOptionPrompt: CFStringRef;
+    fn AXUIElementCreateApplication(pid: i32) -> *mut c_void;
+    fn AXUIElementCopyAttributeValue(element: *mut c_void, attribute: CFStringRef, value: *mut *const c_void) -> i32;
+    fn AXUIElementSetMessagingTimeout(element: *mut c_void, timeout: f32) -> i32;
     fn AXIsProcessTrusted() -> u8;
     fn AXIsProcessTrustedWithOptions(options: CFDictionaryRef) -> u8;
 }
@@ -174,6 +179,8 @@ fn press_with_command(letter: u16) -> bool {
         let up = CGEventCreateKeyboardEvent(std::ptr::null(), letter, false);
         let made = !down.is_null() && !up.is_null();
         if made {
+            CGEventSetIntegerValueField(down, 42, INPUT_TAG);
+            CGEventSetIntegerValueField(up, 42, INPUT_TAG);
             CGEventSetFlags(down, COMMAND);
             CGEventSetFlags(up, COMMAND);
             CGEventPost(WHOLE_SYSTEM, down);
@@ -241,6 +248,74 @@ pub fn processes_on_screen() -> Vec<u32> {
 /// None: on macOS the Codex recogniser reads the installed version itself.
 pub fn codex_version() -> Option<String> {
     None
+}
+
+pub fn open_codex_desktop() -> Option<bool> {
+    // The ChatGPT desktop app retains Codex's bundle identity:
+    // https://help.openai.com/en/articles/20001535-managing-chatgpt-desktop-browser-policies-with-mdm
+    const BUNDLE_ID: &str = "com.openai.codex";
+    let installed = autoreleasepool(|_| {
+        NSWorkspace::sharedWorkspace()
+            .URLForApplicationWithBundleIdentifier(&NSString::from_str(BUNDLE_ID))
+            .is_some()
+    });
+    if !installed {
+        return None;
+    }
+    Some(Command::new("/usr/bin/open")
+        .args(["-b", BUNDLE_ID])
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success()))
+}
+
+pub fn codex_cli() -> Option<PathBuf> {
+    let path = std::env::var_os("PATH")?;
+    std::env::split_paths(&path)
+        .map(|folder| folder.join("codex"))
+        .find(|path| path.metadata().is_ok_and(|meta| meta.is_file() && meta.permissions().mode() & 0o111 != 0))
+        .and_then(|path| std::path::absolute(path).ok())
+}
+
+pub fn open_codex_cli(cli: &Path) -> bool {
+    // Terminal opens a .command file in a new window without Apple Events permission.
+    let stamp = std::time::UNIX_EPOCH.elapsed().unwrap_or_default().as_nanos();
+    let path = std::env::temp_dir().join(format!("tingzi-codex-login-{}-{stamp}.command", std::process::id()));
+    let Ok(mut file) = std::fs::OpenOptions::new().write(true).create_new(true).mode(0o700).open(&path) else {
+        return false;
+    };
+    let written = (|| -> std::io::Result<()> {
+        file.write_all(b"#!/bin/sh\n/bin/rm -f -- \"$0\"\n")?;
+        for name in ["PATH", "CODEX_HOME"] {
+            if let Some(value) = std::env::var_os(name) {
+                write!(file, "export {name}=")?;
+                write_shell_word(&mut file, &value)?;
+                writeln!(file)?;
+            }
+        }
+        file.write_all(b"exec ")?;
+        write_shell_word(&mut file, cli.as_os_str())?;
+        file.write_all(b" login\n")
+    })();
+    drop(file);
+    let opened = written.is_ok() && Command::new("/usr/bin/open")
+        .args(["-a", "Terminal"])
+        .arg(&path)
+        .stderr(Stdio::null())
+        .status()
+        .is_ok_and(|status| status.success());
+    if !opened {
+        let _ = std::fs::remove_file(path);
+    }
+    opened
+}
+
+fn write_shell_word(file: &mut std::fs::File, word: &std::ffi::OsStr) -> std::io::Result<()> {
+    file.write_all(b"'")?;
+    for byte in word.as_bytes() {
+        file.write_all(if *byte == b'\'' { b"'\\''" } else { std::slice::from_ref(byte) })?;
+    }
+    file.write_all(b"'")
 }
 
 /// Whether the keyboard is in the Codex desktop app. Telling its message box from its other
@@ -564,4 +639,270 @@ mod tests {
         let entry = agent(Path::new("/Applications/Tingzi & Co.app/Contents/MacOS/Tingzi"));
         assert!(entry.contains("<string>/Applications/Tingzi &amp; Co.app/Contents/MacOS/Tingzi</string>"));
     }
+}
+
+pub fn preferred_language() -> Option<String> {
+    sys_locale::get_locale()
+}
+
+
+const INPUT_TAG: i64 = 0x5449_4e47_5a49;
+static INPUT_WATCHING: AtomicBool = AtomicBool::new(false);
+static INPUT_ACTIVITY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+#[link(name = "CoreGraphics", kind = "framework")]
+extern "C" {
+    fn CGEventKeyboardSetUnicodeString(event: *mut c_void, length: usize, text: *const u16);
+    fn CGEventSetIntegerValueField(event: *mut c_void, field: u32, value: i64);
+    fn CGEventGetIntegerValueField(event: *mut c_void, field: u32) -> i64;
+    fn CGEventTapCreate(
+        tap: u32,
+        place: u32,
+        options: u32,
+        mask: u64,
+        callback: unsafe extern "C" fn(*mut c_void, u32, *mut c_void, *mut c_void) -> *mut c_void,
+        user: *mut c_void,
+    ) -> *mut c_void;
+    fn CGEventTapEnable(tap: *mut c_void, enabled: bool);
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    static kCFRunLoopCommonModes: *const c_void;
+    fn CFMachPortCreateRunLoopSource(
+        allocator: *const c_void,
+        port: *mut c_void,
+        order: isize,
+    ) -> *mut c_void;
+    fn CFRunLoopGetCurrent() -> *mut c_void;
+    fn CFRunLoopAddSource(loop_: *mut c_void, source: *mut c_void, mode: *const c_void);
+    fn CFRunLoopRun();
+}
+
+unsafe extern "C" fn watch_input(
+    _proxy: *mut c_void,
+    kind: u32,
+    event: *mut c_void,
+    _user: *mut c_void,
+) -> *mut c_void {
+    // A disabled tap means activity was missed; invalidate the current insertion conservatively.
+    if kind >= 0xffff_fffe {
+        INPUT_WATCHING.store(false, Ordering::SeqCst);
+        INPUT_ACTIVITY.fetch_add(1, Ordering::SeqCst);
+    } else if !event.is_null()
+        && CGEventGetIntegerValueField(event, 42) != INPUT_TAG
+        && CGEventGetIntegerValueField(event, 41) != i64::from(std::process::id())
+        && !stream_shortcut_event(kind, event)
+    {
+        INPUT_ACTIVITY.fetch_add(1, Ordering::SeqCst);
+    }
+    event
+}
+
+/// Event counters retain quick taps and arrow presses; modifier-only flags changes are excluded.
+/// If macOS denies event observation, every read changes so insertion stops conservatively.
+pub fn input_activity() -> u64 {
+    static READY: OnceLock<bool> = OnceLock::new();
+    let ready = READY.get_or_init(|| {
+        let (send, receive) = std::sync::mpsc::sync_channel(1);
+        if std::thread::Builder::new()
+            .name("input-activity".into())
+            .spawn(move || unsafe {
+                // Key up clears the shortcut latch. Modifier-only changes do not count as activity.
+                let mask = (1u64 << 11) | (1u64 << 10) | (1u64 << 1) | (1u64 << 3) | (1u64 << 25);
+                let tap = CGEventTapCreate(0, 0, 1, mask, watch_input, std::ptr::null_mut());
+                if tap.is_null() {
+                    let _ = send.send(false);
+                    return;
+                }
+                let source = CFMachPortCreateRunLoopSource(std::ptr::null(), tap, 0);
+                if source.is_null() {
+                    CFRelease(tap);
+                    let _ = send.send(false);
+                    return;
+                }
+                CFRunLoopAddSource(CFRunLoopGetCurrent(), source, kCFRunLoopCommonModes);
+                CGEventTapEnable(tap, true);
+                INPUT_WATCHING.store(true, Ordering::SeqCst);
+                let _ = send.send(true);
+                CFRunLoopRun();
+                INPUT_WATCHING.store(false, Ordering::SeqCst);
+                CFRelease(source);
+                CFRelease(tap);
+            })
+            .is_err()
+        {
+            return false;
+        }
+        receive.recv().unwrap_or(false)
+    });
+    if !ready || !INPUT_WATCHING.load(Ordering::SeqCst) {
+        INPUT_ACTIVITY.fetch_add(1, Ordering::SeqCst);
+    }
+    INPUT_ACTIVITY.load(Ordering::SeqCst)
+}
+
+fn send_plain_key(code: u16, text: Option<&[u16]>) -> bool {
+    if !may_press_keys() {
+        return false;
+    }
+    // SAFETY: events and the UTF-16 slice remain alive through posting and are released once.
+    unsafe {
+        let down = CGEventCreateKeyboardEvent(std::ptr::null(), code, true);
+        let up = CGEventCreateKeyboardEvent(std::ptr::null(), code, false);
+        let made = !down.is_null() && !up.is_null();
+        if made {
+            for event in [down, up] {
+                CGEventSetFlags(event, 0);
+                CGEventSetIntegerValueField(event, 42, INPUT_TAG);
+                if let Some(text) = text {
+                    CGEventKeyboardSetUnicodeString(event, text.len(), text.as_ptr());
+                }
+                CGEventPost(0, event);
+            }
+        }
+        for event in [down, up] {
+            if !event.is_null() {
+                CFRelease(event);
+            }
+        }
+        made
+    }
+}
+
+/// Sends Unicode keyboard input without changing the clipboard.
+pub fn type_text(text: &str) -> Result<(), bool> {
+    // Keep surrogate pairs together and avoid the event's bounded Unicode payload.
+    for (index, letter) in text.chars().enumerate() {
+        let mut units = [0u16; 2];
+        if !send_plain_key(0, Some(letter.encode_utf16(&mut units))) { return Err(index != 0); }
+    }
+    Ok(())
+}
+
+/// Deletes `count` preceding characters using the macOS Delete (Backspace) key.
+pub fn backspace(count: usize) -> bool {
+    (0..count).all(|_| send_plain_key(51, None))
+}
+
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFHash(value: *const c_void) -> usize;
+}
+
+pub fn stream_field_empty() -> Option<bool> { None }
+
+/// Identifies the focused Accessibility element and its window inside the frontmost app.
+/// Missing permission, unsupported attributes and unresponsive apps cannot establish a safe
+/// insertion target, so they return None rather than treating the whole app as one field.
+pub fn stream_focus() -> Option<u64> {
+    let process = frontmost()?;
+    // SAFETY: all copied Accessibility objects are released on every path. The hash uses
+    // CF equality semantics, not the address of a newly created Accessibility proxy.
+    unsafe {
+        if AXIsProcessTrusted() == 0 {
+            return None;
+        }
+        let app = AXUIElementCreateApplication(i32::try_from(process).ok()?);
+        if app.is_null() {
+            return None;
+        }
+        let result = (|| {
+            // Bound each cross-process request; a busy target must not stall capture delivery.
+            if AXUIElementSetMessagingTimeout(app, 0.2) != 0 {
+                return None;
+            }
+            let focused = CFString::new("AXFocusedUIElement");
+            let window = CFString::new("AXFocusedWindow");
+            let mut field_value = std::ptr::null();
+            let field_status =
+                AXUIElementCopyAttributeValue(app, focused.as_concrete_TypeRef(), &mut field_value);
+            if field_status != 0 || field_value.is_null() {
+                if !field_value.is_null() {
+                    CFRelease(field_value);
+                }
+                return None;
+            }
+            let mut window_value = std::ptr::null();
+            let window_status =
+                AXUIElementCopyAttributeValue(app, window.as_concrete_TypeRef(), &mut window_value);
+            let fingerprint = if window_status == 0 && !window_value.is_null() {
+                Some(
+                    (CFHash(field_value) as u64).rotate_left(23)
+                        ^ (CFHash(window_value) as u64).rotate_left(7)
+                        ^ u64::from(process),
+                )
+            } else {
+                None
+            };
+            CFRelease(field_value);
+            if !window_value.is_null() {
+                CFRelease(window_value);
+            }
+            fingerprint
+        })();
+        CFRelease(app);
+        // Reject a switch that happened while Accessibility was servicing the requests.
+        if frontmost() == Some(process) {
+            result
+        } else {
+            None
+        }
+    }
+}
+
+static STREAM_SHORTCUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// Stores the recording shortcut as a physical macOS key code plus exact modifier flags.
+pub fn set_stream_shortcut(shortcut: crate::hotkey::Hotkey) {
+    let letters: [u32; 26] = [
+        0, 11, 8, 2, 14, 3, 5, 4, 34, 38, 40, 37, 46, 45, 31, 35, 12, 15, 1, 17, 32, 9, 13, 7, 16,
+        6,
+    ];
+    let digits: [u32; 10] = [29, 18, 19, 20, 21, 23, 22, 26, 28, 25];
+    let functions: [u32; 20] = [
+        122, 120, 99, 118, 96, 97, 98, 100, 101, 109, 103, 111, 105, 107, 113, 106, 64, 79, 80, 90,
+    ];
+    let code = match shortcut.key {
+        0x41..=0x5A => Some(letters[(shortcut.key - 0x41) as usize]),
+        0x30..=0x39 => Some(digits[(shortcut.key - 0x30) as usize]),
+        0x70..=0x83 => Some(functions[(shortcut.key - 0x70) as usize]),
+        _ => None,
+    };
+    // Add one so physical key code zero (A) remains distinct from disabled.
+    let packed = code.map_or(0, |code| {
+        (u64::from(shortcut.modifiers) << 32) | u64::from(code + 1)
+    });
+    STREAM_SHORTCUT.store(packed, Ordering::SeqCst);
+}
+
+unsafe fn stream_shortcut_event(kind: u32, event: *mut c_void) -> bool {
+    static HELD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if !matches!(kind, 10 | 11) { return false; }
+    let key = CGEventGetIntegerValueField(event, 9) as u32 + 1;
+    !crate::hotkey::manual_key(&HELD, key, kind == 10, kind == 10 && is_stream_shortcut(event))
+}
+
+unsafe fn is_stream_shortcut(event: *mut c_void) -> bool {
+    use crate::hotkey;
+    let shortcut = STREAM_SHORTCUT.load(Ordering::SeqCst);
+    if shortcut as u32 == 0
+        || CGEventGetIntegerValueField(event, 9) + 1 != i64::from(shortcut as u32)
+    {
+        return false;
+    }
+    let flags = CGEventGetFlags(event);
+    let modifiers = if flags & OPTION != 0 { hotkey::ALT } else { 0 }
+        | if flags & CONTROL != 0 {
+            hotkey::CONTROL
+        } else {
+            0
+        }
+        | if flags & SHIFT != 0 { hotkey::SHIFT } else { 0 }
+        | if flags & COMMAND != 0 {
+            hotkey::SUPER
+        } else {
+            0
+        };
+    modifiers == (shortcut >> 32) as u32
 }

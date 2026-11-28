@@ -2,6 +2,7 @@
 //! or through a transcription service the user chose and holds a key for.
 
 use crate::settings::{Engine, Settings};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine as _};
 use codex_asr::{CodexAsrClient, CodexAsrError, CodexAuth};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -119,10 +120,76 @@ fn drop_echo(heard: String, hint: &str) -> String {
 /// The upload limit the service accepts for one request.
 const LARGEST_UPLOAD: usize = 50 * 1024 * 1024;
 
-fn auth_file() -> PathBuf {
-    let home = std::env::var_os("CODEX_HOME").map(PathBuf::from).unwrap_or_else(|| crate::sys::home().join(".codex"));
-    home.join("auth.json")
+/// Where Codex keeps its sign-in. `codex_asr::default_auth_file` reads `HOME`, which Windows does not set.
+pub(crate) fn auth_file() -> PathBuf {
+    auth_file_in(std::env::var_os("CODEX_HOME"), crate::sys::home())
 }
+
+fn auth_file_in(codex_home: Option<std::ffi::OsString>, home: PathBuf) -> PathBuf {
+    codex_home.map(PathBuf::from).unwrap_or_else(|| home.join(".codex")).join("auth.json")
+}
+
+/// The Codex sign-in that both per-sentence uploads and streaming dictation use.
+pub(crate) fn codex_auth() -> Result<CodexAuth, String> {
+    CodexAuth::from_auth_file(auth_file()).map_err(explain)
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) enum CodexSignIn {
+    SignedIn,
+    Expired,
+    SignedOut,
+    Unsupported,
+}
+
+impl CodexSignIn {
+    pub(crate) fn message(&self) -> &'static str {
+        match self {
+            Self::SignedIn => "已登入",
+            Self::Expired => "登入已過期，請開啟 Codex 一次讓登入更新",
+            Self::SignedOut => "未登入",
+            Self::Unsupported => "登入方式不支援，請以 ChatGPT 帳號登入 Codex",
+        }
+    }
+}
+
+pub(crate) fn codex_sign_in() -> CodexSignIn {
+    let now = SystemTime::UNIX_EPOCH.elapsed().unwrap_or_default().as_secs();
+    sign_in_at(CodexAuth::from_auth_file(auth_file()), now)
+}
+
+fn sign_in_at(auth: Result<CodexAuth, CodexAsrError>, now: u64) -> CodexSignIn {
+    let auth = match auth {
+        Ok(auth) => auth,
+        Err(CodexAsrError::UnsupportedAuthMode { .. }) => return CodexSignIn::Unsupported,
+        Err(_) => return CodexSignIn::SignedOut,
+    };
+    let Some(payload) = jwt_payload(&auth.access_token) else {
+        return CodexSignIn::SignedOut;
+    };
+    match payload.get("exp") {
+        Some(exp) => match exp.as_f64() {
+            Some(exp) if exp <= now as f64 => CodexSignIn::Expired,
+            Some(_) => CodexSignIn::SignedIn,
+            None => CodexSignIn::SignedOut,
+        },
+        None => CodexSignIn::SignedIn,
+    }
+}
+
+// The payload is read only to show an expiry hint. Codex and the service validate the login.
+fn jwt_payload(token: &str) -> Option<serde_json::Map<String, serde_json::Value>> {
+    let mut parts = token.trim().split('.');
+    let header = parts.next()?;
+    let payload = parts.next()?;
+    let signature = parts.next()?;
+    if header.is_empty() || signature.is_empty() || parts.next().is_some() {
+        return None;
+    }
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(payload).ok()?).ok()
+}
+
+pub const CODEX_LANGUAGE: Option<&str> = Some("zh");
 
 /// Sends WAV bytes to Codex and returns the recognised text. Blocks; call it off the UI thread.
 pub fn online(wav: Vec<u8>) -> Result<String, String> {
@@ -132,7 +199,7 @@ pub fn online(wav: Vec<u8>) -> Result<String, String> {
     if wav.len() > LARGEST_UPLOAD {
         return Err("錄音超過 50 MiB，請分段錄".into());
     }
-    let heard = client()?.transcribe_bytes(wav, "audio.wav", "audio/wav", Some("zh".into())).map_err(explain)?;
+    let heard = client()?.transcribe_bytes(wav, "audio.wav", "audio/wav", CODEX_LANGUAGE.map(str::to_owned)).map_err(explain)?;
     Ok(heard.text.trim().to_string())
 }
 
@@ -158,7 +225,7 @@ fn client() -> Result<CodexAsrClient, String> {
             return Ok(ready.clone());
         }
     }
-    let auth = CodexAuth::from_auth_file(&file).map_err(explain)?;
+    let auth = codex_auth()?;
     let mut builder = CodexAsrClient::builder(auth);
     if let Some(name) = &named {
         builder = builder.user_agent(name.clone());
@@ -429,6 +496,56 @@ fn run_whisper(parts: &Parts, folder: &Path, wav: &[u8], cancelled: &dyn Fn() ->
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_codex_sign_in_is_found_without_home_set() {
+        let home = PathBuf::from("profile");
+        assert_eq!(auth_file_in(None, home.clone()), home.join(".codex").join("auth.json"));
+        assert_eq!(auth_file_in(Some("elsewhere".into()), home), PathBuf::from("elsewhere").join("auth.json"));
+    }
+
+    #[test]
+    fn codex_sign_in_uses_local_auth_without_exposing_credentials() {
+        let file = std::env::temp_dir().join(format!("tingzi-auth-test-{}-{:?}.json", std::process::id(), std::thread::current().id()));
+        let check = || sign_in_at(CodexAuth::from_auth_file(&file), 100);
+        assert_eq!(check(), CodexSignIn::SignedOut);
+
+        for (raw, expected) in [
+            ("{broken", CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"chatgpt","tokens":{}}"#, CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"chatgpt","tokens":{"access_token":"   "}}"#, CodexSignIn::SignedOut),
+            (r#"{"auth_mode":"apikey"}"#, CodexSignIn::Unsupported),
+            (r#"{"authMode":"fake-private-mode"}"#, CodexSignIn::Unsupported),
+        ] {
+            std::fs::write(&file, raw).unwrap();
+            let status = check();
+            assert_eq!(status, expected);
+            assert!(!status.message().contains("fake-private-mode"));
+        }
+        for (exp, expected) in [
+            (Some(99), CodexSignIn::Expired),
+            (Some(100), CodexSignIn::Expired),
+            (Some(101), CodexSignIn::SignedIn),
+            (None, CodexSignIn::SignedIn),
+        ] {
+            let mut claims = serde_json::json!({"email": "example@example.invalid"});
+            if let Some(exp) = exp {
+                claims["exp"] = exp.into();
+            }
+            let token = format!("eyJhbGciOiJIUzI1NiJ9.{}.ZmFrZQ", URL_SAFE_NO_PAD.encode(claims.to_string()));
+            let raw = serde_json::json!({
+                "auth_mode": "chatgpt",
+                "tokens": {"access_token": token, "account_id": "fake-account"}
+            });
+            std::fs::write(&file, raw.to_string()).unwrap();
+            let status = check();
+            assert_eq!(status, expected);
+            for private in [token.as_str(), "fake-account", "example@example.invalid"] {
+                assert!(!status.message().contains(private));
+            }
+        }
+        std::fs::remove_file(file).unwrap();
+    }
 
     #[test]
     fn one_proxy_for_every_protocol_is_used() {
