@@ -521,6 +521,8 @@ class Input {
     bool recallMode=false;
     std::shared_ptr<const std::vector<Sentence>> sentences;
     std::optional<Sentence> committed;
+    std::shared_ptr<const std::vector<Text>> recentSymbols;
+    std::optional<Text> symbolPick;
     size_t symbolGroup=0;
     // Replacing a punctuation mark still in this composition, not text in the host document.
     std::optional<size_t> symbolTarget;
@@ -976,13 +978,16 @@ public:
     void setPreferences(std::shared_ptr<const Preferences> p){preferences=std::move(p);}
     void setFavorites(std::shared_ptr<const Favorites> f){favorites=std::move(f);}
     void setSentences(std::shared_ptr<const std::vector<Sentence>> list){sentences=std::move(list);}
+    void setRecentSymbols(std::shared_ptr<const std::vector<Text>> list){recentSymbols=std::move(list);}
+    bool inSymbolTable() const {return symbolMode && !similarGroup;}
+    const std::optional<Text>& pickedSymbol() const {return symbolPick;}
     // The sentence the last key committed, for the caller to remember; unset for short or symbol-only text.
     std::optional<Sentence> committedSentence() const {return committed;}
     void setSegmenter(Segmenter mode){segmenter=mode;}
     void setLayout(KeyLayout keys){layout=keys;}
     // Unset follows the user setting each time text is committed.
     void setSimplifiedOutput(std::optional<bool> mode){simplifiedOutput=mode;}
-    bool learningActive() const {return bool(preferences);}
+    bool learningActive() const {return inSymbolTable()?bool(recentSymbols):bool(preferences);}
     std::vector<Correction> corrections() const {
         if(hasLetters())return {};
         std::vector<Correction> edits;for(const auto& seg:settled)if(seg.correction)edits.push_back(*seg.correction);
@@ -1034,7 +1039,12 @@ public:
                 for(const auto other:*similarGroup)
                     if(other!=mark)result.push_back({Text(other),0});
             }else{
-                for(const wchar_t* mark:symbolGroups[symbolGroup].marks)result.push_back({mark,0});
+                const auto* recent=symbolGroup==0?recentSymbols.get():nullptr;
+                if(recent)for(const auto& mark:*recent)result.push_back({mark,0});
+                for(const wchar_t* mark:symbolGroups[symbolGroup].marks){
+                    if(!recent || std::find(recent->begin(),recent->end(),mark)==recent->end())
+                        result.push_back({mark,0});
+                }
             }
             return result;
         }
@@ -1170,7 +1180,7 @@ public:
     }
     // Returns committed text separately from the remaining preedit.
     Text press(WPARAM key) {
-        added.reset();committed.reset();typed.reset();
+        added.reset();committed.reset();typed.reset();symbolPick.reset();
         loose=implied;implied=0;owed=lent;lent.reset();held=spare;spare.reset();
         if(!wants(key)) return {};
         if(key&literalKey)return Text(1,wchar_t(key&0xffff));
@@ -1241,6 +1251,7 @@ public:
                 }
                 if(symbolMode){
                     const auto replace=symbolTarget;
+                    if(inSymbolTable() && (replace || syllables.size()<128))symbolPick=picked.text;
                     leavePicking();
                     if(replace){
                         syllables[*replace]=Text(1,symbolMark)+picked.text;

@@ -152,6 +152,7 @@ int wmain(int argc,wchar_t** argv) {
     expect(input.press(shiftKey|VK_OEM_COMMA).empty() && input.active() && input.preview()==L"，","Shift+comma starts a composition without committing");
     expect(input.press(VK_RETURN)==L"，" && !input.active(),"Enter commits the full-width comma");
     input.press(shiftKey|VK_OEM_COMMA);input.press(VK_SPACE);
+    expect(!input.pickedSymbol(),"Space does not record a symbol-table pick");
     expect(!input.selecting() && input.press(VK_RETURN)==L"、","Space replaces a comma with the second similar symbol");
     input.press(VK_OEM_5);input.press(VK_DOWN);
     options=input.choices();
@@ -186,6 +187,7 @@ int wmain(int argc,wchar_t** argv) {
     input.press(VK_NEXT);
     expect(input.menu()==L"1 ︹  2 ︻  3 ﹁  4 ﹃    PgUp/PgDn","the second page shows four left brackets starting with ︹");
     expect(input.press('1').empty() && !input.selecting() && input.preview()==L"︹","choosing a bracket on page two replaces it in the composition");
+    expect(!input.pickedSymbol(),"a similar-symbol selection is not recorded");
     input.press(VK_DOWN);
     const auto verticalBrackets=input.choices();
     expect(verticalBrackets.size()==13 && verticalBrackets[0].text==L"︹" && verticalBrackets[1].text==L"「","a vertical bracket is first when reopening its list");
@@ -224,6 +226,26 @@ int wmain(int argc,wchar_t** argv) {
     expect(options.size()==9 && options[0].text==L"［" && options[1].text==L"（","Down reopens the same group from a square bracket");
     input.press(VK_ESCAPE);
     expect(input.press(VK_RETURN)==L"你［","the similar-symbol list replaces a parenthesis");
+    input.press(VK_OEM_3);
+    std::vector<Text> defaults(symbolGroups[0].marks.begin(),symbolGroups[0].marks.end());
+    auto common=[&](){
+        std::vector<Text> marks;
+        for(const auto& option:input.choices())marks.push_back(option.text);
+        return marks;
+    };
+    expect(common()==defaults,"the common category starts in its original order");
+    input.press(VK_TAB);input.press(VK_TAB);input.press(VK_NEXT);input.press(VK_NEXT);
+    expect(input.press('9')==L"︽" && input.pickedSymbol()==L"︽","the bracket category reports the selected symbol");
+    input.setRecentSymbols(std::make_shared<const std::vector<Text>>(std::vector<Text>{L"︽",L"😀"}));
+    input.press(VK_OEM_3);
+    expect(!input.pickedSymbol(),"the next key clears the reported symbol");
+    auto expected=defaults;
+    expected.insert(expected.begin(),{L"︽",L"😀"});
+    expect(common()==expected,"recent symbols precede the default list including a complete emoji");
+    input.setRecentSymbols(std::make_shared<const std::vector<Text>>(std::vector<Text>{L"。"}));
+    std::swap(defaults[0],defaults[1]);
+    expect(common()==defaults,"a recent default appears only once");
+    input.press(VK_ESCAPE);input.setRecentSymbols(nullptr);
     input.press(VK_OEM_3);
     expect(input.selecting() && input.listTitle().rfind(L"符號・常用",0)==0 && input.choices().size()>20,"backtick opens the symbol list");
     expect(input.press('2')==L"。" && !input.active(),"symbol from the list commits when idle");
