@@ -127,11 +127,20 @@ Install 'mixed-folder-install'
 Set-Content (Join-Path $root 'unrelated.txt') 'unrelated file'
 New-Item -ItemType Directory (Join-Path $root 'v1.notes') | Out-Null
 Set-Content (Join-Path $root 'v1.notes\sentinel.txt') 'unrelated folder'
+foreach ($name in 'v0.99.0', 'v0.6.0') {
+    New-Item -ItemType Directory (Join-Path $root $name) | Out-Null
+    Set-Content (Join-Path $root "$name\sentinel.txt") 'unverified version folder'
+}
 Uninstall 'mixed-folder-uninstall'
 Check (!(Test-Path $uninstallKey)) 'mixed-folder uninstall removes the apps entry'
 Check (!(Test-Path (Join-Path $root "v$($entry.DisplayVersion)"))) 'mixed-folder uninstall removes the owned version folder'
 Check ((Get-Content (Join-Path $root 'unrelated.txt')) -eq 'unrelated file') 'mixed-folder uninstall preserves an unrelated file'
 Check ((Get-Content (Join-Path $root 'v1.notes\sentinel.txt')) -eq 'unrelated folder') 'mixed-folder uninstall preserves an unrelated subfolder'
+foreach ($name in 'v0.99.0', 'v0.6.0') {
+    Check ((Get-Content (Join-Path $root "$name\sentinel.txt")) -eq 'unverified version folder') "unverified version folder survives: $name"
+    Check ((Get-Content (Join-Path $logs 'mixed-folder-uninstall.log') -Raw).Contains("Leaving unrelated or unverified install-root item: $root\$name")) "unverified version folder is logged: $name"
+    Remove-Item (Join-Path $root $name) -Recurse
+}
 Check (@(Get-ChildItem $root).Count -eq 2) 'mixed-folder uninstall leaves only unrelated items'
 Remove-Item (Join-Path $root 'unrelated.txt')
 Remove-Item (Join-Path $root 'v1.notes') -Recurse
@@ -187,3 +196,26 @@ try {
 Remove-Item $pendingPad[0].FullName
 [IO.Directory]::Delete($root)
 Write-Host 'Legacy root cleanup checks passed.'
+
+Install 'rename-denied-install'
+$pad = Join-Path $root 'TingziPad.exe'
+Copy-Item $dll $pad
+$noDeleteShare = [IO.File]::Open($pad, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::Read)
+try {
+    Uninstall 'rename-denied-uninstall'
+    Check (!(Test-Path $uninstallKey)) 'rename-denied uninstall still removes the apps entry'
+    Check (Test-Path $pad) 'a locked file that cannot be renamed stays at its original path'
+    Check ((Get-Content (Join-Path $logs 'rename-denied-uninstall.log') -Raw).Contains("Leaving locked owned file because rename failed: $pad")) 'rename failure is logged without scheduling the original path'
+    $pending = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager' -ErrorAction SilentlyContinue).PendingFileRenameOperations
+    $deletions = @()
+    for ($i = 0; $i -lt $pending.Count; $i += 2) {
+        if ($pending[$i + 1] -eq '') { $deletions += $pending[$i] -replace '^(\*\d+)?\\\?\?\\', '' }
+    }
+    Check ($deletions -notcontains $pad) 'the rename-denied original path is not pending deletion'
+    Check (@(Get-ChildItem $root).Count -eq 1) 'only the unscheduled locked file remains after uninstall'
+} finally {
+    $noDeleteShare.Dispose()
+}
+Remove-Item $pad
+[IO.Directory]::Delete($root)
+Write-Host 'Rename-denied cleanup checks passed.'
