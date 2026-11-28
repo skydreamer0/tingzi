@@ -882,11 +882,12 @@ unsafe extern "system" fn watch_keyboard(
     data: LPARAM,
 ) -> windows::Win32::Foundation::LRESULT {
     use windows::Win32::UI::WindowsAndMessaging::*;
-    if code >= 0 && matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN) {
+    if code >= 0 && matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN | WM_KEYUP | WM_SYSKEYUP) {
         let event = &*(data.0 as *const KBDLLHOOKSTRUCT);
         // All injected keys are excluded, including Tingzi's Unicode and shortcut events.
         let modifier = matches!(event.vkCode, 0x10..=0x12 | 0x5B..=0x5C | 0xA0..=0xA5);
-        if !modifier && event.flags.0 & LLKHF_INJECTED.0 == 0 && !is_stream_shortcut(event.vkCode) {
+        if event.flags.0 & LLKHF_INJECTED.0 == 0 && !modifier && stream_manual_key(event.vkCode,
+            matches!(message.0 as u32, WM_KEYDOWN | WM_SYSKEYDOWN)) {
             INPUT_ACTIVITY.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
         }
     }
@@ -964,7 +965,7 @@ pub fn input_activity() -> u64 {
 }
 
 /// Sends Unicode keyboard input without changing the clipboard.
-pub fn type_text(text: &str) -> bool {
+pub fn type_text(text: &str) -> Result<(), bool> {
     use windows::Win32::UI::Input::KeyboardAndMouse::KEYEVENTF_UNICODE;
     let mut inputs = Vec::new();
     for unit in text.encode_utf16() {
@@ -978,10 +979,8 @@ pub fn type_text(text: &str) -> bool {
             inputs.push(event);
         }
     }
-    inputs.is_empty()
-        || unsafe {
-            SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) as usize == inputs.len()
-        }
+    let sent = unsafe { SendInput(&inputs, std::mem::size_of::<INPUT>() as i32) } as usize;
+    if sent == inputs.len() { Ok(()) } else { Err(sent != 0) }
 }
 
 /// Deletes `count` preceding characters using Backspace key presses.
@@ -996,9 +995,57 @@ pub fn backspace(count: usize) -> bool {
         }
 }
 
-/// Windows focus is already identified by the window/control handles in Spot.
+fn with_focused_element<T>(read: impl FnOnce(&windows::Win32::UI::Accessibility::IUIAutomationElement) -> Option<T>) -> Option<T> {
+    use windows::Win32::System::Com::CoUninitialize;
+    unsafe {
+        let initialized = CoInitializeEx(None, COINIT_MULTITHREADED).is_ok();
+        let result = (|| {
+            let automation: IUIAutomation = CoCreateInstance(&CUIAutomation, None, CLSCTX_INPROC_SERVER).ok()?;
+            read(&automation.GetFocusedElement().ok()?)
+        })();
+        if initialized { CoUninitialize(); }
+        result
+    }
+}
+
+/// Several Chromium fields can share one rendering HWND. Prefer their UI Automation runtime ID.
 pub fn stream_focus() -> Option<u64> {
-    Some(0)
+    use std::hash::{DefaultHasher, Hash, Hasher};
+    use windows::Win32::System::Ole::{SafeArrayDestroy, SafeArrayGetElement, SafeArrayGetLBound, SafeArrayGetUBound};
+    let element = with_focused_element(|field| unsafe {
+        let id = field.GetRuntimeId().ok()?;
+        if id.is_null() { return None; }
+        let result = (|| {
+            let start = SafeArrayGetLBound(id, 1).ok()?;
+            let end = SafeArrayGetUBound(id, 1).ok()?;
+            if end < start { return None; }
+            let mut hash = DefaultHasher::new();
+            for index in start..=end {
+                let mut part = 0i32;
+                SafeArrayGetElement(id, &index, (&mut part as *mut i32).cast()).ok()?;
+                part.hash(&mut hash);
+            }
+            Some(hash.finish() | 1)
+        })();
+        let _ = SafeArrayDestroy(id);
+        result
+    });
+    element.or_else(|| {
+        let focus = spot().focus;
+        (focus != 0).then_some((focus as u64) << 1)
+    })
+}
+
+/// Only check observable empty editable fields. Never retain or log the contents.
+pub fn stream_field_empty() -> Option<bool> {
+    use windows::Win32::UI::Accessibility::{IUIAutomationValuePattern, UIA_ValuePatternId};
+    with_focused_element(|field| unsafe {
+        if field.CurrentIsPassword().ok()?.as_bool() || field.CurrentControlType().ok()? != UIA_EditControlTypeId {
+            return None;
+        }
+        let value: IUIAutomationValuePattern = field.GetCurrentPatternAs(UIA_ValuePatternId).ok()?;
+        Some(value.CurrentValue().ok()?.is_empty())
+    })
 }
 
 static STREAM_SHORTCUT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
@@ -1009,6 +1056,15 @@ pub fn set_stream_shortcut(shortcut: crate::hotkey::Hotkey) {
         (u64::from(shortcut.modifiers) << 32) | u64::from(shortcut.key),
         std::sync::atomic::Ordering::SeqCst,
     );
+    if held(VIRTUAL_KEY(shortcut.key as u16)) && is_stream_shortcut(shortcut.key) {
+        HELD_SHORTCUT.store(shortcut.key, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+static HELD_SHORTCUT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+
+fn stream_manual_key(key: u32, down: bool) -> bool {
+    crate::hotkey::manual_key(&HELD_SHORTCUT, key, down, down && is_stream_shortcut(key))
 }
 
 fn is_stream_shortcut(key: u32) -> bool {

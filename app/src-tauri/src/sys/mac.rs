@@ -692,7 +692,7 @@ unsafe extern "C" fn watch_input(
     } else if !event.is_null()
         && CGEventGetIntegerValueField(event, 42) != INPUT_TAG
         && CGEventGetIntegerValueField(event, 41) != i64::from(std::process::id())
-        && !(kind == 10 && is_stream_shortcut(event))
+        && !stream_shortcut_event(kind, event)
     {
         INPUT_ACTIVITY.fetch_add(1, Ordering::SeqCst);
     }
@@ -708,8 +708,8 @@ pub fn input_activity() -> u64 {
         if std::thread::Builder::new()
             .name("input-activity".into())
             .spawn(move || unsafe {
-                // Listen only: keyDown, left/right/other mouseDown. flagsChanged is not watched.
-                let mask = (1u64 << 10) | (1u64 << 1) | (1u64 << 3) | (1u64 << 25);
+                // Key up clears the shortcut latch. Modifier-only changes do not count as activity.
+                let mask = (1u64 << 11) | (1u64 << 10) | (1u64 << 1) | (1u64 << 3) | (1u64 << 25);
                 let tap = CGEventTapCreate(0, 0, 1, mask, watch_input, std::ptr::null_mut());
                 if tap.is_null() {
                     let _ = send.send(false);
@@ -771,12 +771,13 @@ fn send_plain_key(code: u16, text: Option<&[u16]>) -> bool {
 }
 
 /// Sends Unicode keyboard input without changing the clipboard.
-pub fn type_text(text: &str) -> bool {
+pub fn type_text(text: &str) -> Result<(), bool> {
     // Keep surrogate pairs together and avoid the event's bounded Unicode payload.
-    text.chars().all(|letter| {
+    for (index, letter) in text.chars().enumerate() {
         let mut units = [0u16; 2];
-        send_plain_key(0, Some(letter.encode_utf16(&mut units)))
-    })
+        if !send_plain_key(0, Some(letter.encode_utf16(&mut units))) { return Err(index != 0); }
+    }
+    Ok(())
 }
 
 /// Deletes `count` preceding characters using the macOS Delete (Backspace) key.
@@ -788,6 +789,8 @@ pub fn backspace(count: usize) -> bool {
 extern "C" {
     fn CFHash(value: *const c_void) -> usize;
 }
+
+pub fn stream_field_empty() -> Option<bool> { None }
 
 /// Identifies the focused Accessibility element and its window inside the frontmost app.
 /// Missing permission, unsupported attributes and unresponsive apps cannot establish a safe
@@ -871,6 +874,13 @@ pub fn set_stream_shortcut(shortcut: crate::hotkey::Hotkey) {
         (u64::from(shortcut.modifiers) << 32) | u64::from(code + 1)
     });
     STREAM_SHORTCUT.store(packed, Ordering::SeqCst);
+}
+
+unsafe fn stream_shortcut_event(kind: u32, event: *mut c_void) -> bool {
+    static HELD: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    if !matches!(kind, 10 | 11) { return false; }
+    let key = CGEventGetIntegerValueField(event, 9) as u32 + 1;
+    !crate::hotkey::manual_key(&HELD, key, kind == 10, kind == 10 && is_stream_shortcut(event))
 }
 
 unsafe fn is_stream_shortcut(event: *mut c_void) -> bool {

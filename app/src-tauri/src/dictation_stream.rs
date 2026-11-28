@@ -44,12 +44,10 @@ fn connect_tcp(host: &str, port: u16) -> Result<TcpStream> {
     Err("連線失敗或逾時")
 }
 
-fn transport() -> Result<(Route, TcpStream)> {
-    let control = |tcp: &TcpStream| tcp.try_clone().map_err(|_| "連線設定失敗");
+fn transport() -> Result<Route> {
     let Some(route) = crate::recognise::proxy_for(HOST) else {
         let tcp = connect_tcp(HOST, 443)?;
-        let control = control(&tcp)?;
-        return Ok((Route::Plain(tcp), control));
+        return Ok(Route::Plain(tcp));
     };
     let proxy = reqwest::Url::parse(&route).map_err(|_| "代理位址無效")?;
     if !matches!(proxy.scheme(), "http" | "https") {
@@ -61,7 +59,6 @@ fn transport() -> Result<(Route, TcpStream)> {
         .trim_start_matches('[')
         .trim_end_matches(']');
     let tcp = connect_tcp(host, proxy.port_or_known_default().ok_or("代理連接埠無效")?)?;
-    let control = control(&tcp)?;
     let mut stream = if proxy.scheme() == "https" {
         let roots =
             rustls::RootCertStore::from_iter(webpki_roots::TLS_SERVER_ROOTS.iter().cloned());
@@ -105,7 +102,7 @@ fn transport() -> Result<(Route, TcpStream)> {
             break;
         }
     }
-    Ok((stream, control))
+    Ok(stream)
 }
 
 fn connect() -> Result<Socket> {
@@ -141,7 +138,7 @@ fn connect() -> Result<Socket> {
     ] {
         headers.insert(name, value.parse().map_err(|_| "串流標頭無效")?);
     }
-    let (stream, control) = transport()?;
+    let stream = transport()?;
     let (socket, response) = tungstenite::client_tls(request, stream).map_err(|err| match err {
         HandshakeError::Failure(Error::Http(r))
             if blocked(
@@ -159,9 +156,6 @@ fn connect() -> Result<Socket> {
     ) {
         return Err("串流連線被擋");
     }
-    control
-        .set_read_timeout(Some(Duration::from_millis(10)))
-        .map_err(|_| "連線設定失敗")?;
     Ok(socket)
 }
 
@@ -177,9 +171,19 @@ fn start(rate: usize, language: Option<&str>) -> Value {
 }
 
 fn send(socket: &mut Socket, message: Value) -> Result<()> {
-    socket
-        .send(Message::Text(message.to_string().into()))
-        .map_err(|_| "串流傳送中斷")
+    let deadline = Instant::now() + TIMEOUT;
+    let mut result = socket.send(Message::Text(message.to_string().into()));
+    loop {
+        match result {
+            Ok(()) => return Ok(()),
+            Err(Error::Io(e)) if e.kind() == ErrorKind::WouldBlock && Instant::now() < deadline => {
+                // Tungstenite retained the frame. Only flush it, never enqueue a duplicate.
+                std::thread::sleep(Duration::from_millis(2));
+                result = socket.flush();
+            }
+            _ => return Err("串流傳送中斷"),
+        }
+    }
 }
 
 fn packet_size(sent: usize) -> usize {
@@ -231,10 +235,12 @@ pub enum Update {
 pub struct Updates {
     items: Mutex<VecDeque<Update>>,
     ready: Condvar,
+    pub last_final: Mutex<Option<Instant>>,
 }
 
 impl Updates {
     pub fn push(&self, update: Update) {
+        if matches!(update, Update::Final(..)) { *self.last_final.lock().unwrap() = Some(Instant::now()); }
         let mut items = self.items.lock().unwrap();
         if !matches!(update, Update::Finish)
             && matches!(items.back(), Some(Update::Segment(_) | Update::Freeze))
@@ -508,6 +514,15 @@ pub(crate) struct Connection {
 }
 
 fn begin(socket: Socket, handshake: Instant, rate: usize) -> Result<Connection> {
+    // Switch the actual transport after both TLS handshakes, including HTTPS CONNECT.
+    fn underlying<S: Read + Write>(stream: &MaybeTlsStream<S>) -> Result<&S> {
+        match stream {
+            MaybeTlsStream::Plain(tcp) => Ok(tcp),
+            MaybeTlsStream::Rustls(tls) => Ok(&tls.sock),
+            _ => Err("串流連線類型不支援"),
+        }
+    }
+    underlying(underlying(socket.get_ref())?)?.set_nonblocking(true).map_err(|_| "連線設定失敗")?;
     let mut socket = socket;
     send(&mut socket, start(rate, crate::recognise::CODEX_LANGUAGE))?;
     Ok(Connection { socket, handshake, requested: Instant::now() })
@@ -631,6 +646,7 @@ fn sessions(
             } else {
                 read(&mut socket)?
             };
+            if event.is_none() { std::thread::sleep(Duration::from_millis(5)); }
             if let Some(event) = event {
                 if let Some(line) = trace.0.record(&event, recording.elapsed().as_millis()) {
                     report::note(line);
@@ -670,6 +686,10 @@ fn sessions(
             }
             if let Some(deadline) = closing {
                 if Instant::now() >= deadline {
+                    if state.stop_request.is_none() && !state.pieces.is_empty() &&
+                        state.pieces.iter().all(|p| p.revision.is_some()) {
+                        break;
+                    }
                     return Err("串流收尾逾時".into());
                 }
                 continue;
@@ -711,12 +731,7 @@ fn sessions(
                 }
                 sent += tail;
                 send(&mut socket, json!({"type":"session.close"}))?;
-                closing = Some(
-                    Instant::now()
-                        + TIMEOUT.max(Duration::from_secs_f64(
-                            (sent + rate / 4) as f64 / rate as f64,
-                        )),
-                );
+                closing = Some(Instant::now() + Duration::from_secs(8));
             }
         }
         total += sent;
@@ -1003,6 +1018,8 @@ mod tests {
         Disconnect,
         StopRequest,
         MissingFinal,
+        /// After close the server neither finishes the announced sentence nor closes.
+        Silent,
     }
 
     fn peer_after_first(ending: Ending, stream_rate: usize) -> (Socket, std::thread::JoinHandle<()>) {
@@ -1039,7 +1056,7 @@ mod tests {
                 .unwrap();
             } else {
                 ws.send(Message::text(first.to_string())).unwrap();
-                let next = if ending == Ending::MissingFinal {
+                let next = if matches!(ending, Ending::MissingFinal | Ending::Silent) {
                     r#"{"type":"transcript.segment","utterance_id":"b","text":"draft"}"#
                 } else {
                     r#"{"type":"speech.started","utterance_id":"b"}"#
@@ -1058,6 +1075,12 @@ mod tests {
             }
             if ending == Ending::Disconnect {
                 // Drop after reading the client's backlog, before the closing acknowledgement.
+                return;
+            }
+            if ending == Ending::Silent {
+                // Stay connected until the client gives up and drops the socket.
+                ws.get_mut().set_read_timeout(Some(Duration::from_secs(30))).unwrap();
+                let _ = ws.read();
                 return;
             }
             assert!(audio_bytes.ends_with(&vec![0; stream_rate / 4 * 2]));
@@ -1101,6 +1124,239 @@ mod tests {
             assert_eq!(updates.next(true), Some(Update::Final(index, index.to_string(), index + 1)));
         }
         assert_eq!(updates.next(true), Some(Update::Segment("next".into())));
+    }
+
+    /// A text field with the caret at its end, as the live keys see it.
+    #[derive(Default)]
+    struct Field(String);
+
+    impl crate::live::Keys for Field {
+        fn state(&mut self) -> crate::live::KeyState { crate::live::KeyState::Ready }
+        fn erase(&mut self, count: usize) -> bool {
+            for _ in 0..count { self.0.pop(); }
+            true
+        }
+        fn write(&mut self, text: &str) -> bool {
+            self.0.push_str(text);
+            true
+        }
+    }
+
+    /// Feeds server events through the session and the update queue the way a recording does, with tidying on,
+    /// and returns what live typing left in the field and the text the non-live preview delivers at the end.
+    fn deliver(events: &[Value], live: bool, lagging: bool) -> (String, String) {
+        fn drain(updates: &Updates, live: bool, typing: &mut Typing, field: &mut Field, sentences: &mut Vec<String>) {
+            while let Some(update) = updates.next(true) {
+                match update {
+                    Update::Segment(text) => typing.segment(&crate::tidy::tidy(&text)),
+                    Update::Freeze => typing.freeze_segment(),
+                    Update::Final(index, text, end) => {
+                        if live { typing.stream_final(&crate::tidy::tidy(&text), end); }
+                        if index < sentences.len() { sentences[index] = text; } else { sentences.push(text); }
+                    }
+                    Update::Finish => unreachable!(),
+                }
+                assert!(typing.flush(Duration::ZERO, field));
+            }
+        }
+        let mut session = Session::new(RATE, live);
+        let updates = Updates::default();
+        let (mut typing, mut field, mut sentences) = (Typing::default(), Field::default(), Vec::new());
+        for (at, event) in events.iter().enumerate() {
+            session.receive(event, at * 100, Duration::ZERO).unwrap();
+            session.publish(|index, text, end| updates.push(Update::Final(index, text.into(), end)));
+            if let Some(change) = session.preview().filter(|_| live) {
+                updates.push(match change {
+                    Preview::Segment(text) => Update::Segment(text.into()),
+                    Preview::Freeze => Update::Freeze,
+                });
+            }
+            if !lagging { drain(&updates, live, &mut typing, &mut field, &mut sentences); }
+        }
+        drain(&updates, live, &mut typing, &mut field, &mut sentences);
+        if live { assert_eq!(typing.text(), field.0); }
+        let preview = crate::tidy::tidy(&crate::streaming_asr::join(&sentences));
+        (field.0, preview)
+    }
+
+    fn event(kind: &str, id: &str, revision: u64, text: &str) -> Value {
+        json!({"type":kind,"utterance_id":id,"revision":revision,"text":text})
+    }
+
+    #[test]
+    fn late_commas_and_finals_keep_rapid_sentences_in_speaking_order() {
+        let started = |id: &str| json!({"type":"speech.started","utterance_id":id});
+        let events = [
+            started("a"),
+            event("transcript.segment", "a", 1, "如果它"),
+            started("b"),
+            event("transcript.segment", "b", 1, "ASR"),
+            event("transcript.segment", "a", 2, "如果它，"),
+            event("transcript.final", "a", 3, "如果它，"),
+            event("transcript.segment", "b", 2, "ASR 1.25"),
+            json!({"type":"speech.stopped","utterance_id":"b","audio_end_ms":2000}),
+            event("transcript.final", "b", 3, "ASR 1.25，1,200。"),
+            // The first sentence is revised again after the second one was typed.
+            event("transcript.final", "a", 4, "如果它，"),
+            event("transcript.segment", "a", 5, "如果它，，"),
+            started("c"),
+            started("d"),
+            event("transcript.final", "d", 1, "第二句。"),
+            event("transcript.segment", "c", 1, "然後"),
+            event("transcript.final", "c", 2, "然後，"),
+            event("transcript.final", "c", 3, "然後，"),
+        ];
+        let expected = "如果它，ASR 1.25，1,200。然後，第二句。";
+        for lagging in [false, true] {
+            assert_eq!(deliver(&events, true, lagging).0, expected, "live, lagging {lagging}");
+            assert_eq!(deliver(&events, false, lagging).1, expected, "preview, lagging {lagging}");
+        }
+    }
+
+    #[test]
+    fn revising_one_sentence_never_adds_its_punctuation_twice() {
+        let events = [
+            event("transcript.segment", "a", 1, "我們明天"),
+            event("transcript.segment", "a", 2, "我們明天，開會"),
+            event("transcript.segment", "a", 3, "我們明天，開會，"),
+            event("transcript.segment", "a", 4, "我們明天，開會，ASR"),
+            event("transcript.segment", "a", 4, "我們明天，開會，ASR"),
+            event("transcript.final", "a", 5, "我們明天，開會，ASR 1.25"),
+            event("transcript.final", "a", 6, "我們明天，開會，ASR 1.25"),
+        ];
+        for lagging in [false, true] {
+            assert_eq!(deliver(&events, true, lagging).0, "我們明天，開會，ASR 1.25。");
+            assert_eq!(deliver(&events, false, lagging).1, "我們明天，開會，ASR 1.25。");
+        }
+    }
+
+    #[test]
+    fn silent_peer_receives_new_microphone_audio_within_100_ms() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let peer = listener.accept().unwrap().0;
+        peer.set_read_timeout(Some(Duration::from_millis(100))).unwrap();
+        let socket = WebSocket::from_raw_socket(MaybeTlsStream::Plain(Route::Plain(client)), Role::Client, None);
+        let mut connection = Some(begin(socket, Instant::now(), RATE).unwrap());
+        let audio = SegmentAudio::synthetic(vec![], RATE as u32, false);
+        let finished = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| sessions(&audio, true, &|| false, &|| finished.load(Ordering::Acquire),
+                &mut Progress { count: 0, end: 0 }, &Updates::default(), Instant::now(), Instant::now(),
+                &mut 0, || Ok(connection.take().unwrap())));
+            let mut ws = WebSocket::from_raw_socket(peer, Role::Server, None);
+            ws.read().unwrap();
+            ws.send(Message::text(r#"{"type":"session.started"}"#)).unwrap();
+            // The first microphone callback arrives while the peer has nothing more to say.
+            std::thread::sleep(Duration::from_millis(20));
+            let captured = Instant::now();
+            audio.extend(&[0.5; 128]);
+            let packet = ws.read();
+            let elapsed = captured.elapsed();
+            finished.store(true, Ordering::Release);
+            worker.join().unwrap().unwrap();
+            let event: Value = serde_json::from_str(packet.unwrap().to_text().unwrap()).unwrap();
+            assert_eq!(event["type"], "audio.append");
+            assert!(elapsed < Duration::from_millis(100), "{elapsed:?}");
+        });
+    }
+
+    fn local_peer() -> (Socket, WebSocket<TcpStream>) {
+        let listener = TcpListener::bind(("127.0.0.1", 0)).unwrap();
+        let client = TcpStream::connect(listener.local_addr().unwrap()).unwrap();
+        client.set_read_timeout(Some(TIMEOUT)).unwrap();
+        let peer = listener.accept().unwrap().0;
+        peer.set_read_timeout(Some(Duration::from_secs(5))).unwrap();
+        (
+            WebSocket::from_raw_socket(MaybeTlsStream::Plain(Route::Plain(client)), Role::Client, None),
+            WebSocket::from_raw_socket(peer, Role::Server, None),
+        )
+    }
+
+    /// Reads audio until session.close and returns how many samples arrived and the last one.
+    fn read_until_close(ws: &mut WebSocket<TcpStream>, until: Option<usize>) -> (usize, i16) {
+        let (mut samples, mut last) = (0, 0);
+        loop {
+            if until == Some(samples) { return (samples, last); }
+            let e: Value = serde_json::from_str(ws.read().unwrap().to_text().unwrap()).unwrap();
+            if e["type"] == "session.close" { return (samples, last); }
+            let bytes = STANDARD.decode(e["audio"].as_str().unwrap()).unwrap();
+            samples += bytes.len() / 2;
+            last = i16::from_le_bytes([bytes[bytes.len() - 2], bytes[bytes.len() - 1]]);
+        }
+    }
+
+    #[test]
+    fn stopping_sends_the_held_tail_and_session_close_within_100_ms_while_the_peer_is_silent() {
+        use std::sync::atomic::{AtomicBool, Ordering};
+        let (socket, mut ws) = local_peer();
+        let mut connection = Some(begin(socket, Instant::now(), RATE).unwrap());
+        // Whole packets go out while recording; the last 1,346 samples wait for more audio or a stop.
+        let spoken = 128 + 2048 * 11 + 1346;
+        let audio = SegmentAudio::synthetic(vec![0.3; spoken], RATE as u32, false);
+        let stopped = AtomicBool::new(false);
+        std::thread::scope(|scope| {
+            let worker = scope.spawn(|| sessions(&audio, true, &|| stopped.load(Ordering::Acquire), &|| false,
+                &mut Progress { count: 0, end: 0 }, &Updates::default(), Instant::now(), Instant::now(),
+                &mut 0, || Ok(connection.take().unwrap())));
+            ws.read().unwrap();
+            ws.send(Message::text(r#"{"type":"session.started"}"#)).unwrap();
+            assert_eq!(read_until_close(&mut ws, Some(spoken - 1346)).0, spoken - 1346);
+            std::thread::sleep(Duration::from_millis(50));
+            let stop = Instant::now();
+            stopped.store(true, Ordering::Release);
+            let (tail, last) = read_until_close(&mut ws, None);
+            let elapsed = stop.elapsed();
+            ws.send(Message::text(r#"{"type":"session.updated","session":{"status":"closed"}}"#)).unwrap();
+            assert_eq!(worker.join().unwrap(), Ok(()));
+            assert_eq!((tail, last), (1346 + RATE / 4, 0));
+            assert!(elapsed < Duration::from_millis(100), "{elapsed:?}");
+        });
+    }
+
+    #[test]
+    fn finals_that_arrive_only_after_close_are_kept_in_order_without_local_recovery() {
+        let spoken = RATE * 2 + 1952;
+        let mut samples = vec![0.4; RATE / 2];
+        samples.resize(RATE * 3 / 2, 0.0);
+        samples.resize(spoken, 0.4);
+        let (socket, mut ws) = local_peer();
+        let server = std::thread::spawn(move || {
+            ws.read().unwrap();
+            ws.send(Message::text(r#"{"type":"session.started"}"#)).unwrap();
+            let (received, last) = read_until_close(&mut ws, None);
+            assert_eq!((received, last), (spoken + RATE / 4, 0));
+            std::thread::sleep(Duration::from_millis(300));
+            for e in [
+                json!({"type":"speech.started","utterance_id":"a"}),
+                json!({"type":"speech.stopped","utterance_id":"a","audio_end_ms":500}),
+                event("transcript.final", "a", 1, "甲，"),
+                json!({"type":"speech.started","utterance_id":"b"}),
+                event("transcript.segment", "b", 1, "乙"),
+                event("transcript.final", "b", 2, "乙 1.25"),
+                json!({"type":"session.updated","session":{"status":"closed"}}),
+            ] { ws.send(Message::text(e.to_string())).unwrap(); }
+        });
+        let mut connection = Some(begin(socket, Instant::now(), RATE).unwrap());
+        let audio = SegmentAudio::synthetic(samples, RATE as u32, false);
+        let updates = Updates::default();
+        let recovery = std::cell::Cell::new(false);
+        with_fallback(|progress| sessions(&audio, true, &|| true, &|| false, progress, &updates,
+            Instant::now(), Instant::now(), &mut 0, || Ok(connection.take().unwrap())), |_, _| recovery.set(true));
+        server.join().unwrap();
+        assert!(!recovery.get());
+        let (mut typing, mut field) = (Typing::default(), Field::default());
+        let mut finals = Vec::new();
+        while let Some(update) = updates.next(true) {
+            let Update::Final(index, text, end) = update else { panic!("draft after the last final") };
+            typing.stream_final(&text, end);
+            assert!(typing.flush(Duration::ZERO, &mut field));
+            finals.push((index, end));
+        }
+        assert_eq!(finals, [(0, RATE / 2), (1, spoken)]);
+        assert_eq!(field.0, "甲，乙 1.25");
     }
 
     #[test]
@@ -1164,6 +1420,13 @@ mod tests {
     }
 
     #[test]
+    fn a_server_silent_after_close_times_out_and_recovers_only_the_unfinished_sentence() {
+        let began = Instant::now();
+        assert_local_recovery(Ending::Silent, false);
+        assert!(began.elapsed() >= Duration::from_secs(8), "{:?}", began.elapsed());
+    }
+
+    #[test]
     fn connection_failure_and_disconnect_resume_local_requests_without_duplicate_typing() {
         assert_local_recovery(Ending::ConnectFailure, false);
         assert_local_recovery(Ending::Disconnect, false);
@@ -1216,6 +1479,9 @@ mod tests {
                 }
                 if ending == Ending::StopRequest {
                     assert_eq!(reason, "stop_requested limit");
+                }
+                if ending == Ending::Silent {
+                    assert_eq!(reason, "串流收尾逾時");
                 }
                 assert_eq!(progress.count, usize::from(interrupted));
                 assert_eq!(progress.end, if interrupted { RATE / 2 } else { 0 });

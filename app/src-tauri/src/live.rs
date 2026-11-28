@@ -105,6 +105,10 @@ impl Typing {
         self.ended = true;
     }
 
+    pub fn remaining_final<'a>(&self, text: &'a str) -> Option<&'a str> {
+        text.strip_prefix(&self.typed)?.strip_prefix(&self.tail.shown)
+    }
+
     pub fn visible_prefix(&self, final_text: &str) -> String {
         let mut prefix = self.typed.clone();
         if let Some(rest) = final_text.strip_prefix(&prefix) {
