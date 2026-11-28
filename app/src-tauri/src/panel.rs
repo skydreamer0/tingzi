@@ -79,6 +79,7 @@ fn accent_pair(red: u32, green: u32, blue: u32) -> (String, String) {
 /// Everything the settings window shows when it opens.
 #[derive(Serialize)]
 pub struct Panel {
+    engine_busy: bool,
     prefs: Settings,
     zhuyin: Zhuyin,
     startup: bool,
@@ -105,6 +106,7 @@ pub fn load_settings(app: AppHandle) -> Panel {
     let prefs = Settings::load();
     let keys = app.state::<crate::Keys>();
     Panel {
+        engine_busy: matches!(*app.state::<crate::Session>().state.lock().unwrap(), "recording" | "working"),
         zhuyin: Zhuyin::load(),
         startup: starts_at_login(),
         microphones: audio::microphones(),
@@ -155,6 +157,17 @@ pub fn save_settings(app: AppHandle, prefs: Settings, zhuyin: Zhuyin, startup: b
         }
     }
     let before = Settings::load();
+    if before.engine() != prefs.engine() {
+        if matches!(*app.state::<crate::Session>().state.lock().unwrap(), "recording" | "working") {
+            return Err("錄音或辨識中，請在完成後切換。".into());
+        }
+        if let Some(problem) = crate::recognise::problem(prefs.engine(), &prefs) {
+            return Err(problem);
+        }
+        if prefs.engine() == crate::settings::Engine::Codex && !crate::recognise::codex_sign_in_present() {
+            return Err("請先在 Codex 登入，再重新選擇。".into());
+        }
+    }
     // The earlier voice window finds a microphone by its device id; keep it only while the name still matches.
     let prefs = Settings { microphone_id: before.microphone_id.clone().filter(|_| before.microphone_name == prefs.microphone_name), ..prefs };
     let keys = app.state::<crate::Keys>();

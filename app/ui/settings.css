@@ -203,3 +203,13 @@ dialog::backdrop { background: rgb(10 12 30 / 0.45); }
 #welcome .step { margin: 0 4px 4px; font-size: var(--font-sm); color: var(--muted); }
 .practice ol { margin: 0 0 12px; padding-left: 24px; line-height: 1.7; }
 .practice kbd { padding: 1px 6px; border: 1px solid var(--border); border-radius: var(--radius-sm); background: var(--input); font: inherit; }
+
+.engine-setting { display:grid; grid-template-columns:minmax(0,1fr); gap:8px; }
+.engine-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(min(100%,7rem),1fr)); gap:6px; }
+.engine-grid button { display:flex; align-items:center; justify-content:center; gap:6px; min-height:44px; color:var(--text); background:var(--surface); border:1px solid var(--border); border-radius:var(--radius-md); font:inherit; cursor:pointer; }
+.engine-grid button[aria-pressed="true"] { border-color:var(--accent-text); background:var(--tint); color:var(--accent-text); font-weight:600; }
+.engine-grid button[aria-pressed="true"]::after { content:"✓"; }
+.engine-grid button:focus-visible { outline:2px solid var(--accent-text); outline-offset:2px; }
+.engine-grid button:disabled { color:var(--muted); cursor:not-allowed; }
+.engine-grid svg { flex:none; width:20px; height:20px; fill:none; stroke:currentColor; stroke-width:1.6; stroke-linecap:round; stroke-linejoin:round; }
+@media (prefers-reduced-motion:no-preference) { .engine-grid button { transition:background-color .14s ease,border-color .14s ease; } }

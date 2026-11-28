@@ -178,7 +178,33 @@ const engineNotes = {
   api: () => '錄音會傳到你填的服務，費用依該服務計算；網址是 localhost 時錄音留在這台電腦。',
   codex: () => '錄音會經第三方的 codex-asr 傳到 ChatGPT，需要這台電腦上有效的 Codex 登入。',
 };
+const engineButtons = [...document.querySelectorAll('.engine-grid [data-engine]')];
+let voiceBusy = null;
+function renderEngineChoice() {
+  if (!panel) return;
+  const active = savedEngine();
+  const busy = voiceBusy ?? panel.engine_busy;
+  for (const button of engineButtons) {
+    if (button.dataset.engine === 'claude') continue;
+    button.setAttribute('aria-pressed', String(button.dataset.engine === active));
+    button.disabled = Boolean(busy);
+  }
+  byId('engine-current').textContent = '使用中：' + engineNames[active] + (busy ? '（錄音或辨識中，暫停切換）' : '');
+}
+listen('voice', ({ payload: { state } }) => {
+  voiceBusy = state === 'working' || state === 'recording';
+  renderEngineChoice();
+});
+for (const button of engineButtons) {
+  button.addEventListener('click', () => {
+    if (!panel || button.disabled || !Object.hasOwn(engineNotes, button.dataset.engine)) return;
+    byId('engine').value = button.dataset.engine;
+    showEngine();
+    store(byId('engine'));
+  });
+}
 function showEngine() {
+  renderEngineChoice();
   const engine = byId('engine').value;
   byId('engine-note').textContent = engineNotes[engine]();
   const streaming = byId('streaming-asr');
@@ -348,12 +374,19 @@ let engineWaiting = '';
 let storing = Promise.resolve();
 
 function store(control) {
+  const selected = byId('engine').value;
   storing = storing.then(async () => {
     const engineChange = engineIds.includes(control.id);
     const wanted = collect(engineChange || !engineWaiting);
+    if (engineChange) {
+      if (!Object.hasOwn(engineNotes, selected)) return;
+      wanted.prefs.Engine = selected;
+      wanted.prefs.Online = selected === 'codex';
+    }
     try {
       await invoke('save_settings', wanted);
       panel.prefs = wanted.prefs;
+      renderEngineChoice();
       accepted.set(control.id, valueOf(control));
       if (engineChange) engineWaiting = '';
       say(engineWaiting || '已套用。', !engineWaiting);

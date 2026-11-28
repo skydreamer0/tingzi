@@ -85,9 +85,14 @@
         </div>
         <h2>辨識</h2>
         <div class="card" id="engine-card">
-          <div class="row">
-            <div class="what"><label for="engine">辨識方式</label><p id="engine-note"></p></div>
-            <select id="engine" class="wide"><option value="local">本機 Whisper</option><option value="api">自選線上服務（自備金鑰）</option><option value="codex">Codex 線上辨識</option></select></div>
+          <div class="row engine-setting"><div id="engine-label">辨識方式</div>
+            <div class="engine-grid" role="group" aria-labelledby="engine-label" aria-describedby="engine-current">
+              <button type="button" data-engine="local" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M3 4h18v13H3z M8 21h8m-4-4v4"/></svg>本機 Whisper</button>
+              <button type="button" data-engine="api" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m8 7-5 5 5 5m8-10 5 5-5 5m-3-14-2 18"/></svg>自選服務</button>
+              <button type="button" data-engine="codex" aria-pressed="false"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="M2 4h20v16H2z M6 9l3 3-3 3m6 0h5"/></svg>Codex</button>
+              <button type="button" data-engine="claude" disabled aria-describedby="claude-reason"><svg viewBox="0 0 24 24" aria-hidden="true" focusable="false"><path d="m12 2 1 7 5-5-3 6 7-1-6 4 5 4-7-2 1 7-4-6-4 5 2-7-7 1 6-4-5-4 7 2z"/></svg>Claude</button>
+            </div><select id="engine" hidden><option value="local"></option><option value="api"></option><option value="codex"></option></select>
+            <div class="what"><p id="engine-current" role="status"></p><p id="engine-note"></p><p id="claude-reason">Claude 聽寫尚未接通，暫時無法選用。</p></div></div>
           <div class="row sub" id="local-model-row">
             <div class="what"><label for="local-model">本機模型</label><p>較大的模型比較準，但只用 CPU 時每句要等比較久。</p></div>
             <select id="local-model" class="wide"></select></div>

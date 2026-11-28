@@ -105,7 +105,7 @@ The full key table and settings reference are in the [Windows manual](windows/RE
 
 ## Recognition and privacy
 
-Choose a recognition method on the 語音 (Voice) settings page. Where your audio goes depends on the method:
+Choose a recognition method on the 語音 (Voice) settings page. Select an engine icon; the current label shows the saved choice. Claude is not available. Where your audio goes depends on the method:
 
 | Method | Where the audio goes | What you need |
 | --- | --- | --- |
