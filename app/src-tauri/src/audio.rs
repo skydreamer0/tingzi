@@ -1104,6 +1104,53 @@ mod tests {
         assert!(recorder.finish().unwrap().wav.is_ok());
     }
 
+    struct Microphone(Sender<()>);
+    impl Drop for Microphone {
+        fn drop(&mut self) {
+            let _ = self.0.send(());
+        }
+    }
+
+    fn held_microphone(samples: Vec<f32>, segments: Option<SentenceSource>) -> (Recorder, mpsc::Receiver<()>) {
+        let (release, released) = mpsc::channel();
+        let recorder = Recorder::start_capture(
+            move || Ok((test_input(Microphone(release), Arc::new(Mutex::new(samples)), 16_000), None)),
+            false, segments, || {},
+        ).unwrap();
+        std::thread::sleep(Duration::from_millis(60));
+        assert_eq!(released.try_recv(), Err(mpsc::TryRecvError::Empty), "released while still recording");
+        (recorder, released)
+    }
+
+    #[test]
+    fn stopping_or_cancelling_releases_the_microphone_while_the_stream_still_waits() {
+        for cancel in [false, true] {
+            let (rate, _rates) = mpsc::channel();
+            let (answer, answered) = mpsc::channel::<()>();
+            let source = SentenceSource::Stream(rate, Box::new(move |_, _, _| {
+                // A final, a timeout or a local fallback is still pending here.
+                let _ = answered.recv_timeout(Duration::from_secs(5));
+            }));
+            let (recorder, released) = held_microphone(vec![0.4; 16_000], Some(source));
+            if cancel { drop(recorder); } else { recorder.request_stop(); }
+            assert_eq!(released.recv_timeout(Duration::from_millis(500)), Ok(()), "cancel {cancel}");
+            answer.send(()).unwrap();
+        }
+    }
+
+    #[test]
+    fn local_sentences_and_a_too_short_recording_release_the_microphone_when_finished() {
+        let listener: SegmentListener = (3, Box::new(|_, _| {}));
+        for (segments, samples, wav) in [
+            (Some(SentenceSource::Local(listener)), vec![0.4; 16_000], true),
+            (None, vec![0.4; 1_000], false),
+        ] {
+            let (recorder, released) = held_microphone(samples, segments);
+            assert_eq!(recorder.finish().unwrap().wav.is_ok(), wav);
+            assert_eq!(released.try_recv(), Ok(()));
+        }
+    }
+
     #[test]
     fn the_last_segment_stops_at_the_capture_limit() {
         let rate = 1_000u32;
