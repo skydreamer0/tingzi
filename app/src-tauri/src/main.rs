@@ -4,6 +4,7 @@
 mod api;
 mod apps;
 mod audio;
+mod claude_voice;
 mod dictation_stream;
 mod codex;
 mod deliver;
